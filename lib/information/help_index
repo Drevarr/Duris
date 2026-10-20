@@ -7317,6 +7317,11 @@ Grant enables you to let other people access your personal storage locker.
 To view your list, type 'grant list'. You can add or remove people on the 
 list, which will be saved. Be careful who you allow to access your storage!
 Please note that the grant command is used within your locker itself. 
+Use a character name for one visitor, or an account name for that account's
+characters on the locker's racewar side. Grants apply only to the locker
+you are currently in. After you leave and its save finishes, a visitor can
+use 'enter locker <your character name>' to enter your account locker.
+For a legacy personal locker, use 'enter locker <your character name>.locker'.
 ===========================================================================
 See also: LOCKER, STORAGE
 
@@ -8077,7 +8082,7 @@ Healer is a Cleric specialization. Selection requires level 30, an eligible race
 Drow Elf, Duergar Dwarf, Githyanki, Githzerai, Gnome, Goblin, Grey Elf, Halfling, Human, Kobold, Mountain Dwarf, Orc, Tiefling.
 These permissions apply to an existing character; they do not enable a forbidden creation race/class combination. Server event settings can relax the race filter.
 ==Skill changes==
-kick: no grant in this specialization
+No specialization overrides; ordinary Cleric Kick remains trainable to 40%.
 ==Spell changes==
 aura of rebirth: circle 12
 divine font: circle 11
@@ -8085,22 +8090,11 @@ endurance: circle 7
 group heal: circle 10
 healing salve: circle 6
 regeneration: circle 8
-cause critical: no grant in this specialization
-cause light: no grant in this specialization
-cause serious: no grant in this specialization
-destroy undead: no grant in this specialization
-dispel evil: no grant in this specialization
-dispel good: no grant in this specialization
-earthquake: no grant in this specialization
-flame strike: no grant in this specialization
-full harm: no grant in this specialization
-harm: no grant in this specialization
-holy word: no grant in this specialization
-negative energy barrier: no grant in this specialization
-taint: no grant in this specialization
-unholy word: no grant in this specialization
 ==Innate additions==
+aura_of_improved_healing: level 1
 *warding faith: level 30
+The white Improved Healing aura unlocks when you specialize at level 30.
+All ordinary Cleric offensive spells and sixth-circle Negative Energy Barrier remain available, with their normal restrictions.
 Requirements are registration values, not automatic learning or preparation. Base-class grants remain subject to the listed specialization changes, and abilities retain their own use conditions.
 ==See also==
 * Cleric
@@ -8275,7 +8269,6 @@ lesser sanctuary: circle 11
 prayer: circle 12
 protection from undead: circle 8
 virtue: circle 8
-vital intercession: circle 6
 ==Innate additions==
 aura_of_protection: level 1
 aura_of_spell_protection: level 1
@@ -9549,19 +9542,33 @@ targets and how proficient you are at listening.
 #
 LOCKER STORAGE (General Information)
 ===========================================================================
-Syntax:         enter locker <name> 
+Syntax:         enter locker
+                enter locker <character>
+                enter locker account.<account>.<side>
+                enter locker <character>.locker
+                enter locker guild
 		
 Lockers can be found throughout the hometowns of the various races. Lockers 
 are personal storage areas where spare equipment that has accumulated can 
 be placed. There are various levels of locker access. 
 
-To access your personal locker, type 'enter locker' at any local bank. 
+To access your account locker, type 'enter locker' at any local bank.
 
 To enter the locker of another person, they must have granted you access. 
-You can enter someone else's locker, type 'enter locker char_name'. 
+Type 'enter locker <character>' to enter that character's account locker on
+their racewar side. Character and account names can differ; names ignore case.
+The account locker takes precedence if a legacy personal locker also exists.
+To explicitly select the account locker, use 'enter locker account.<account>.<side>'.
+To select a legacy personal locker, use its full '<character>.locker' name.
+If the character has no active account mapping, a bare name selects that legacy
+locker. These are separate lockers with separate contents and grants.
+Canonical account and guild locker names may include their final '.locker'.
+You still need access and must be on the same racewar side. Wait until the
+owner has left and the locker has finished saving before trying to enter.
 
-To enter a communal guild locker, you must type 'enter locker guild'. You 
-must be a member of the guild to enter! Only one person is allowed in any 
+To enter your communal guild locker, type 'enter locker guild', or use
+'guild.<your-guild-id>' with an optional '.locker' suffix. Both forms use the
+same membership, parole and prestige checks. Only one person is allowed in any
 locker, including guild lockers, at any one time. 
 
 The Storage Locker Safety Commission, a group of other-world agents 
@@ -10221,6 +10228,8 @@ Type of spell:  Enchantment
 everyone in the Cleric's group the spells "Vitality", "Armor", and "Bless".
 ===========================================================================
 See also: "VITALITY", "ARMOR", "BLESS"
+
+Clerics receive Miracle at level 36 (eighth circle).
 
 #
 "MIRROR IMAGE" (Spell)
@@ -14530,12 +14539,12 @@ Learning, preparation, equipment, and current ability conditions still apply.
 5th Circle: destroy undead, heal, soulshield, vitality
 6th Circle: continual light, curse, darkness, fear, flame strike, harm,
     mass preserve, negative energy barrier
-7th Circle: full heal, lesser resurrect, miracle, water breathing
-8th Circle: dispel magic, mass heal
+7th Circle: full heal, lesser resurrect, water breathing
+8th Circle: dispel magic, mass heal, miracle
 9th Circle: holy word, plane shift, resurrect, silence, unholy word,
     word of recall
-10th Circle: accelerated healing, full harm, taint
-11th Circle: divine warding, freedom of movement, group recall, true seeing
+10th Circle: accelerated healing, full harm, taint, true seeing
+11th Circle: divine warding, freedom of movement, group recall
 12th Circle: mass purification
 ==See also==
 * Cleric
@@ -21657,7 +21666,7 @@ See also: epic power, epic constitution, epic luck, toughness
 #
 "EPIC WARDING FAITH" (Skill)
 ===========================================================================
-"Epic warding faith" is the summit of the cleric's shielding devotion, deepening the divine ward that blazes forth to drink an enemy's assault. With each degree of mastery the holy bulwark grows mightier and gathers its strength anew the faster, standing twice as firm at its height as at its first awakening. The ward's flash of protection hones the skill further with every blow it absorbs.
+Epic Warding Faith increases Warding Faith's capacity in steps. At full mastery the ward holds twice its base capacity. Passive recovery from empty still takes 240 seconds in an ordinary room without other modifiers. Healing by the Healer restores ward equal to 10% of effective HP restored, rounded down separately for each recipient and capped at maximum ward.
 ===========================================================================
 See also: devotion, warding faith, prayer, aura of rebirth
 #
@@ -24441,18 +24450,19 @@ See also: healing blade, elemental aura, enchant weapon
 "DIVINE WARDING" (Spell)
 ===========================================================================
 Cleric circle: 11th
-Area of effect: <target>
+Area of effect: <self>
 Aggressive: No
 Cumulative: No
 Type of spell: Protection
 
-Divine Warding grants one target all seven base cleric protection spells:
+Divine Warding grants the caster all seven base cleric protection spells:
 protection from fire, cold, acid, gas, lightning, good, and evil. Each
-protection has its normal strength and duration and can be dispelled
-individually. Recasting refreshes the protections rather than stacking them.
-The target must be in the same room; the caster may target themselves.
+protection has its normal strength and lasts 11 elapsed minutes. Each can be
+dispelled independently. Recasting resets all seven timers without stacking.
+This spell only affects the caster. An individual protection cast afterward
+replaces that protection's timer with its ordinary level-based duration.
 
-Usage: cast 'divine warding' <target>
+Usage: cast 'divine warding'
 
 See also: Protection from Fire, Protection from Cold, Protection from Evil
 
@@ -24600,4 +24610,31 @@ and Orcs possess it from level 1; Warrior Swashbucklers gain it at level 30.
 It does not require an innate command to activate.
 ===========================================================================
 See also: Human, Orc, Swashbuckler, ships
+#
+
+AURA_OF_IMPROVED_HEALING (Innate)
+===========================================================================
+Syntax: innate aura_of_improved_healing
+
+Paladins at level 30 and Clerics who specialize as Healers can radiate this
+white aura. Nearby group members become more receptive to healing spells.
+Multiple Improved Healing auras do not stack.
+
+See also: HEALER, PALADIN
+#
+
+#
+"WARDING FAITH" (Innate)
+===========================================================================
+Warding Faith is a passive Healer ability, available on specialization at level 30.
+It absorbs damage using a separate ward pool. In an ordinary room with no other
+modifiers, an empty ward recovers fully over 240 seconds. Passive recovery stops
+in combat and no-heal rooms; healing rooms improve recovery. Epic Warding Faith
+increases capacity without extending that baseline recovery time.
+
+A Healer's healing also restores ward equal to 10% of HP actually restored,
+rounded down for each recipient and capped at maximum ward, including in combat.
+Overhealing restores no ward. Group Heal can refill ward for each healed member.
+
+See also: HEALER, EPIC WARDING FAITH
 #
