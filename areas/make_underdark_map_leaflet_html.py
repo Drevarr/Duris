@@ -345,8 +345,8 @@ if __name__ == "__main__":
 
     # Print markers for leaflet
     for marker in sorted_zone_marker_data:
-        print(f'  {{ vnum: {marker}, name: "{zone_marker_data[marker]["marker name"]}" }},')
-
+        print(f'  {{ vnum: {marker}, name: "{strip_mud_colors(zone_marker_data[marker]["marker name"]).replace("Zone Marker: ", "")}" }},')
+        print(f'  {{ vnum: {marker}, name: "{zone_marker_data[marker]["zone"]}" }},')
     # Convert the sorted dictionary into JSON
     zones_json = json.dumps(
         [
