@@ -1,0 +1,572 @@
+<!DOCTYPE html>
+<html>
+	<head>
+		<title>New Duris - Surface Map</title>
+		<meta name="description" content="Interactive world map of New Duris with searchable zones.">
+
+		<meta property="og:title" content="New Duris Underdark Map">
+		<meta property="og:description" content="Explore the New Duris surface world with searchable zones.">
+		<meta property="og:type" content="website">
+		<meta property="og:url" content="https://drevarr.github.io">
+		<meta property="og:image" content="https://drevarr.github.io/DurisMUD_logo.png">
+
+		<meta name="twitter:card" content="summary_large_image">
+		<meta name="twitter:title" content="New Duris Underdark Map">
+		<meta name="twitter:description" content="Explore the New Duris underdark world with searchable zones.">
+		<meta name="twitter:image" content="https://drevarr.github.io/DurisMUD_logo.png">
+
+		<meta charset="utf-8" />
+		<meta name="viewport" content="width=device-width, initial-scale=1.0">
+			<!-- Leaflet CSS -->
+			<link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css" />
+			<style>
+	html, body {
+	  margin: 0;
+	  height: 100%;
+	  font-family: sans-serif;
+	}
+
+	/* Layout */
+	.app {
+	  display: flex;
+	  flex-direction: column;
+	  height: 100vh;
+	}
+
+	.header {
+	  background: #111;
+	  color: white;
+	  text-align: center;
+	  padding: 10px;
+	}
+
+	.main {
+	  display: flex;
+	  flex: 1;
+	  overflow: hidden;
+	  min-height: 0;
+	}
+
+	/* Sidebar */
+	.sidebar {
+	  width: 260px;
+	  background: #1d293d;
+	  color: white;
+	  padding: 10px;
+	  overflow-y: auto;
+	  border-right: 1px solid #ccc;
+	}
+
+	.panel {
+	  margin-bottom: 20px;
+	}
+
+	/* Map */
+	#map {
+	  flex: 1;
+	  height: 100%;
+	  min-height: 0; 
+	  background: #000;
+	}
+
+	#zone-list {
+	  max-height: 400px;
+	  overflow-y: auto;
+	  font-size: 12px;
+	}
+
+	.zone-item {
+	  padding: 4px;
+	  cursor: pointer;
+	  border-bottom: 1px solid #ddd;
+	}
+
+	.zone-item:hover {
+	  background: #05df72;
+	}
+  /* icon credits */
+  .map-credit {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 10px;
+  color: #aaa;
+  padding: 8px;
+  border-top: 1px solid #333;
+  margin-top: 10px;
+}
+
+.map-credit a {
+  color: #6cb6ff;
+  text-decoration: none;
+}
+
+.map-credit a:hover {
+  text-decoration: underline;
+}
+
+.credit-icon {
+  width: 16px;
+  height: 16px;
+  opacity: 0.8;
+}
+
+	/* Legend */
+	.legend-box {
+	  display: inline-block;
+	  width: 12px;
+	  height: 12px;
+	  background: white;
+	  margin-right: 6px;
+	  border: 1px solid black;
+	}
+
+	/* Your existing label styling */
+	.zone-label {
+	  color: #fff;
+	  font-size: 9px;
+	  font-weight: bold;
+	  max-width: 180px;
+	  white-space: normal;
+	  text-align: center;
+	  line-height: 0.9;
+	  text-shadow: 
+	    0 0 4px black,
+	    0 0 6px black;
+	  transform: translate(-50%, -50%);
+	  pointer-events: none;
+
+	  display: inline-block;
+	  word-break: keep-all;
+	}
+
+	.zone-label.highlight {
+	  text-shadow:
+	    0 0 6px yellow,
+	    0 0 10px yellow,
+	    0 0 14px orange;
+	}
+
+	/* Mobile */
+	@media (max-width: 768px) {
+	  .main {
+	    flex-direction: column;
+	  }
+
+	  .sidebar {
+	    width: 100%;
+	    height: 180px;
+	    min-height: 0;
+	    overflow-y: auto;
+	    border-right: none;
+	    border-bottom: 1px solid #ccc;
+	  }
+	}    
+    </style>
+		</head>
+		<body>
+			<div class="app">
+				<header class="header">
+					<h1>New Duris - Surface Map</h1>
+				</header>
+				<div class="main">
+					<aside class="sidebar">
+						<div class="panel">
+							<h3>Controls</h3>
+							<label>
+								<input type="checkbox" id="toggle-labels" checked>
+    Show Zone Labels
+  
+								</label>
+								<br>
+									<br>
+										<h3>Search Zones</h3>
+										<input type="text" id="zone-search" placeholder="Search zone name">
+											<button id="search-btn">Find</button>
+										</div>
+										<div class="panel">
+											<h3>Legend</h3>
+											<div>
+												<span class="legend-box"></span> Zone Label
+											</div>
+                      <div>
+                        <span><img src="dragon.png" alt="Dragon icon" class="credit-icon"></span> Dragon Flight
+											</div>
+                      <div>                        
+                        <span><img src="helm.png" alt="Helm" class="credit-icon"></span> Ferry Stop
+											</div>
+										</div>
+										<div class="panel">
+											<h3>Zone List</h3>
+											<div id="zone-list"></div>
+										</div>
+                    <div class="map-credit">
+                      <img src="dragon.png" alt="Dragon icon" class="credit-icon">
+                      <a href="https://www.flaticon.com/free-icons/dragon" target="_blank">
+                        Dragon icons by Icongeek26 - Flaticon
+                      </a>
+                      <img src="helm.png" alt="Helm" class="credit-icon">
+                      <a href="https://www.flaticon.com/free-icons/rudder" target="_blank">
+                        Rudder icons created by Freepik - Flaticon
+                      </a>                      
+                    </div>
+									</aside>
+									<div id="map"></div>
+									<script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
+									<script>
+  // --- CONFIG ---
+  const imageWidth = 1600;
+  const imageHeight = 1600;
+
+  const squareSize = 4;
+  const mapWidth = 400;
+  const mapHeight = 400;
+  const startingVnum = 700000;
+
+var dragonIcon = L.icon({
+    iconUrl: 'dragon.png',
+    iconSize:     [24, 24], // size of the icon
+    iconAnchor:   [0, 24], // point of the icon which will correspond to marker's location
+    popupAnchor:  [0, 0] // point from which the popup should open relative to the iconAnchor
+});
+var ferryIcon = L.icon({
+    iconUrl: 'helm.png',
+    iconSize:     [24, 24], // size of the icon
+    iconAnchor:   [0, 24], // point of the icon which will correspond to marker's location
+    popupAnchor:  [0, 0] // point from which the popup should open relative to the iconAnchor
+});
+
+const ferryRoutes = [
+
+]
+
+const dragonRoutes = [
+
+];
+
+const zones = [  { vnum: 831731, name: "A Phantasmagoric Cavern" },
+  { vnum: 811308, name: "Entrance to the Caverns" },
+  { vnum: 701669, name: "Ashrumite" },
+  { vnum: 812662, name: "Bogentok" },
+  { vnum: 812257, name: "Bogentok" },
+  { vnum: 807499, name: "Bugger" },
+  { vnum: 819330, name: "Clwcvrn" },
+  { vnum: 734845, name: "Connector" },
+  { vnum: 739234, name: "Connector" },
+  { vnum: 740051, name: "Connector" },
+  { vnum: 748106, name: "Connector" },
+  { vnum: 754914, name: "Connector" },
+  { vnum: 801740, name: "Connectorzones" },
+  { vnum: 757626, name: "A Large Magma Fissure, Deep Within the Underdark" },
+  { vnum: 784530, name: "Domain" },
+  { vnum: 840287, name: "Drst" },
+  { vnum: 810963, name: "Ogre" },
+  { vnum: 804039, name: "Zone" },
+  { vnum: 817727, name: "Faang" },
+  { vnum: 829278, name: "Flind" },
+  { vnum: 820718, name: "Gibber" },
+  { vnum: 842048, name: "Goblin Caves" },
+  { vnum: 717301, name: "Golden Halls" },
+  { vnum: 813647, name: "Hall" },
+  { vnum: 746504, name: "Herders" },
+  { vnum: 827697, name: "Ixarkon" },
+  { vnum: 841753, name: "Ixxillikor" },
+  { vnum: 772524, name: "A Depressed Section of the Earth" },
+  { vnum: 816079, name: "Kobold" },
+  { vnum: 813742, name: "Library" },
+  { vnum: 834769, name: "Lizard" },
+  { vnum: 805116, name: "Llzazan" },
+  { vnum: 849234, name: "Malch" },
+  { vnum: 802653, name: "Zone" },
+  { vnum: 832821, name: "Mino Pass" },
+  { vnum: 845236, name: "Morg's Palace" },
+  { vnum: 822915, name: "Mountaintracks" },
+  { vnum: 856058, name: "Mush1" },
+  { vnum: 823870, name: "A Shaft Beneath a Soaring Mushroom Cavern" },
+  { vnum: 836064, name: "The Large Caverns of the Ancient Myconid" },
+  { vnum: 749256, name: "Cave City" },
+  { vnum: 811245, name: "nexus_roper" },
+  { vnum: 736888, name: "Obsidian Citadel" },
+  { vnum: 825759, name: "Orog SW Entrance" },
+  { vnum: 824964, name: "Orog NE Entrance" },
+  { vnum: 832711, name: "pworm" },
+  { vnum: 814264, name: "pworm" },
+  { vnum: 850045, name: "Beneath a Steep, Rocky Passage" },
+  { vnum: 749337, name: "Raxthan" },
+  { vnum: 709927, name: "Shabo" },
+  { vnum: 804649, name: "shaughin" },
+  { vnum: 789749, name: "shaughin2" },
+  { vnum: 827456, name: "temple_laduguer" },
+  { vnum: 846819, name: "truk" },
+  { vnum: 723240, name: "The Shore of a Large Underground River" },
+  { vnum: 825314, name: "Large Cavernous Lair" },
+  { vnum: 825439, name: "Dark Tunnel" },
+  { vnum: 825717, name: "Rocky Wall" },
+  { vnum: 833725, name: "A Widening Tunnel Before an Underworld City" },
+  { vnum: 836906, name: "Slime Covered Cave" },
+  { vnum: 841675, name: "Cave Tunnel" },
+  { vnum: 842893, name: "Small Pocket-Like Cave" },
+  { vnum: 845718, name: "Fork on the Wide Underground River" },
+  { vnum: 848475, name: "A Mushroom-Filled Tunnel" },
+  { vnum: 854867, name: "Mud Filled Cavern" },
+  { vnum: 798724, name: "Along a Mysterious River" }
+];
+
+  // --- INIT MAP ---
+  const map = L.map('map', {
+    zoomAnimation: false,
+    crs: L.CRS.Simple,
+    zoomDelta: 0.25,
+    zoomSnap: 0.25,
+    wheelPxPerZoomLevel: 75
+  });
+
+  const bounds = [[0, 0], [imageHeight, imageWidth]];
+  L.imageOverlay('duris_underdark.wld.png', bounds).addTo(map);
+  map.fitBounds(bounds);
+
+  setTimeout(() => {
+  map.invalidateSize();
+}, 0);
+
+
+  map.on('click', function(e) {
+    const pixelX = Math.floor(e.latlng.lng);
+    const pixelY = Math.floor(e.latlng.lat);
+
+    const tileX = Math.floor(pixelX / squareSize);
+    const tileY = Math.floor(pixelY / squareSize);
+
+    // Flip Y so bottom-left = starting vnum
+    const flippedY = (mapHeight - 1) - tileY;
+
+    const vnum = startingVnum + (flippedY * mapWidth) + tileX;
+
+    L.popup()
+      .setLatLng(e.latlng)
+      .setContent(
+        `Pixel: (${pixelX}, ${pixelY})
+										<br>` +
+        `Tile: (${tileX}, ${tileY})
+											<br>` +
+        `World VNUM: ${vnum}`
+      )
+      .openOn(map);
+  });
+
+  // --- OPTIONAL: VNUM -> LOCATION HELPER ---
+  function vnumToLatLng(vnum) {
+    const offset = vnum - startingVnum;
+
+    const flippedY = Math.floor(offset / mapWidth);
+    const tileX = offset % mapWidth;
+
+    // unflip Y
+    const tileY = (mapHeight - 1) - flippedY;
+
+    return [
+      tileY * squareSize,
+      tileX * squareSize
+    ];
+  }
+
+dragonRoutes.forEach(m => {
+  L.marker(vnumToLatLng(m.start), {icon: dragonIcon})
+    .addTo(map)
+    .bindPopup("Fly to: " + m.name);
+});
+
+ferryRoutes.forEach(m => {
+  L.marker(vnumToLatLng(m.start), {icon: ferryIcon})
+    .addTo(map)
+    .bindPopup(m.name);
+});
+
+function createZoneLabel(zone) {
+  return L.marker(vnumToLatLng(zone.vnum), {
+    icon: L.divIcon({
+      className: 'zone-label',
+      html: zone.name,
+      iconSize: [50, null]
+    })
+  });
+}
+
+const zoneLayer = L.layerGroup();
+const zoneIndex = {};
+
+zones.forEach(zone => {
+  const marker = createZoneLabel(zone);
+
+  // store reference (handle duplicates)
+  const key = zone.name.toLowerCase();
+  if (!zoneIndex[key]) zoneIndex[key] = [];
+  zoneIndex[key].push(marker);
+
+  zoneLayer.addLayer(marker);
+});
+
+zoneLayer.addTo(map);
+
+const zoneList = document.getElementById('zone-list');
+
+zones.forEach(zone => {
+  const div = document.createElement('div');
+  div.className = 'zone-item';
+  div.textContent = zone.name;
+
+  div.addEventListener('click', () => {
+    zoomToZone(zone.name);
+  });
+
+  zoneList.appendChild(div);
+});
+
+function updateLabelScale() {
+  const zoom = map.getZoom();
+
+  document.querySelectorAll('.zone-label').forEach(el => {
+    const marker = el.closest('.leaflet-marker-icon');
+
+    if (zoom < 1) {
+      marker.style.display = "none";
+    } else {
+      marker.style.display = "block";
+    }
+
+    const scale = Math.max(0.9, Math.min(1.4, zoom / 3));
+    el.style.fontSize = (9 * scale) + 'px';
+  });
+}
+
+function searchZone(query) {
+  const q = query.toLowerCase().trim();
+
+  if (!q) return;
+
+  const matches = Object.keys(zoneIndex).filter(name =>
+    name.includes(q)
+  );
+
+  if (matches.length === 0) {
+    alert("No matches found");
+    return;
+  }
+
+  // If only one match → zoom directly
+  if (matches.length === 1) {
+    zoomToZone(matches[0]);
+    return;
+  }
+
+  // Multiple matches → zoom to all
+  zoomToMultipleZones(matches);
+}
+
+function zoomToMultipleZones(names) {
+  const allMarkers = [];
+
+  names.forEach(name => {
+    zoneIndex[name].forEach(marker => {
+      allMarkers.push(marker);
+    });
+  });
+
+  const group = L.featureGroup(allMarkers);
+
+  map.fitBounds(group.getBounds(), {
+    padding: [50, 50]
+  });
+}
+
+function zoomToZone(name) {
+  const key = name.toLowerCase();
+
+  if (!zoneIndex[key]) {
+    alert("Zone not found");
+    return;
+  }
+
+  const markers = zoneIndex[key];
+
+  // If multiple matches, use first (or extend later)
+  const marker = markers[0];
+  const latlng = marker.getLatLng();
+
+  // Smooth zoom + center
+  map.setView(latlng, 2);
+
+  // Optional: popup
+  marker.bindPopup(name).openPopup();
+
+  // Optional: highlight
+  highlightMarker(marker);
+}
+
+function highlightMarker(marker) {
+  const el = marker.getElement();
+  if (!el) return;
+
+  el.classList.add("highlight");
+
+  setTimeout(() => {
+    el.classList.remove("highlight");
+  }, 2000);
+}
+
+function centerOnVnum(vnum) {
+  const offset = vnum - startingVnum;
+
+  const flippedY = Math.floor(offset / mapWidth);
+  const tileX = offset % mapWidth;
+
+  const tileY = (mapHeight - 1) - flippedY;
+
+  const lat = tileY * squareSize;
+  const lng = tileX * squareSize;
+
+  map.setView([lat, lng], 0);
+}
+
+centerOnVnum(552212);
+
+requestAnimationFrame(() => {
+  map.invalidateSize();
+  map.fitBounds(bounds);
+
+const fitZoom = map.getBoundsZoom(bounds);
+
+// allow zooming out 2 levels from fitted view
+map.setMinZoom(fitZoom - 2);
+map.setMaxZoom(fitZoom + 2);
+});
+
+// Toggle labels
+document.getElementById('toggle-labels').addEventListener('change', (e) => {
+  if (e.target.checked) {
+    map.addLayer(zoneLayer);
+  } else {
+    map.removeLayer(zoneLayer);
+  }
+});
+
+const input = document.getElementById('zone-search');
+const searchBtn = document.getElementById('search-btn');
+
+searchBtn.addEventListener('click', () => {
+  searchZone(input.value);
+});
+
+// Press Enter to search
+input.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') {
+    searchZone(input.value);
+  }
+});
+
+
+											</script>
+										</div>
+									</div>
+								</body>
+							</html>

@@ -1,0 +1,531 @@
+<!DOCTYPE html>
+<html>
+	<head>
+		<title>New Duris - Surface Map</title>
+		<meta name="description" content="Interactive world map of New Duris with searchable zones.">
+
+		<meta property="og:title" content="New Duris Surface Map">
+		<meta property="og:description" content="Explore the New Duris surface world with searchable zones.">
+		<meta property="og:type" content="website">
+		<meta property="og:url" content="https://drevarr.github.io">
+		<meta property="og:image" content="https://drevarr.github.io/DurisMUD_logo.png">
+
+		<meta name="twitter:card" content="summary_large_image">
+		<meta name="twitter:title" content="New Duris Surface Map">
+		<meta name="twitter:description" content="Explore the New Duris surface world with searchable zones.">
+		<meta name="twitter:image" content="https://drevarr.github.io/DurisMUD_logo.png">
+
+		<meta charset="utf-8" />
+		<meta name="viewport" content="width=device-width, initial-scale=1.0">
+			<!-- Leaflet CSS -->
+			<link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css" />
+			<style>
+	html, body {
+	  margin: 0;
+	  height: 100%;
+	  font-family: sans-serif;
+	}
+
+	/* Layout */
+	.app {
+	  display: flex;
+	  flex-direction: column;
+	  height: 100vh;
+	}
+
+	.header {
+	  background: #111;
+	  color: white;
+	  text-align: center;
+	  padding: 10px;
+	}
+
+	.main {
+	  display: flex;
+	  flex: 1;
+	  overflow: hidden;
+	  min-height: 0;
+	}
+
+	/* Sidebar */
+	.sidebar {
+	  width: 260px;
+	  background: #1d293d;
+	  color: white;
+	  padding: 10px;
+	  overflow-y: auto;
+	  border-right: 1px solid #ccc;
+	}
+
+	.panel {
+	  margin-bottom: 20px;
+	}
+
+	/* Map */
+	#map {
+	  flex: 1;
+	  height: 100%;
+	  min-height: 0; 
+	  background: #000;
+	}
+
+	#zone-list {
+	  max-height: 400px;
+	  overflow-y: auto;
+	  font-size: 12px;
+	}
+
+	.zone-item {
+	  padding: 4px;
+	  cursor: pointer;
+	  border-bottom: 1px solid #ddd;
+	}
+
+	.zone-item:hover {
+	  background: #05df72;
+	}
+  /* icon credits */
+  .map-credit {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 10px;
+  color: #aaa;
+  padding: 8px;
+  border-top: 1px solid #333;
+  margin-top: 10px;
+}
+
+.map-credit a {
+  color: #6cb6ff;
+  text-decoration: none;
+}
+
+.map-credit a:hover {
+  text-decoration: underline;
+}
+
+.credit-icon {
+  width: 16px;
+  height: 16px;
+  opacity: 0.8;
+}
+
+	/* Legend */
+	.legend-box {
+	  display: inline-block;
+	  width: 12px;
+	  height: 12px;
+	  background: white;
+	  margin-right: 6px;
+	  border: 1px solid black;
+	}
+
+	/* Your existing label styling */
+	.zone-label {
+	  color: #fff;
+	  font-size: 9px;
+	  font-weight: bold;
+	  max-width: 180px;
+	  white-space: normal;
+	  text-align: center;
+	  line-height: 0.9;
+	  text-shadow: 
+	    0 0 4px black,
+	    0 0 6px black;
+	  transform: translate(-50%, -50%);
+	  pointer-events: none;
+
+	  display: inline-block;
+	  word-break: keep-all;
+	}
+
+	.zone-label.highlight {
+	  text-shadow:
+	    0 0 6px yellow,
+	    0 0 10px yellow,
+	    0 0 14px orange;
+	}
+
+	/* Mobile */
+	@media (max-width: 768px) {
+	  .main {
+	    flex-direction: column;
+	  }
+
+	  .sidebar {
+	    width: 100%;
+	    height: 180px;
+	    min-height: 0;
+	    overflow-y: auto;
+	    border-right: none;
+	    border-bottom: 1px solid #ccc;
+	  }
+	}    
+    </style>
+		</head>
+		<body>
+			<div class="app">
+				<header class="header">
+					<h1>New Duris - Surface Map</h1>
+				</header>
+				<div class="main">
+					<aside class="sidebar">
+						<div class="panel">
+							<h3>Controls</h3>
+							<label>
+								<input type="checkbox" id="toggle-labels" checked>
+    Show Zone Labels
+  
+								</label>
+								<br>
+									<br>
+										<h3>Search Zones</h3>
+										<input type="text" id="zone-search" placeholder="Search zone name">
+											<button id="search-btn">Find</button>
+										</div>
+										<div class="panel">
+											<h3>Legend</h3>
+											<div>
+												<span class="legend-box"></span> Zone Label
+											</div>
+                      <div>
+                        <span><img src="dragon.png" alt="Dragon icon" class="credit-icon"></span> Dragon Flight
+											</div>
+                      <div>                        
+                        <span><img src="helm.png" alt="Helm" class="credit-icon"></span> Ferry Stop
+											</div>
+										</div>
+										<div class="panel">
+											<h3>Zone List</h3>
+											<div id="zone-list"></div>
+										</div>
+                    <div class="map-credit">
+                      <img src="dragon.png" alt="Dragon icon" class="credit-icon">
+                      <a href="https://www.flaticon.com/free-icons/dragon" target="_blank">
+                        Dragon icons by Icongeek26 - Flaticon
+                      </a>
+                      <img src="helm.png" alt="Helm" class="credit-icon">
+                      <a href="https://www.flaticon.com/free-icons/rudder" target="_blank">
+                        Rudder icons created by Freepik - Flaticon
+                      </a>                      
+                    </div>
+									</aside>
+									<div id="map"></div>
+									<script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
+									<script>
+  // --- CONFIG ---
+  const imageWidth = 1600;
+  const imageHeight = 1600;
+
+  const squareSize = 4;
+  const mapWidth = 400;
+  const mapHeight = 400;
+  const startingVnum = 500000;
+
+var dragonIcon = L.icon({
+    iconUrl: 'dragon.png',
+    iconSize:     [24, 24], // size of the icon
+    iconAnchor:   [0, 24], // point of the icon which will correspond to marker's location
+    popupAnchor:  [0, 0] // point from which the popup should open relative to the iconAnchor
+});
+var ferryIcon = L.icon({
+    iconUrl: 'helm.png',
+    iconSize:     [24, 24], // size of the icon
+    iconAnchor:   [0, 24], // point of the icon which will correspond to marker's location
+    popupAnchor:  [0, 0] // point from which the popup should open relative to the iconAnchor
+});
+
+const ferryRoutes = [
+  {start: 635261, name: "Wave Dancer: Sails to Khomani-Khan, Quietus Quay, Jade Empire and Myrabolus"}, //kk
+  {start: 587128, name: "Seaspray: Sails to Menden and Storm Port<br>Crimson Fulgur: Sails to Deramuth Port and Fort Boyard"}, //stormport
+  {start: 521442, name: "Stalval: Sails to Deramuth Port and Fort Boyard<br>Ironhold Grudge: Sails to Deramuth Port and Venan'Trut"}, //deramuth
+  {start: 545021, name: "Ironhold Grudge: Sails to Deramuth Port and Venan'Trut"}, // venan
+  {start: 570422, name: "Old Ferry : Sails to Moonshaes, Menden, and Tharnadia"}, //tharn
+  {start: 556815, name: "Old Ferry : Sails to Moonshaes, Menden, and Tharnadia"}, //shaes
+  {start: 551123, name: "Seaspray: Sails to Menden and Storm Port<br>Old Ferry : Sails to Moonshaes, Menden, and Tharnadia"}, //menden
+  {start: 642099, name: "Wave Dancer: Sails to Khomani-Khan, Quietus Quay, Jade Empire and Myrabolus"}, //jade
+  {start: 636557, name: "Wave Dancer: Sails to Khomani-Khan, Quietus Quay, Jade Empire and Myrabolus"}, //QQ
+  {start: 512874, name: "Wave Dancer: Sails to Khomani-Khan, Quietus Quay, Jade Empire and Myrabolus"}, //Myra
+  {start: 564318, name: "Ironhold Grudge: Sails to Deramuth Port and Fort Boyard<br>Stalval: Sails to Deramuth Port and Fort Boyard"} //Myra
+]
+
+const dragonRoutes = [
+  { start: 514072, name: "Ugta" },
+  { start: 519043, name: "Kimordril" },
+  { start: 522247, name: "Clan Shatter Stone" },
+  { start: 543662, name: "Fort Khorcalator" },
+  { start: 543701, name: "Myrabolus, The City of Torrhan" },
+  { start: 545407, name: "Fort Boyard, Sarmiz'Duul, The City of Torrhan" },
+  { start: 563522, name: "Venan'Trut" },
+  { start: 576577, name: "A Desolate Island" },
+  { start: 580080, name: "Venan'Trut" },
+  { start: 582084, name: "Ugta" },
+  { start: 588326, name: "Bloodstone Keep" },  
+  { start: 606262, name: "Quietus Quay, Storm Port" },
+  { start: 619771, name: "A Huge Cavern on the Bloodfist Mountains" },
+  { start: 622276, name: "Venan'Trut" },
+  { start: 631413, name: "Helgor Outpost" },
+  { start: 635756, name: "Bloodstone Keep" }
+];
+
+const zones = [{"vnum": 568110, "name": "A Dark and Twisted Wood"}, {"vnum": 548052, "name": "Abandoned Elven Homestead"}, {"vnum": 520247, "name": "Alatorin - the Forge City"}, {"vnum": 521444, "name": "Alatorin - the Forge City"}, {"vnum": 537871, "name": "Altar of Ice"}, {"vnum": 526268, "name": "Ant Forest"}, {"vnum": 515393, "name": "Apocalypse Castle"}, {"vnum": 589916, "name": "Arachdrathos Wilderness"}, {"vnum": 588317, "name": "Arachdrathos Wilderness"}, {"vnum": 559712, "name": "Arbre's Forest"}, {"vnum": 560511, "name": "Arbre's Forest"}, {"vnum": 517245, "name": "Arcium, the Plagued Kingdom"}, {"vnum": 623031, "name": "Arlik's Inn"}, {"vnum": 550081, "name": "Ashrumite Village"}, {"vnum": 546115, "name": "Bandit Camp"}, {"vnum": 609101, "name": "Barrow of the Quiosho"}, {"vnum": 612308, "name": "Barrow of the Quiosho"}, {"vnum": 613105, "name": "Barrow of the Quiosho"}, {"vnum": 627270, "name": "Bear Pass"}, {"vnum": 604260, "name": "Bloodstone Keep"}, {"vnum": 602663, "name": "Bloodstone Keep"}, {"vnum": 605464, "name": "Bloodstone Keep"}, {"vnum": 604672, "name": "Bloodstone Keep"}, {"vnum": 513880, "name": "Bone Fort Inn"}, {"vnum": 517891, "name": "Boulder Lion Pass"}, {"vnum": 516291, "name": "Boulder Lion Pass"}, {"vnum": 539288, "name": "Broken Blade Inn"}, {"vnum": 589070, "name": "Bugentolen"}, {"vnum": 545343, "name": "Canderthal Harbor"}, {"vnum": 516667, "name": "Cave of the Roc"}, {"vnum": 518665, "name": "Cave of the Roc"}, {"vnum": 607020, "name": "Caves of Mt. Skelenak"}, {"vnum": 519284, "name": "Centaur Villages"}, {"vnum": 627887, "name": "Ceothia"}, {"vnum": 513693, "name": "Charing"}, {"vnum": 512667, "name": "Chesynn the Hunter"}, {"vnum": 580880, "name": "City of Torrhan"}, {"vnum": 552914, "name": "Cloud Giant Kingdom"}, {"vnum": 567018, "name": "Collapsed Tower"}, {"vnum": 597444, "name": "Contraband Pirate"}, {"vnum": 531288, "name": "Court of the Muse"}, {"vnum": 523535, "name": "Crystalspyre Mountains"}, {"vnum": 577782, "name": "Cursed Bridge"}, {"vnum": 577784, "name": "Cursed Bridge"}, {"vnum": 583796, "name": "Cyric's Tunnels"}, {"vnum": 635261, "name": "Dalvik"}, {"vnum": 633649, "name": "Dark Forest"}, {"vnum": 515273, "name": "Darkfall Forest"}, {"vnum": 515678, "name": "Darkfall Forest"}, {"vnum": 519298, "name": "Darkmore Forest & Quintaragon Castle"}, {"vnum": 524894, "name": "Darkmore Forest & Quintaragon Castle"}, {"vnum": 630996, "name": "Deep and Dark Hole"}, {"vnum": 521303, "name": "Defense of Longhollow"}, {"vnum": 560134, "name": "Desolate"}, {"vnum": 641968, "name": "Dragonnia"}, {"vnum": 595851, "name": "Drustl's Yerdonia Enslaved"}, {"vnum": 563533, "name": "Du'Maathe Castle"}, {"vnum": 545285, "name": "Elven Pass"}, {"vnum": 547289, "name": "Elven Pass"}, {"vnum": 528830, "name": "Enclave of the Opal Phoenix"}, {"vnum": 597480, "name": "Faang"}, {"vnum": 531695, "name": "Faerie Realm"}, {"vnum": 590430, "name": "Farseer Outpost"}, {"vnum": 538302, "name": "Father Tel's Holy Cloister"}, {"vnum": 528827, "name": "Fenaline Docks"}, {"vnum": 566869, "name": "Fishermans Wharf"}, {"vnum": 542730, "name": "Fishing Village"}, {"vnum": 562319, "name": "Fort Boyard"}, {"vnum": 519318, "name": "Fort Marigot"}, {"vnum": 523899, "name": "General Store"}, {"vnum": 538211, "name": "Githzerai Stronghold"}, {"vnum": 578863, "name": "Gnomish Observatory"}, {"vnum": 610280, "name": "Goat Path"}, {"vnum": 609883, "name": "Goat Path"}, {"vnum": 559299, "name": "Golden Hall of the Crown"}, {"vnum": 541147, "name": "Greyy Fang"}, {"vnum": 547276, "name": "Harrow -The Gnome Village"}, {"vnum": 615667, "name": "Home of the Divine"}, {"vnum": 543119, "name": "Ice Forest"}, {"vnum": 543910, "name": "Ice Forest"}, {"vnum": 522717, "name": "Ice Tower"}, {"vnum": 511915, "name": "IceCrag Castle"}, {"vnum": 572471, "name": "Jenna's Waystation"}, {"vnum": 619253, "name": "Jindon the Deathwood Forest"}, {"vnum": 585774, "name": "Killing Fields"}, {"vnum": 543257, "name": "Kimordril"}, {"vnum": 542861, "name": "Kimordril"}, {"vnum": 621730, "name": "Kobold Settlement"}, {"vnum": 617006, "name": "Krethik Keep"}, {"vnum": 617009, "name": "Krethik Keep"}, {"vnum": 633809, "name": "Kvark's Great Connector"}, {"vnum": 632613, "name": "Kvark's Great Connector"}, {"vnum": 584825, "name": "Lareth (Sunwell)"}, {"vnum": 564627, "name": "Lava Springs"}, {"vnum": 590199, "name": "Lava Tubes"}, {"vnum": 589401, "name": "Lava Tubes"}, {"vnum": 561016, "name": "Lost City of Tikitzopl"}, {"vnum": 573831, "name": "Magma Path"}, {"vnum": 573429, "name": "Magma Path"}, {"vnum": 632944, "name": "Malch'Hor Ganl the Goblin City"}, {"vnum": 550325, "name": "Menden-on-the-Deep"}, {"vnum": 522256, "name": "Miaeril Village"}, {"vnum": 647688, "name": "Mitashi - Capital City of the Jade Empire"}, {"vnum": 557618, "name": "Moonshae Island"}, {"vnum": 629815, "name": "Moria Shaft"}, {"vnum": 611657, "name": "Mosswood"}, {"vnum": 610642, "name": "Mountain Tracts of the Untamed"}, {"vnum": 607456, "name": "Mountain Tracts of the Untamed"}, {"vnum": 599065, "name": "Mountain Tracts of the Untamed"}, {"vnum": 513274, "name": "Myrabolus"}, {"vnum": 544843, "name": "Mystic"}, {"vnum": 625237, "name": "Nax"}, {"vnum": 528059, "name": "Neverwind Valley"}, {"vnum": 526059, "name": "Neverwind Valley"}, {"vnum": 528070, "name": "Neverwinter Woods"}, {"vnum": 584183, "name": "New Cave city"}, {"vnum": 575727, "name": "Nizari"}, {"vnum": 539487, "name": "Northern Lakes and Settlements"}, {"vnum": 581017, "name": "Ny'Neth"}, {"vnum": 597058, "name": "Ogre Camp"}, {"vnum": 597062, "name": "Ogre Camp"}, {"vnum": 593106, "name": "Ogre Raiders"}, {"vnum": 593125, "name": "Orc Trade Path"}, {"vnum": 591925, "name": "Orc Trade Path"}, {"vnum": 610229, "name": "Orrak"}, {"vnum": 579311, "name": "Pit Lions"}, {"vnum": 561728, "name": "Pits of Cerberus"}, {"vnum": 560529, "name": "Pits of Cerberus"}, {"vnum": 568515, "name": "Rift Valley Jungle"}, {"vnum": 541821, "name": "Rogue Plains"}, {"vnum": 568230, "name": "Ruined Outpost"}, {"vnum": 575446, "name": "Ruined Temple of Tezcatlipoca"}, {"vnum": 622275, "name": "Sarmiz'Duul"}, {"vnum": 562071, "name": "Savannah of Broken Trusts"}, {"vnum": 515852, "name": "Sevenoaks"}, {"vnum": 513384, "name": "Shadow Pass"}, {"vnum": 511781, "name": "Shadow Pass"}, {"vnum": 545707, "name": "Shadowclave"}, {"vnum": 583894, "name": "Shady Grove"}, {"vnum": 614186, "name": "Shairak and Smokeveil Forest"}, {"vnum": 526528, "name": "Shaledrieth (Sunwell)"}, {"vnum": 632237, "name": "Skulldrach"}, {"vnum": 531249, "name": "Southern Coastal Highway"}, {"vnum": 578100, "name": "Spider Pass"}, {"vnum": 576102, "name": "Spider Pass"}, {"vnum": 587528, "name": "Storm Port"}, {"vnum": 636681, "name": "Storm Port Stronghold"}, {"vnum": 599671, "name": "Strathor Valley of the Storm Giants"}, {"vnum": 608723, "name": "Swamp"}, {"vnum": 603652, "name": "Taliccicopiid"}, {"vnum": 587401, "name": "Temple of Flames"}, {"vnum": 570423, "name": "Tharnadia - City of Humans"}, {"vnum": 568439, "name": "Tharnadian Ruins"}, {"vnum": 512696, "name": "The Ancient Halls of Ironstar"}, {"vnum": 536067, "name": "The Bandit Canyons"}, {"vnum": 612059, "name": "The Basin Waste"}, {"vnum": 623687, "name": "The Battlefield"}, {"vnum": 594210, "name": "The Behemoth Herders"}, {"vnum": 586175, "name": "The Bloody Plains"}, {"vnum": 649696, "name": "The Caverns of Armageddon"}, {"vnum": 638824, "name": "The Chasm of the Misty Vale"}, {"vnum": 527482, "name": "The Church of the Eternal Dusk"}, {"vnum": 582495, "name": "The Cimmerian Nomad Encampment"}, {"vnum": 552847, "name": "The City of Newhaven"}, {"vnum": 533878, "name": "The City of Winterhaven"}, {"vnum": 533876, "name": "The City of Winterhaven"}, {"vnum": 606467, "name": "The Deep Ravine of Passage"}, {"vnum": 604872, "name": "The Deep Ravine of Passage"}, {"vnum": 583660, "name": "The Deep Ravine of Passage"}, {"vnum": 545020, "name": "The Desert City of Venan'Trut"}, {"vnum": 636155, "name": "The Docks of Quietus Quay"}, {"vnum": 531680, "name": "The Elemental Groves"}, {"vnum": 629485, "name": "The Fields Between"}, {"vnum": 579250, "name": "The Fog Enshrouded Wood"}, {"vnum": 578043, "name": "The Fog Enshrouded Wood"}, {"vnum": 576052, "name": "The Fog Enshrouded Wood"}, {"vnum": 620480, "name": "The Forest City of Aravne"}, {"vnum": 516091, "name": "The Forgotten Forest"}, {"vnum": 588621, "name": "The Forgotten Mansion"}, {"vnum": 616973, "name": "The Goblin Camp"}, {"vnum": 510179, "name": "The Great Shaboath"}, {"vnum": 629674, "name": "The Halfcut Hills"}, {"vnum": 566916, "name": "The Halfling Silver Mine"}, {"vnum": 638611, "name": "The Hall of Knighthood"}, {"vnum": 517268, "name": "The Haunted Woods"}, {"vnum": 525669, "name": "The High Moor Forest"}, {"vnum": 527556, "name": "The Human Outpost"}, {"vnum": 642499, "name": "The Jade Empire"}, {"vnum": 583838, "name": "The Keep of Evil"}, {"vnum": 611054, "name": "The Kingdom of Torg"}, {"vnum": 633825, "name": "The Lizardman Swamps of Clavikord"}, {"vnum": 621106, "name": "The Lost Realms of Shadowfall"}, {"vnum": 571012, "name": "The Maze of Undead Army"}, {"vnum": 513141, "name": "The Monestary of Tranquility"}, {"vnum": 548830, "name": "The Motte and Bailey of Duke Delwyn"}, {"vnum": 619642, "name": "The Mountain Settlement of the Harpies"}, {"vnum": 616480, "name": "The Mountain Valley of Dawndale"}, {"vnum": 617683, "name": "The Mountain Valley of Dawndale"}, {"vnum": 557288, "name": "The Mountain Village of Tentro"}, {"vnum": 543336, "name": "The Mountain Village of Tentro"}, {"vnum": 517517, "name": "The Mountain of the Banished"}, {"vnum": 579404, "name": "The Obsidian Citadel"}, {"vnum": 592989, "name": "The Old Graveyard"}, {"vnum": 592592, "name": "The Old Graveyard"}, {"vnum": 551267, "name": "The Outcasts Tower"}, {"vnum": 635862, "name": "The Prisons of Carthapia"}, {"vnum": 511535, "name": "The Reliquary Nexus of Aggression"}, {"vnum": 577804, "name": "The Reliquary Nexus of The Dead"}, {"vnum": 518753, "name": "The Reliquary Nexus of the Corsairs"}, {"vnum": 641696, "name": "The Rice Fields"}, {"vnum": 640500, "name": "The Rice Fields"}, {"vnum": 584445, "name": "The Ruins of Turolopolis"}, {"vnum": 576165, "name": "The Scorched Valley"}, {"vnum": 558317, "name": "The Seacaves"}, {"vnum": 628062, "name": "The Shadow Forest"}, {"vnum": 616946, "name": "The Ship Yards"}, {"vnum": 535402, "name": "The Sky City of Ultarium"}, {"vnum": 536208, "name": "The Sky City of Ultarium"}, {"vnum": 535407, "name": "The Sky City of Ultarium"}, {"vnum": 615849, "name": "The Temple of Lizizania"}, {"vnum": 541276, "name": "The Temple of the Sun"}, {"vnum": 531937, "name": "The Town of Breale"}, {"vnum": 626939, "name": "The Town of Moregeeth"}, {"vnum": 629224, "name": "The Trakkia Mountains"}, {"vnum": 556018, "name": "The Transparent Tower"}, {"vnum": 625767, "name": "The Troll Hills"}, {"vnum": 569794, "name": "The Undead Fog"}, {"vnum": 569798, "name": "The Undead Fog"}, {"vnum": 605089, "name": "The Undead Outpost"}, {"vnum": 520673, "name": "The Valoisian Castle"}, {"vnum": 618433, "name": "The Village of New Hope"}, {"vnum": 532036, "name": "Totem Pass"}, {"vnum": 530034, "name": "Totem Pass"}, {"vnum": 586437, "name": "Tower of High Sorcery"}, {"vnum": 631269, "name": "Tribal Forest"}, {"vnum": 611693, "name": "Tribal Oasis"}, {"vnum": 622564, "name": "Troll Caves"}, {"vnum": 623811, "name": "Troll Mercenary"}, {"vnum": 622612, "name": "Troll Mercenary"}, {"vnum": 538337, "name": "Tundra"}, {"vnum": 538745, "name": "Tundra"}, {"vnum": 574593, "name": "Tunnels of Payang"}, {"vnum": 576996, "name": "Tunnels of Payang"}, {"vnum": 559647, "name": "Twin Towers Forest"}, {"vnum": 517880, "name": "Tzultaire Ruins"}, {"vnum": 542898, "name": "Ugta"}, {"vnum": 578233, "name": "Varathorn Keep"}, {"vnum": 575843, "name": "Varathorn Keep"}, {"vnum": 605303, "name": "Vargan"}, {"vnum": 597008, "name": "Vecna's Tomb"}, {"vnum": 563234, "name": "Vella's Bordello"}, {"vnum": 530717, "name": "Verspin"}, {"vnum": 627639, "name": "Village of Refugees"}, {"vnum": 587495, "name": "Village of Split Shield"}, {"vnum": 527137, "name": "Village of Werrun"}, {"vnum": 600249, "name": "Village of the Damned"}, {"vnum": 599922, "name": "Warg Ravine"}, {"vnum": 598723, "name": "Warg Ravine"}, {"vnum": 572119, "name": "Wellvolen"}, {"vnum": 569310, "name": "Woodseer"}, {"vnum": 619036, "name": "Worm Crater"}, {"vnum": 538438, "name": "Worm Pass"}, {"vnum": 536039, "name": "Worm Pass"}, {"vnum": 597368, "name": "Zalkapfaan, City of the Headless Horde"}, {"vnum": 511126, "name": "the Lost Temple of the North"}, {"vnum": 513538, "name": "the Lost Temple of the North"}, {"vnum": 518340, "name": "the Lost Temple of the North"}];
+
+  // --- INIT MAP ---
+  const map = L.map('map', {
+    zoomAnimation: false,
+    crs: L.CRS.Simple,
+    zoomDelta: 0.25,
+    zoomSnap: 0.25,
+    wheelPxPerZoomLevel: 75
+  });
+
+  const bounds = [[0, 0], [imageHeight, imageWidth]];
+  L.imageOverlay('duris_surface.wld.png', bounds).addTo(map);
+  map.fitBounds(bounds);
+
+  setTimeout(() => {
+  map.invalidateSize();
+}, 0);
+
+
+  map.on('click', function(e) {
+    const pixelX = Math.floor(e.latlng.lng);
+    const pixelY = Math.floor(e.latlng.lat);
+
+    const tileX = Math.floor(pixelX / squareSize);
+    const tileY = Math.floor(pixelY / squareSize);
+
+    // Flip Y so bottom-left = starting vnum
+    const flippedY = (mapHeight - 1) - tileY;
+
+    const vnum = startingVnum + (flippedY * mapWidth) + tileX;
+
+    L.popup()
+      .setLatLng(e.latlng)
+      .setContent(
+        `Pixel: (${pixelX}, ${pixelY})
+										<br>` +
+        `Tile: (${tileX}, ${tileY})
+											<br>` +
+        `World VNUM: ${vnum}`
+      )
+      .openOn(map);
+  });
+
+  // --- OPTIONAL: VNUM -> LOCATION HELPER ---
+  function vnumToLatLng(vnum) {
+    const offset = vnum - startingVnum;
+
+    const flippedY = Math.floor(offset / mapWidth);
+    const tileX = offset % mapWidth;
+
+    // unflip Y
+    const tileY = (mapHeight - 1) - flippedY;
+
+    return [
+      tileY * squareSize,
+      tileX * squareSize
+    ];
+  }
+
+dragonRoutes.forEach(m => {
+  L.marker(vnumToLatLng(m.start), {icon: dragonIcon})
+    .addTo(map)
+    .bindPopup("Fly to: " + m.name);
+});
+
+ferryRoutes.forEach(m => {
+  L.marker(vnumToLatLng(m.start), {icon: ferryIcon})
+    .addTo(map)
+    .bindPopup(m.name);
+});
+
+function createZoneLabel(zone) {
+  return L.marker(vnumToLatLng(zone.vnum), {
+    icon: L.divIcon({
+      className: 'zone-label',
+      html: zone.name,
+      iconSize: [50, null]
+    })
+  });
+}
+
+const zoneLayer = L.layerGroup();
+const zoneIndex = {};
+
+zones.forEach(zone => {
+  const marker = createZoneLabel(zone);
+
+  // store reference (handle duplicates)
+  const key = zone.name.toLowerCase();
+  if (!zoneIndex[key]) zoneIndex[key] = [];
+  zoneIndex[key].push(marker);
+
+  zoneLayer.addLayer(marker);
+});
+
+zoneLayer.addTo(map);
+
+const zoneList = document.getElementById('zone-list');
+
+zones.forEach(zone => {
+  const div = document.createElement('div');
+  div.className = 'zone-item';
+  div.textContent = zone.name;
+
+  div.addEventListener('click', () => {
+    zoomToZone(zone.name);
+  });
+
+  zoneList.appendChild(div);
+});
+
+function updateLabelScale() {
+  const zoom = map.getZoom();
+
+  document.querySelectorAll('.zone-label').forEach(el => {
+    const marker = el.closest('.leaflet-marker-icon');
+
+    if (zoom < 1) {
+      marker.style.display = "none";
+    } else {
+      marker.style.display = "block";
+    }
+
+    const scale = Math.max(0.9, Math.min(1.4, zoom / 3));
+    el.style.fontSize = (9 * scale) + 'px';
+  });
+}
+
+function searchZone(query) {
+  const q = query.toLowerCase().trim();
+
+  if (!q) return;
+
+  const matches = Object.keys(zoneIndex).filter(name =>
+    name.includes(q)
+  );
+
+  if (matches.length === 0) {
+    alert("No matches found");
+    return;
+  }
+
+  // If only one match → zoom directly
+  if (matches.length === 1) {
+    zoomToZone(matches[0]);
+    return;
+  }
+
+  // Multiple matches → zoom to all
+  zoomToMultipleZones(matches);
+}
+
+function zoomToMultipleZones(names) {
+  const allMarkers = [];
+
+  names.forEach(name => {
+    zoneIndex[name].forEach(marker => {
+      allMarkers.push(marker);
+    });
+  });
+
+  const group = L.featureGroup(allMarkers);
+
+  map.fitBounds(group.getBounds(), {
+    padding: [50, 50]
+  });
+}
+
+function zoomToZone(name) {
+  const key = name.toLowerCase();
+
+  if (!zoneIndex[key]) {
+    alert("Zone not found");
+    return;
+  }
+
+  const markers = zoneIndex[key];
+
+  // If multiple matches, use first (or extend later)
+  const marker = markers[0];
+  const latlng = marker.getLatLng();
+
+  // Smooth zoom + center
+  map.setView(latlng, 2);
+
+  // Optional: popup
+  marker.bindPopup(name).openPopup();
+
+  // Optional: highlight
+  highlightMarker(marker);
+}
+
+function highlightMarker(marker) {
+  const el = marker.getElement();
+  if (!el) return;
+
+  el.classList.add("highlight");
+
+  setTimeout(() => {
+    el.classList.remove("highlight");
+  }, 2000);
+}
+
+function centerOnVnum(vnum) {
+  const offset = vnum - startingVnum;
+
+  const flippedY = Math.floor(offset / mapWidth);
+  const tileX = offset % mapWidth;
+
+  const tileY = (mapHeight - 1) - flippedY;
+
+  const lat = tileY * squareSize;
+  const lng = tileX * squareSize;
+
+  map.setView([lat, lng], 0);
+}
+
+centerOnVnum(552212);
+
+requestAnimationFrame(() => {
+  map.invalidateSize();
+  map.fitBounds(bounds);
+
+const fitZoom = map.getBoundsZoom(bounds);
+
+// allow zooming out 2 levels from fitted view
+map.setMinZoom(fitZoom - 2);
+map.setMaxZoom(fitZoom + 2);
+});
+
+// Toggle labels
+document.getElementById('toggle-labels').addEventListener('change', (e) => {
+  if (e.target.checked) {
+    map.addLayer(zoneLayer);
+  } else {
+    map.removeLayer(zoneLayer);
+  }
+});
+
+const input = document.getElementById('zone-search');
+const searchBtn = document.getElementById('search-btn');
+
+searchBtn.addEventListener('click', () => {
+  searchZone(input.value);
+});
+
+// Press Enter to search
+input.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') {
+    searchZone(input.value);
+  }
+});
+
+
+											</script>
+										</div>
+									</div>
+								</body>
+							</html>
