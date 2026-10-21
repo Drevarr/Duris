@@ -1,563 +1,504 @@
-# Issue #107: Choose a stat rolling system before rolling
+# Issue #59: fastest useful PostHog delivery
 
-Status: implementation and local acceptance complete; ready for review, 2026-10-20.
-This change includes no OpenSpec workflow files. Worktree: `/home/aiwithapex/projects/duris-issue107-plan`.
+> **DO NOT SCOPE CREEP. WE ARE OUT OF TIME AND TOKENS. DELIVER FAST.**
+>
+> Owner directive: finish only the agreed reduced delivery. Reuse existing code
+> and valid evidence. No optional features, refactors, test matrices, new test
+> frameworks, repeated branch syncing, or extra qualification stages. Fix only
+> defects that prevent the agreed outcome; run the smallest relevant checks.
+> Deferred work must never become a condition for closing issue #59.
+> Preserve the agreed correctness and completion requirements; cut extra work.
 
-Review order: [Telnet #236](https://github.com/LuminariMUD/Duris/pull/236), then
-[WebSocket #237](https://github.com/LuminariMUD/Duris/pull/237), then
-[creation responses #238](https://github.com/LuminariMUD/Duris/pull/238), then
-[first-entry vitals #239](https://github.com/LuminariMUD/Duris/pull/239) on the current
-branch `branch/issue-107-first-entry-vitals`.
-The required website companion is [DurisWeb #73](https://github.com/LuminariMUD/DurisWeb/pull/73),
-worktree `/home/aiwithapex/projects/durisweb-issue107`, branch
-`branch/issue-107-stat-choice`. Both browser methods, full-world persistence and
-review qualification pass. Merge/release remain owner review steps; no production
-operation, merge or release tag was performed. #107 stays open for integration.
+Status: **all five reduced-delivery criteria pass; ready for review; production disabled.**
+Tracking: [Duris #59](https://github.com/LuminariMUD/Duris/issues/59).
+Working branch: `issue-59-posthog-reports`, based on acceptance PR #262.
+Runtime PR #261 is the preceding dependency.
+The earlier issue-107 plan remains in [plan-issue-107.md](plan-issue-107.md).
+The intervening Assassin plan is preserved byte-for-byte in
+[plan-issue-187.md](plan-issue-187.md).
 
-Tracking: [Duris #107](https://github.com/LuminariMUD/Duris/issues/107).
-Implementation branch: `branch/issue-107-stat-choice`.
-Duris source baseline: [master `e19537cced99`](https://github.com/LuminariMUD/Duris/commit/e19537cced993bc8de3de1abd76027e8d40b389a).
-DurisWeb source baseline: [master `70288bf4583b`](https://github.com/LuminariMUD/DurisWeb/commit/70288bf4583b94710c981fe35609de0e2b26ad71).
+The owner has authorized a smaller first delivery that retains at least 75% of
+value and has removed the container/network-isolation requirement completely.
+Disposable native tests are the accepted environment. This plan supersedes the
+previous implementation sequence and its extra completion gates. Issue #59
+closes when this reduced delivery meets the completion criteria below. Deferred
+work is outside #59's closure requirements and remains optional follow-up.
+Implementation is active within the agreed reduced scope. The worker HTTPS component is in [PR #260](https://github.com/LuminariMUD/Duris/pull/260); runtime
+integration is ready for review in [PR #261](https://github.com/LuminariMUD/Duris/pull/261).
+Gameplay, failure, reports, volume and the retained performance gate all pass.
+The complete reduced delivery is ready for review. Production export remains disabled.
 
-The [October 18 resolution](https://github.com/LuminariMUD/Duris/issues/107#issuecomment-6248090892)
-and the owner's confirmation in this planning conversation select **both F and E**.
-They supersede the issue body's statement that no system has been selected.
-The [earlier E proposal](https://github.com/LuminariMUD/Duris/issues/107#issuecomment-6202646969)
-supplies the four +5 bonuses and existing swaps. The owner confirmed the
-interpretation of four bonuses across clients and changes for new characters only.
-Other historical systems and later objections are context, not extra features.
+## Delivery target and estimate
 
-The previous Cleric plan, including pending production acceptance, is preserved
-byte-for-byte in [plan-issue-169.md](plan-issue-169.md).
-The [historical investigation](character-stat-rolling-history.md) explains the
-older systems; the current source findings below determine implementation scope.
+**DO NOT SCOPE CREEP. WE ARE OUT OF TIME AND TOKENS. DELIVER FAST.**
 
-## Outcome
+**The repeated 3–5 hour remaining estimate is withdrawn. No replacement ETA
+has been validated.** Do not reset the estimate after time has elapsed or present
+historical passing results as proof for a changed revision. The owner has resumed implementation within the agreed scope.
 
-Every new character chooses a method before any starting attributes are rolled,
-in both Telnet and the DurisWeb character wizard:
+Implementation and all five acceptance criteria are complete. The final measured
+evidence is recorded below and in PERFORMANCE_GATE.md. Review and separately
+authorized production activation are the remaining external steps; deferred work
+is never a closure condition. Stop adding implementation or qualification work.
 
-1. **Default / quick start (F):** independently roll each of the ten attributes
-   with `1d4 + 86`, range 87-90, mean 88.5 per attribute. This is the preselected
-   choice and the Telnet Enter default. Roll once and proceed to bonuses.
-2. **Advanced / rerolling (E):** independently roll all ten attributes with
-   `3d6 + 77`, range 80-95, mean 87.5 per attribute. Permit unlimited replacement
-   rolls before accepting a set. Accepting it advances to bonuses.
-3. Both methods grant **four +5 selections**, capped at 100 per attribute,
-   followed by optional repeated swaps and normal character confirmation/entry.
-   The eight ordinary attributes and luck can receive bonuses and be swapped;
-   karma is rolled and displayed but cannot be changed by bonuses or swaps.
-4. Keep qualitative stat labels. Preserve racial modifiers, equipment/spell
-   effects, the existing entry floor, and all saved characters. Do not gate the
-   method on race, class, newbie/veteran selection, or Hardcore.
-5. Enforce the same creation order and counts on the server. A browser-only
-   hidden button is insufficient. A failed request must leave the accepted
-   stats, selected method, and remaining bonuses intact.
+No Docker setup, additional machine, database installation, fixed soak period,
+CI wait, or extra qualification stage belongs on this delivery path. Required
+code review still applies.
 
-Suggested shared explanation:
+### What “at least 75%” means here
 
-> Choose your stat rolling system. Default gives consistently strong starting
-> stats, a higher average per roll, and a faster start. Advanced gives a wider
-> range and lets you reroll for a potentially stronger set, which may take time.
-> Both choices receive four +5 bonuses and allow stat swaps.
+**DO NOT SCOPE CREEP. WE ARE OUT OF TIME AND TOKENS. DELIVER FAST.**
 
-The higher average describes one unselected roll. It does not compare Default
-with an Advanced set selected after many attempts or promise Advanced success.
-Full cancellation/restart remains possible, as it is today; this is not a
-guarantee against scripts repeatedly starting new characters.
+Retain every analytics domain named in the issue and the controls that make its
+data useful and affordable. The following is an explicit planning value model,
+not a measured user-satisfaction score or a claim that implementation is 85% done.
 
-## Non-goals and ablation decisions
+| Outcome | Value weight | Retained in this delivery |
+| --- | ---: | ---: |
+| Character activity/returns and correctly allocated time | 35 | 35 |
+| Observed XP, attempts, modifiers and level changes | 15 | 15 |
+| Encounter outcomes, participant and separate pet contributions | 15 | 15 |
+| Bounded delivery, privacy, durable quota, useful health and lifecycle correctness | 20 | 20 |
+| Complete removal of legacy SQL boot/schema prerequisites | 10 | 0 — deferred |
+| Broad engine/capacity qualification beyond the release fixture | 5 | 0 — deferred |
+| **Total** | **100** | **85** |
 
-- **Keep** the two distributions, pre-roll choice, four-bonus parity, existing
-  swap targets, and real journeys through both clients: removing any one leaves
-  an explicit requirement incomplete.
-- **Simplify** by retaining `roll_basic_attributes()`, `CON_REROLL`, the existing
-  Telnet bonus/swap handlers, descriptor-owned WebSocket stats, and the existing
-  Vue wizard. Add one explicit Advanced roll type; do not replace the roller.
-- **Keep** narrow WebSocket attempt/phase checks and reset handling. Current
-  handlers accept out-of-order requests and retain reusable stats; these checks
-  are necessary to make the selected method and four-bonus flow authoritative.
-- **Simplify** Telnet's three repeated entry blocks into one local prompt
-  function used by those three callers. This is an existing duplication with
-  real callers, not a general character-creation framework.
-- **Drop** A-D, point-buy, fixed-total arrays, new racial balance, exact-number
-  displays, extra bonuses, reroll limits, script detection, account quotas,
-  persisted method history, migrations, feature flags, new services, and a
-  generic workflow/transport framework. None is needed for the selected outcome.
-- Keep existing admission, name, class, race, Hardcore, account, and persistence
-  policies. Broad creation cleanup and unrelated defects are separate work.
-  Production deployment and live player changes are outside this planning task.
+This retains an estimated **85% of the original plan's value**, with all four
+user-facing report domains. The tradeoff is an existing-schema dependency for
+SQL gameplay and narrower capacity evidence. Core correctness, privacy and
+quota limits are acceptance conditions, not optional points to trade away.
 
-## Historical baseline source findings
+## Scope decisions
 
-These are code observations at the baselines above, not runtime test results.
-The DurisWeb working checkout was behind master; the five affected implementation
-files were compared with fetched `origin/master` and had no differences.
+**DO NOT SCOPE CREEP. WE ARE OUT OF TIME AND TOKENS. DELIVER FAST.**
+The reduced scope below is the delivery boundary. Deferred work stays deferred.
 
-- [actwiz.c](../../src/cmd/actwiz.c), `roll_basic_attributes()` around lines
-  5602-5725: `ROLL_NORMAL` actually uses 1d4+86 despite an 80-95 comment.
-  The non-mob loop assigns all `MAX_ATTRIBUTES` entries to both base and current
-  stats. Race/class do not select a different normal distribution.
-  `do_reroll()` also calls this function; [db.c](../../src/world/db.c) uses the
-  three separate mob types. Changing `ROLL_NORMAL` globally would affect staff
-  rerolls and erase F. Preserve existing type values and callers.
-- [nanny.c](../../src/account/nanny.c): `select_class()` at 2878,
-  `select_alignment()` at 3019, and `select_hometown()` at 3074 each roll before
-  entering `CON_BONUS1`. All three need the choice before that call.
-  `select_reroll()` at 2559 still exists but also uses `ROLL_NORMAL`; merely
-  routing into it would reroll F rather than restore E.
-- The ordinary bonus route is `CON_BONUS1 -> CON_BONUS2 -> CON_BONUS3 ->
-  CON_BONUS5`, then swaps. Four awards are real despite five named states.
-  `add_stat_bonus()` adds exactly the passed 5, clamps at 100, and updates current
-  stats. Telnet currently spends a choice on a stat already at 100; WebSocket
-  rejects that request without spending it.
-- [structs.h](../../src/core/structs.h) owns numeric connection states,
-  `TOTAL_CON`, and descriptor `chargen_*` fields.
-  [constant.c](../../src/core/constant.c) indexes `connected_types` by those
-  states. [comm.c](../../src/net/comm.c) explicitly classifies creation states
-  for ten-minute idle timeouts and zeroes newly allocated descriptors.
-  A new prompt state therefore needs dispatcher, display-name, and timeout
-  integration; appending a state must not renumber existing values.
-- [ws_handlers.c](../../src/net/ws_handlers.c), `ws_cmd_roll_stats()` at 1805:
-  any authenticated request with a playable race rolls anew, stores the race,
-  and resets bonuses to **five**. `ws_cmd_add_bonus()` checks the count and cap,
-  while `ws_cmd_swap_stats()` has no bonus-completion gate.
-  `ws_cmd_create_character()` copies descriptor stats without requiring an
-  accepted roll, zero remaining bonuses, or a matching rolled race.
-  Dispatch has a pending-auth/write guard but no general creation-phase gate.
-  These gaps must be handled in the affected creation commands.
-- `enter_game()` in nanny.c floors all ten base stats at 80. Both selected
-  distributions already meet that floor. Changing it or migrating old
-  characters is unnecessary and would widen the behavior change.
-- [lib/creation/reroll](../../lib/creation/reroll) is presently a label legend,
-  not the actual reroll question. It ends at “Very good:86+” although
-  `STAT_INDEX()` distinguishes 86-91 and 92-100.
-  [lib/creation/bonus](../../lib/creation/bonus) says four bonuses but calls them
-  rolls and describes bonuses as the final step before the existing swaps.
-- DurisWeb's
-  [MudCharacterCreate.vue](https://github.com/LuminariMUD/DurisWeb/blob/70288bf4583b94710c981fe35609de0e2b26ad71/frontend/src/components/mud/chargen/MudCharacterCreate.vue)
-  automatically emits a roll on entering `stats`, always renders Reroll, moves
-  to `bonus` without server acceptance, and hardcodes five bonus choices.
-  Back navigation can retain stats while changing race. Cancel clears only the
-  frontend store. Its global error branch hides the step controls, so a rejected
-  capped-stat bonus currently obstructs choosing another stat.
-- The browser event passes through
-  [MudClientView.vue](https://github.com/LuminariMUD/DurisWeb/blob/70288bf4583b94710c981fe35609de0e2b26ad71/frontend/src/views/MudClientView.vue),
-  [useMudConnection.ts](https://github.com/LuminariMUD/DurisWeb/blob/70288bf4583b94710c981fe35609de0e2b26ad71/frontend/src/composables/useMudConnection.ts),
-  [mudStore.ts](https://github.com/LuminariMUD/DurisWeb/blob/70288bf4583b94710c981fe35609de0e2b26ad71/frontend/src/stores/mudStore.ts),
-  and [mud.ts](https://github.com/LuminariMUD/DurisWeb/blob/70288bf4583b94710c981fe35609de0e2b26ad71/frontend/src/types/mud.ts).
-  The request carries only `race`; responses carry labels and `bonusRemaining`.
-  No website database or backend route is needed for this socket protocol change.
+| Keep now | Simplify now | Defer beyond this delivery |
+| --- | --- | --- |
+| All six exported event families and the existing reducers | Reuse the implemented reducer/sender/journal APIs directly in the existing worker | Removing the nine old telemetry tables from the mandatory SQL boot inventory |
+| SQL-backed and flat-file gameplay | One adapted native player journey with backend selection and a fake HTTPS receiver | Regenerating the two engine fingerprints and the absent/drifted legacy-table matrix |
+| Four useful report views and one saved health query | Plain saved insights/tables with captured-dimension filters and exact query definitions | Additional dashboards, presentation polish and historical report parity |
+| Essential lifecycle, storage, retry and arithmetic regressions | Reuse component evidence; add only integration-specific checks | New cross-products of already-covered faults and repeated whole-repository qualification |
+| Measured gameplay/save overhead and a complete event forecast | Paired off/mock-HTTPS runs on one declared representative fixture; one small real-cloud smoke | Full 200-player qualification, all workload ramps and performance runs against real cloud latency |
+| Disable the obsolete SQL writer and replaced live rollup scheduling | Remove the writer from active delivery/linking and obsolete active settings | Bulk removal of historical-only writer/report files and their tests |
 
-## Implemented contract and files
+The retained SQL boot checks and historical tables remain intact. SQL gameplay
+still requires its existing schema; PostHog must require no telemetry DB account
+or active telemetry SQL connection. Flat-file gameplay has no SQL requirement.
+Do not claim full SQL schema decoupling; it is not required to close issue #59.
+Do not weaken gameplay schema checks to make a fixture start.
 
-The following requirements are implemented in the review stack. They remain the
-contract for reviewing or continuing this work.
+No SDK, service, sink framework, second queue, payload spool, new instrumentation,
+backfill, account linkage, paid analytics add-on or balance change is needed.
+No production data, migration history or independent reward tooling is removed.
 
-### 1. Shared roller and Telnet flow
+PR #259 review carry-forward: the native `rollover-season` command preserves
+history and exhausts the current UTC day without changing the sender allocation.
+Failed registration retries reuse one terminal quota archive. The storage guide
+documents both wire versions, witness sizes and recovery. Focused journal, CLI,
+worker and sanitizer regressions passed; integrated PostHog reduction passes 57
+scenarios in each backend after carrying the earlier reducer fixes forward.
 
-- Add a distinct `ROLL_ADVANCED` value in
-  [defines.h](../../src/core/defines.h). Implement 3d6+77 in the existing
-  roller without changing `ROLL_NORMAL`, punishment, or mob branches. Correct
-  stale descriptions in the touched code.
-- Append a `CON_STAT_METHOD` connection state and its indexed name; update
-  `TOTAL_CON`, nanny dispatch, and comm's creation timeout bucket.
-- Replace the three direct-roll entry blocks with one local
-  `prompt_stat_method()` call. Display the shared explanation and choices
-  `D) Default` and `A) Advanced`; Enter selects Default. Invalid input/help
-  redisplays the prompt without rolling or advancing. Complete race, class,
-  alignment, and hometown decisions first.
-- On Default selection roll F once, show the result, and enter the first bonus
-  prompt. On Advanced selection roll E, show the existing reroll question, and
-  enter `CON_REROLL`. That state's rerolls use `ROLL_ADVANCED`; accepting enters
-  the same first bonus prompt. Preserve its existing y/Enter reroll and n accept
-  interaction. No persistent character method field is needed.
-- Keep the four-award state chain and existing swaps. Align Telnet's capped-stat
-  handling with WebSocket: selecting a stat already at 100 reports the cap and
-  does not consume a choice; a 98-to-100 partial bonus does consume one.
-  Preserve karma exclusion and current/base stat synchronization.
-- Update the two creation messages for the actual quality ranges, four fixed
-  +5 selections, and subsequent swaps. Do not expose individual numeric rolls.
+Repeated `exhaust-day` and `rollover-season` commands for an already exhausted
+current day/season preserve the generation, ledger/witness bytes and archive count.
+Retries synchronize the directory to finish a prior successful rename; new-day or
+new-season exhaustion still publishes normally. Native, CLI and publication-fault
+regressions verify this follow-up review repair.
 
-Expected production files: `src/core/defines.h`, `src/core/structs.h`,
-`src/core/constant.c`, `src/cmd/actwiz.c`, `src/account/nanny.c`,
-`src/net/comm.c`, `lib/creation/reroll`, `lib/creation/bonus`.
+## Current state and quick checks
 
-### 2. WebSocket contract and attempt lifecycle
+**DO NOT SCOPE CREEP. WE ARE OUT OF TIME AND TOKENS. DELIVER FAST.**
+Reuse valid evidence; repeat checks only for relevant changes or actual failures.
 
-Keep this state on the descriptor alongside existing `chargen_stats` and
-`chargen_race`. Use one selected-method field and a small phase enum:
-unstarted, rolling, bonuses, ready. The bonus counter remains the source for
-remaining selections. Do not add a database record, session service, or attempt
-history.
+The implemented pieces are on the existing stack. Preserve the current worktree;
+do not restart these components or reimplement their contracts.
 
-- Extend `chargen_options` with the two supported method names and bonus count.
-  This also lets the updated website detect a server that lacks the feature.
-  Reading options must not silently reset an active attempt.
-- Extend `roll_stats` input with `method: "default" | "advanced"`. Missing
-  `method` means Default for old clients; reject malformed/unknown values.
-  Initial requests store method/race, roll all ten stats, and initialize four
-  bonuses. Default immediately enters bonuses; Advanced enters rolling.
-- Return method and phase alongside existing labels/count. Subsequent
-  `roll_stats` requests are allowed only for Advanced in rolling phase with
-  the same race and method. Reject repeated Default rolls, method/race changes,
-  and rolls after acceptance without changing stored values.
-- Add `accept_stats` for Advanced's transition from rolling to bonuses. A
-  duplicate acceptance may acknowledge the current accepted state but must
-  never roll again or reset bonus counts. Keep Default's initial response
-  compatible with clients that proceed straight to `add_bonus`.
-- Permit `add_bonus` only in bonuses with a valid stored roll. Preserve the
-  existing no-cost rejection at 100. The fourth successful selection enters
-  ready. Permit swaps and `create_character` only in ready, with final race
-  matching the rolled race. Validate these conditions before allocating,
-  modifying, or persisting a character.
-- Guard these mutating commands against unauthenticated or active-character
-  sessions, while preserving existing pending-password/write and admission
-  checks. A completed attempt must not be reused to create another character
-  or alter an existing character.
-- Add `reset_chargen` for Cancel or an explicit restart after changing race or
-  method. It clears method, phase, stats, race, and bonus count, acknowledges
-  completion, and never touches saved characters. Reuse one local reset routine
-  where successful creation/entry or account/session replacement invalidates
-  the attempt. Descriptor allocation already zeroes state; logout disconnects.
-  Recoverable name/admission failures retain the valid attempt for correction.
-  Revalidate exact auth/entry callers while implementing cleanup.
-- Keep the command/response contracts here updated with final names and payloads.
-  Existing clients omitting a method retain Default creation with four bonuses;
-  their old reroll action intentionally receives a non-mutating error.
-  Their local-only Cancel cannot reset a server attempt: give a clear reconnect
-  instruction on a conflicting new roll, and test that reconnect restores a
-  clean Default creation. Full in-session restart is supplied by the updated
-  website's reset command; do not claim unchanged legacy cancel/reroll behavior.
+| Piece | Existing evidence / location |
+| --- | --- |
+| Setup and percentile correction | PRs [252](https://github.com/LuminariMUD/Duris/pull/252), [253](https://github.com/LuminariMUD/Duris/pull/253); integer per-mille p99/p99.9 regressions already implemented. |
+| Opaque identities, UTC/UUID/integer encodings and volume fixture | [PR 254](https://github.com/LuminariMUD/Duris/pull/254), `telemetry_posthog.*`, `fixtures/telemetry/posthog/{encodings,volume}.json`. |
+| Character, encounter/combat and health reduction | PRs [255](https://github.com/LuminariMUD/Duris/pull/255), [257](https://github.com/LuminariMUD/Duris/pull/257), [258](https://github.com/LuminariMUD/Duris/pull/258). |
+| Durable quota and native state tool | [PR 259](https://github.com/LuminariMUD/Duris/pull/259); existing outage-journal regressions include reservation, restart, corruption and publication failure. |
+| Worker HTTPS sender | PR #260 ready for review; component suite and both full builds pass. Runtime integration is in #261; acceptance work is on this branch. |
 
-Expected production files: `src/core/structs.h` and `src/net/ws_handlers.c`;
-touch other entry/auth files only where their actual lifecycle calls require
-the narrow reset. The new accept/reset operations serve concrete existing
-wizard transitions; do not add a generic step API.
+Checks completed during this replanning pass on 2026-10-21 UTC:
 
-### 3. DurisWeb companion implementation
+- Fixed the test-only DNS endpoint to use `stall.invalid`, avoiding libcurl's
+  localhost shortcut. The injected resolver writes a marker proving it ran;
+  the test retains deadline/cancellation/ambiguous-loss assertions and verifies
+  zero received requests. Production endpoint handling is unchanged.
+- `nice -n 10 python3 tests/async/test_telemetry_posthog.py` passed in MariaDB
+  and flat-file build modes under UBSan: **42 reducer scenarios and 29 HTTPS
+  scenarios per mode**, plus encodings and all four volume forecasts. Evidence:
+  `bin/issue59/fast-plan/posthog.log`. This includes the previously unreached
+  monotonic-clock case and the stalled-DNS cancellation case.
+- `env -i PATH="$PATH" LANG=C.UTF-8 ENVIRONMENT=local nice -n 10 python3
+  tests/async/test_player_base_stats_mysql.py` passed using native MariaDB
+  **11.8.6**, disposable socket-only databases and synthetic data. Fresh and
+  upgrade schemas passed migrations, the runtime compatibility verifier and
+  native repository save/readback checks. Evidence: `bin/issue59/fast-plan/native-db.log`.
+  This did not run the optional interactive login journey and does not prove
+  PostHog runtime integration. It establishes that another engine installation
+  is not a prerequisite for the retained-schema native fixture.
+- Full `nice -n 10 make -C src -j1 PERSISTENCE_BACKEND=<backend>
+  BIN_ROOT="$PWD/bin/issue59/<backend>"` builds passed sequentially for
+  `mariadb` and `flatfile`. Evidence: `bin/issue59/fast-plan/build-<backend>.log`.
+  The earlier failed `build-mariadb-http.log` is superseded by these results.
+- `python3 tests/async/test_telemetry_contract_headers.py` passed; evidence:
+  `bin/issue59/fast-plan/headers.log`. Formatting and whitespace checks passed.
+- Read-only PostHog tools confirmed project **678214**, **Duris SBS PostHog**,
+  UTC, admin access, one starter dashboard, `ingested_event=false`, free billing,
+  no active subscription and **0 / 1,000,000** analytics events reported for the
+  current period. This is a readiness snapshot, not ingestion or write proof.
+  Recheck usage before cloud capture. No cloud events or dashboard changes were
+  made during replanning.
 
-This is required work for issue #107, not an optional follow-up. Keep a focused
-companion branch/PR in `LuminariMUD/DurisWeb` referencing the parent issue and this
-plan. No separate website issue was found by the planning search; do not invent
-a pre-existing work item or close #107 with only the server half complete.
+The native executable is built but not deployed. Do not use these component
+results to claim real gameplay delivery, production performance or cloud totals.
 
-- Add a method selection step immediately before stats using existing wizard
-  controls and design tokens. Preselect Default; display the same explanation
-  for new and veteran players. Do not send the first roll until the player
-  continues from that choice.
-- Pass the method through component event, view, composable, and typed command.
-  Store the server's method/phase/count and capability metadata. Show Reroll only
-  for Advanced while rolling. Advanced's Next action sends `accept_stats` and
-  waits for acknowledgement; Default proceeds from its accepted initial roll.
-- Replace the hardcoded five-choice wording with four choices / the advertised
-  count. Preserve all ten labels and the nine editable targets. Do not infer
-  an exact value of 100 from “excellent” or “quite excellent.”
-- Treat the server's response as authoritative. Prevent overlapping roll,
-  accept, bonus, swap, and reset actions; keep recoverable errors beside usable
-  controls so a capped-stat rejection allows another selection.
-- Back navigation that changes race or method must explicitly discard the
-  unfinished attempt and clear both server and store state before another
-  roll. Cancel uses the same acknowledged reset. Revisiting a completed step
-  must not silently roll, restore bonuses, or revive stale stats. Disconnect,
-  successful creation, and starting another character clear local state.
-- When metadata lacks support, do not offer Advanced or pretend it is working.
-  Preserve the old server's existing creation experience until the coordinated
-  server-first update; do not send unknown accept/reset commands to it.
-- Prepare release notes for the eventual website release following its
-  repository convention; publication belongs to verified deployment.
+## Contracts to reuse
 
-Expected files: the five DurisWeb implementation files linked above, focused
-Vue/composable/store tests, and the repository's release-note draft location.
-Follow DurisWeb `AGENTS.md`, `docs/CONVENTIONS.md`, `docs/development.md`, and
-`docs/DESIGN.md`. No frontend redesign or backend/schema changes are planned.
+**DO NOT SCOPE CREEP. WE ARE OUT OF TIME AND TOKENS. DELIVER FAST.**
+Reuse these contracts; do not redesign or expand them for this delivery.
 
-## Proof and acceptance
+[CONTRACT.md](../telemetry/CONTRACT.md) is the implementation reference for event
+schemas, identity, reducer bounds, delivery and quota. Keep its completed behavior;
+update only actual integration changes. The old plan's duplicated design prose
+is replaced by that reference and the following integration invariants.
 
-Use deterministic checks for exact formulas and executable journeys for
-reachability. A range check alone cannot distinguish 3d6 from a uniform 80-95
-generator, and quality labels cannot prove exact saved numeric values.
+- Existing value-only gameplay capture → bounded queue → existing worker →
+  reducer → immutable output → HTTPS. Each admitted native record is consumed
+  once or explicitly lost. HTTP retries never feed records into reduction again.
+- Keep HMAC character identities scoped by environment/season, logical session
+  identity through reconnect/copyover, distinct run/pet IDs, immutable event UUIDs
+  and lossless integer encodings. No raw PIDs, names, account identifiers, IPs,
+  commands, chat, room locations or secrets leave the game.
+- Time charts sum observed interval deltas. Checkpoints reconcile gaps separately.
+  Preserve captured dimensions, XP attempt/source/modifier and level boundaries,
+  pet/owner separation, and null/unknown coverage. Never invent a zero or fill
+  historical dimensions from current game state.
+- Keep the existing bounds: 256 sessions, 64 configurations, 128 runs with
+  64 combined player/pet identities, 32 time and 32 XP buckets per fragment,
+  128 output events / 512 KiB, 32 KiB per event, 64 events / 256 KiB per HTTP
+  batch, and 120-second retained output/terminal wait limits.
+- Use **30-minute export summaries for the first release**. The reducer already
+  accepts 1,800 seconds. The declared 200-average-character mix forecasts
+  **396,454 submissions/31 days**, versus **706,077** at 15 minutes. This selects
+  the issue's permitted volume fallback before spending time tuning two rollout
+  configurations. It does not change native capture cadence or prove capacity.
+  Lifecycle/level/configuration/day boundaries still flush as required.
+- Keep 1s connect / 2s total HTTP timeouts, nearer lifecycle deadlines, five
+  immutable attempts, bounded Retry-After, paced recovery and permanent-error
+  circuits. TLS and host checks stay enabled; no redirect or environment proxy
+  can carry the token. Keep asynchronous DNS/QUICK_EXIT and owner-safe teardown.
+- Keep normal-load submissions **≤450,000/31 days**, combined Duris attempts
+  **≤20,000/UTC day**, and projected shared account usage **<700,000/billing
+  cycle**. Reserve before every attempt; retries count again. Production gets
+  at most 19,900/day including 100 reserved health events; tagged tests get at
+  most 100 total submissions. Other environments use mocks. No refund after
+  an ambiguous response, no automatic allowance reset and no next-day backlog.
+- Missing/corrupt quota state, failed publication, clock rollback and ownership
+  conflict stop export while gameplay remains available. Preserve journal
+  history and the existing initialization/exhaust-day recovery tool.
 
-1. **Production roller:** add a focused executable test invoking the actual
-   `roll_basic_attributes()` with controlled dice outcomes. Prove dice count,
-   sides, offset, both extrema, all ten base/current assignments, and unchanged
-   normal/staff and mob behavior. Use the existing native-harness pattern;
-   do not duplicate the algorithm in Python as its own oracle or add a runtime
-   RNG configuration. Proposed driver: `tests/async/test_character_stat_choice.py`.
-2. **Real Telnet:** extend
-   [test_creation_prompt_journey.py](../../tests/async/test_creation_prompt_journey.py).
-   Exercise direct class completion, alignment completion with fixed hometown,
-   and hometown selection, each reaching the method prompt before any stat
-   result. Cover Enter/explicit Default, Advanced reroll and acceptance, invalid
-   choice/help without mutation, prompt framing, four bonuses, concentration/
-   partial cap/no-cost full-cap rejection, luck, rejected karma, repeated swaps,
-   discard, creation, and save/restart/relogin. Update existing helper steps
-   that currently expect “Press return to continue.”
-3. **Real WebSocket:** add a focused
-   `tests/async/test_character_stat_choice_journey.py`, reusing the isolated
-   flat-file server and synthetic account lifecycle in
-   [test_account_recovery_journey.py](../../tests/async/test_account_recovery_journey.py).
-   Retain/expose its already allocated WebSocket port and use a small socket
-   client for the existing protocol, not a second server framework. Exercise
-   both methods through actual command dispatch, creation, save, restart,
-   and login; inspect the synthetic saved base stats or a fixture staff view
-   for exact values. If a minimal world lacks a selected route's data, use
-   the existing full-world fixture option rather than weakening the journey.
-4. **Server rejection/lifecycle cases:** before-roll bonus/swap/create; invalid
-   method; missing method -> Default; repeated Default roll; Advanced reroll
-   replacing the full set; accept twice; post-accept reroll; fifth bonus;
-   swap/create with bonuses remaining; race mismatch; cap and karma; reset
-   during rolling/bonuses/ready; disconnect/relogin; name collision retry;
-   successful creation followed by another attempt; and creation commands
-   while playing. Assert failure leaves state and saved characters unchanged.
-   Include a pre-existing saved-character fixture that bypasses the new prompt
-   and retains its stats.
-5. **Browser:** add wizard tests in
-   `frontend/src/components/mud/chargen/__tests__/MudCharacterCreate.spec.ts`
-   and focused composable/store coverage using existing Vitest/socket patterns.
-   Prove no pre-choice roll, correct method payload, Default without reroll,
-   Advanced acknowledgement before bonuses, four-choice display, cap error
-   recovery, blocked overlapping requests, and reset/back/reconnect behavior.
-   Exercise old-server metadata absence explicitly.
-6. **Cross-client acceptance:** run the actual browser wizard against the changed
-   local MUD, complete one character by each method, then reload/login and
-   compare saved stats and bonus/swaps with the Telnet journeys. Check keyboard
-   navigation and a narrow viewport. Record build SHAs for both repositories.
-   Mocked component tests do not establish this acceptance.
+## Implementation sequence
 
-Implementation check commands, from the corresponding repository roots:
+**DO NOT SCOPE CREEP. WE ARE OUT OF TIME AND TOKENS. DELIVER FAST.**
+On an authorized resume, finish the existing sequence without adding stages.
 
-```bash
-# Duris: after C/C++ edits, as required by AGENTS.md
+### 1. Connect the existing worker and finish lifecycle behavior
+
+**DO NOT SCOPE CREEP. WE ARE OUT OF TIME AND TOKENS. DELIVER FAST.**
+Preserve implemented behavior; change it only for a demonstrated delivery defect.
+
+Change `telemetry_runtime.*`, `telemetry_transport.*`, their private types,
+`telemetry_config.*`, `telemetry_health.*`, `src/Makefile` and the copyover call
+site only as required. Reuse the existing queue and lifecycle coordinator.
+
+Replace the production SQL repository binding with direct reducer/sender calls.
+Remove the old SQL retry/commit interpretation from this path. Keep native
+admission sequence and age; at a timer boundary capture the admitted tail,
+consume through that fence, then seal. A later old observation becomes a partial
+fragment under the existing reducer rules. Pump the sender while draining so
+its output buffer cannot starve behind a terminal burst.
+
+Initialize reducer and sender in the worker after journal ownership. The journal
+outlives sender close. Checkpoint dirty coverage on a 60-second cadence,
+plus required lifecycle/incident boundaries and durable send reservations;
+expose failed checkpoints and pace storage retries. Publish a coherent copied
+health snapshot for `world telemetry` and payload-free local logs. Include
+native admission/consumption, output occupancy/expiry, attempted/acknowledged/
+ambiguous/suppressed events, quota and journal faults; HTTP acknowledgement is
+not a claim of query-visible ingestion.
+
+Enable the PostHog path in both persistence builds. Validate token, the fixed US
+host, dedicated identity key, scope, property catalog and budget without falling
+back to raw IDs or silently generating a new identity key at boot. Retain opt-in
+startup and the existing effective-property catalog. Set 1,800 seconds in runtime
+configuration; the component's 900-second default is not the release setting.
+No new operator tuning API is needed.
+
+Copyover preserves valid logical-session handoff regardless of HTTP outcome.
+Keep the 250ms game-thread flush wait; preserve identity/cumulative counters and
+mark abandoned queue/accumulator/output tails incomplete. No game-thread HTTP,
+fsync or unbounded join. Check successful exec, failed exec, network loss,
+detach/reconnect, shutdown and next-process journal ownership/quota continuity.
+
+Remove SQL telemetry credentials and the writer from the active path and active
+linking. Inventory replaced rollup/report scheduling in the deployment handoff.
+Keep gameplay SQL helpers and historical/reward consumers. Leave `src/sql/sql.c`
+boot inventory, runtime compatibility fingerprints and immutable migrations
+unchanged for this delivery. Do not add a SQL fallback or permanent dual writing.
+
+### 2. Prove the real path with disposable native fixtures
+
+**DO NOT SCOPE CREEP. WE ARE OUT OF TIME AND TOKENS. DELIVER FAST.**
+Use existing fixtures and the agreed checks. Do not add a broader test matrix.
+
+Adapt `tests/async/run_telemetry_player_journey.py` once for both backends and
+fake HTTPS, reusing existing combat, flat-file and copyover clients. Use an
+allowlisted environment, `ENVIRONMENT=local`, synthetic accounts/characters,
+separate runtime/state/journal directories, distinct world IDs >=1000 and
+loopback ports. SQL uses a fresh task-owned native MariaDB database; flat-file
+uses its own files. Never source the host `.env` or copy live player/DB data.
+Docker, namespaces, sudo and another machine are not prerequisites.
+
+One journey per backend covers login, recognized action, idle/linkdead,
+combat/XP and a level transition, groups/pets, save/reload, reconnect, successful
+and failed copyover, and shutdown. Assert received payloads, conservation and
+stable identities. Add one bounded outage/recovery path with a small quota to
+prove gameplay still saves, local health reports loss and copyover cannot reset
+the budget. Exercise journal failure and unknown crash tail in the existing
+native runtime harness rather than duplicating the full storage fault suite in
+every game journey.
+
+Use the existing benchmark/measurement seams for repeated matched telemetry-off
+and telemetry-on/mock-HTTPS runs with ordinary saves. Start with three paired
+runs on the same declared workload and build; record client count, sample count,
+pulse/command/save p99, CPU/RSS, backlog, output bytes/events and journal cost.
+Require no normal-load capture/budget loss or sustained backlog and **≤5% pulse
+and save p99 regression**, with the applicable existing host operating bounds
+(pulse p99 ≤250ms, event p99 ≤25ms, critical oldest ≤1,000ms, zero sustained event
+debt and zero gameplay-thread external I/O). Measure command p99 without adding
+a new independent 5% gate. Do not invent a new save SLA or import the entire
+older 200-player soak manifest. If noise makes a 5% claim unsupported, repeat only
+that comparison or report the gate unresolved; do not call it passed.
+
+Replay the complete declared event mix through the integrated reducer and count
+actual sealed events and attempts, including boundary fragments, lifecycle,
+encounters, health, configuration and retries. Reconcile those counts with the
+volume fixture and project the chosen workload over 31 days. Capacity numbers in
+native record fixtures are not concurrent-player evidence. State the measured
+workload; broad 200-player capacity certification is deferred.
+
+### 3. Publish the minimum useful reports and verify cloud ingestion
+
+**DO NOT SCOPE CREEP. WE ARE OUT OF TIME AND TOKENS. DELIVER FAST.**
+Deliver the specified saved views; no presentation polish or additional reports.
+
+Use existing project **678214** and create one **Duris gameplay telemetry**
+dashboard. Keep the starter dashboard. Deliver four saved views plus the saved
+health/coverage query; a clear table or trend is enough. No custom UI or extra
+cohort/dashboard project is needed.
+
+| View | Minimum useful result and proof |
+| --- | --- |
+| Character activity/returns | Distinct opaque characters and logical entries/returning characters; reconnect/copyover does not create a new logical entry. Label character, not account/player, retention. |
+| Time allocation | Active/idle/unknown/linkdead deltas by captured dimensions, with unknown allocation and reconciliation-only evidence visible. Expand time buckets independently of XP buckets. |
+| XP/levels | Requested/computed/applied XP, attempts/zero-applied count and source/modifier allocation; observed level changes and threshold use separately. Observed XP is not a committed-save ledger. |
+| Encounters | Runs/outcomes/duration and supported participant contribution totals; separate run/participant and pet/owner rows, with missing evidence visible. |
+| Health/coverage | Freshness, suppression/uncertainty, producer/refusal/output limits, quota and journal state. Local health remains authoritative during complete cloud loss. |
+
+Use event-time properties and exact integer conversions already documented in
+the contract. Deduplicate by `duris_event_id` before summing or expanding arrays.
+Production views filter environment `1`, season `1`, schema `1` and exclude test
+traffic. Unknown timestamps are excluded from occurrence-day totals and shown
+as unallocated evidence.
+
+After mock tests pass, recheck project/billing/shared usage and run one tagged
+synthetic cloud fixture, **at most 100 submissions including repeats/retries**.
+Cover all six event families, two logical sessions for one character, reconnect/
+copyover, zero-applied XP and a level boundary, pet/owner separation, an incomplete
+encounter and repeated UUIDs. Query and reconcile all four views and health;
+HTTP 200 alone is insufficient. Poll for ingestion for at most five minutes,
+then report delayed ingestion as unresolved and continue local handoff work.
+Use the same synthetic rows for query development and acceptance; no second
+cloud load campaign. Record saved query definitions/IDs in `REPORTS.md`.
+
+### 4. Finish the handoff and stop at this milestone
+
+**DO NOT SCOPE CREEP. WE ARE OUT OF TIME AND TOKENS. DELIVER FAST.**
+Document what is needed to operate this delivery, publish it, and stop.
+
+Update `.env.example`, `REPORTS.md`, and the affected sections of `CONTRACT.md`,
+`TRANSPORT.md`, `OUTAGE_STORAGE.md`, `CONFIG_CONTEXT.md` and
+`PERFORMANCE_GATE.md`. Mark superseded SQL guidance as historical with short
+links; do not rewrite unrelated telemetry documentation. Record actual fixture
+commands, measured workload, limitations, sender allocations and revision IDs.
+Correct the example's EU-host suggestion to match the implemented US-only sender.
+
+Document dedicated key creation/private backup, reviewed property catalog,
+explicit quota initialization, enable/disable and exhaust-day restore recovery.
+Explain that editing `.env` does not update a running process and that copyover
+may inherit its old environment. Production enablement remains a separately
+authorized operation. Rollback disables export while preserving identity/quota/
+loss evidence; it does not refund attempts or resume the obsolete SQL writer.
+
+Keep the existing PR stack. Package remaining implementation and acceptance work
+in a small number of reviewable commits; do not create a new serial PR stage for
+each test or document. Run required local checks and review the actual diff; do
+not wait for hosted CI. Do not drop other required review checks.
+
+## Verification and completion
+
+**DO NOT SCOPE CREEP. WE ARE OUT OF TIME AND TOKENS. DELIVER FAST.**
+Prove the five existing conditions below. Add no new completion gates.
+
+The initial quick checks are evidence about components only. For integration,
+run directly affected tests after their contracts change:
+
+```sh
+python3 tests/async/test_telemetry_config.py
+python3 tests/async/test_telemetry_transport.py
+python3 tests/async/test_telemetry_runtime_integration.py
+python3 tests/async/test_telemetry_runtime_outage.py
+python3 tests/async/test_telemetry_runtime_exhaustion.py
+python3 tests/async/test_telemetry_copyover_format.py
+python3 tests/async/test_telemetry_health.py
+python3 tests/async/test_telemetry_posthog.py
+python3 tests/async/test_telemetry_contract_headers.py
 ./scripts/format.sh --check
-make -C src
-python3 tests/async/test_character_stat_choice.py
-python3 tests/async/test_creation_prompt_journey.py
-python3 tests/async/test_character_stat_choice_journey.py
-python3 tests/async/test_character_creation_idle_timeout.py
-python3 tests/async/test_creation_availability_contract.py
-python3 tests/async/test_creation_all_races_toggle.py
-python3 tests/async/test_creation_all_classes_toggle.py
-python3 tests/async/test_chaos_hardcore_creation.py
-python3 tests/async/test_racewar_admission.py
-git diff --check
-
-# DurisWeb: focused tests plus affected-package repository gates
-pnpm --dir frontend test:unit --run src/components/mud/chargen/__tests__/MudCharacterCreate.spec.ts
-# Also run the specific composable/store tests added or extended by this change.
-pnpm --dir frontend format:check
-pnpm --dir frontend lint
-pnpm --dir frontend type-check
-pnpm --dir frontend build
 git diff --check
 ```
 
-Extend the idle-timeout contract for the new state. Update adjacent source
-contracts only when their asserted behavior legitimately changes.
-Run journeys in isolated local/dev fixtures; compiled artifacts stay under
-`bin/` and are not committed. Do not wait for CI to substitute for these local
-checks. Report exact commands/results and any missing browser/persistence proof.
+Run the existing gameplay-adapter/progression/encounter/combat/outage regressions
+when their code or integration contracts change. Run both full builds after the
+final C/C++ changes, sequentially with `nice -n 10`, `-j1` and the task-specific
+`BIN_ROOT` paths above. The adapted PostHog gameplay commands are `nice -n 10
+python3 tests/async/run_telemetry_player_journey.py --backend <mariadb|flatfile>`;
+add `--performance` for the paired release fixture. Bounded cloud/query and
+integrated volume assertions pass; do not repeat the cloud campaign.
+No blanket rerun of unaffected repository suites is needed.
 
-## Completed delivery and continuation
+This delivery is done only when:
 
-- [x] Implement the two distributions and every Telnet entry route.
-- [x] Enforce the WebSocket attempt/phase/count/reset contract and legacy Default.
-- [x] Implement the required DurisWeb companion and old-server fallback.
-- [x] Complete full-world create/save/restart/relogin in both clients and methods.
-- [x] Complete desktop/phone browser acceptance and repair reproduced defects.
-- [x] Publish all chunks, update #107 and leave a clean review handoff.
+1. Both gameplay backends reach the PostHog path with the old writer inactive,
+   and native records are consumed once without retry double counting.
+2. Real native journeys prove conserved time/XP, captured dimensions, logical
+   identity, bounded lifecycle behavior and useful local failure/coverage health.
+3. Durable quota survives restart/copyover, and critical network/storage failures
+   preserve gameplay. Existing component/fault regressions remain green.
+4. All four report totals plus health reconcile to queried synthetic cloud data,
+   with test exclusion and duplicate handling demonstrated.
+5. The measured release fixture passes the retained performance/volume limits,
+   and the operational handoff is executable and explicit about remaining limits.
 
-Review order, with every PR open and ready for review:
-1. [Duris #236](https://github.com/LuminariMUD/Duris/pull/236): shared roller and
-   Telnet choice/caps/copy, on `branch/issue-107-stat-choice`.
-2. [Duris #237](https://github.com/LuminariMUD/Duris/pull/237): descriptor-owned
-   WebSocket method/phase and four-bonus authority, stacked on #236.
-3. [Duris #238](https://github.com/LuminariMUD/Duris/pull/238): creation response,
-   account projection and full-world qualification repairs, stacked on #237.
-4. [Duris #239](https://github.com/LuminariMUD/Duris/pull/239): first-entry vitals
-   notification and executable-test build handling, stacked on #238.
-5. [DurisWeb #73](https://github.com/LuminariMUD/DurisWeb/pull/73): required website
-   companion; integrate/release after the server stack.
+Meeting these five criteria completes issue #59. Deferred SQL boot-schema
+cleanup and broader engine/capacity qualification are optional future work,
+not closure conditions. Record the retained schema dependency and measured
+workload honestly; deferral does not permit weaker gameplay schema checks,
+routine quota loss, incorrect totals or an unbounded exporter. Production
+activation is separate and is not a condition for closing this implementation
+ticket.
 
-Current continuation worktree is `/home/aiwithapex/projects/duris-issue107-plan`,
-branch `branch/issue-107-first-entry-vitals`. This branch's plan is authoritative;
-an older chunk's progress snapshot does not represent outstanding implementation.
-The website worktree is `/home/aiwithapex/projects/durisweb-issue107`, branch
-`branch/issue-107-stat-choice`. Its handoff and unpublished local changelog JSON
-are `docs/ongoing-projects/issue-107-*`.
+## Implementation handoff — 2026-10-21 UTC
 
-Qualified code pins:
-- Duris: `7586f75654b06be23da197c3e250f9a7bccdd0d7`; later closeout commits change documentation only.
-- DurisWeb: `461ca507ea8e0207b18765214aa74da356a56470`.
-- Flat-file artifact: `bin/tests/stat-choice/flatfile-build/server/dms_new`, SHA-256 `e228b01725c07af172cb4f99de4a292fb607f377db44b91649275aa8f675d283`.
+**DO NOT SCOPE CREEP. WE ARE OUT OF TIME AND TOKENS. DELIVER FAST.**
 
-Master advanced during the work to `6a323feaab1a` with locker repairs and the new
-player MOTD. Each feature branch merged its updated parent, bringing that current
-base through the stack without rewriting published history. The combined tree
-passed the normal build, verified flat-file build, all five full-world stat-choice
-journeys and the named-locker runtime regression. The source tree under `src/`
-at this code pin equals the source tree used by that combined qualification.
-Earlier browser/formula results remain applicable: the upstream delta affects
-locker commands and MOTD text, not the stat or browser protocol paths.
+All five completion conditions pass. Native/cloud reconciliation, failure/quota
+proof, measured performance/volume and the operating handoff are complete.
+No further implementation or qualification stage remains. Production is disabled.
 
-## Final protocol names
+Published review stack (all ready for review, mergeable at last readback):
 
-- `chargen_options` advertises `statMethods: ["default", "advanced"]` and
-  `bonusCount: 4`; it does not reset an attempt.
-- `roll_stats` takes `{race, method?}`; omitted method means Default. Its response
-  includes ten quality labels, `bonusRemaining`, `method` and `phase`.
-- Phases are `rolling`, `bonuses`, `ready`; only same-race/same-method Advanced in
-  `rolling` may reroll. Default's first roll is accepted immediately.
-- `accept_stats` returns `stats_accepted` with the same fields. Repeated acceptance
-  acknowledges current values without restoring awards or changing the roll.
-- `add_bonus` returns `bonus_added` with method/phase and existing fields. The
-  fourth successful selection reaches ready. `swap_stats` returns `stats_swapped`
-  with method/phase; creation requires ready, zero remaining and matching race.
-- `reset_chargen` takes no data and returns `{type: "chargen_reset"}` after
-  clearing every attempt field. Login/account replacement, accepted saved-character
-  entry and successful creation also clear attempts.
-- Mutations require completed authentication, no attached character, and either
-  actual account-menu state (`CON_ACCT_SELECT_CHAR` or `CON_DISPLAY_ACCT_MENU`).
-  Pending password/write guards remain in dispatch.
+- #260 (`issue-59-posthog-http`, `d540b778c`): bounded worker sender.
+- #261 (`issue-59-posthog-runtime`, `079537906`): both-backend runtime integration.
+- #262 (`issue-59-posthog-acceptance`, `3ab15c720`): terminal logout/pet adapter
+  fixes, native gameplay fixture and independently witnessed active-request deadline.
+- #263 (`issue-59-posthog-reports`, final evidence commit after `d558e4bdc`): five saved report definitions,
+  cloud reconciliation, emitted-volume proof, resident-scan repair and runbook.
 
-## Verification evidence
+The stack alignment is finished using normal merge commits, with no source
+change, force push or history rewrite. The task-owned alignment worktree was
+removed. Do not chase further moving review bases. Production source is exactly
+repair `18b163a20`; both full native builds and state tools pass in
+`bin/issue59/{mariadb,flatfile}/`. Neither links the old SQL writer.
 
-Passed local server checks:
-- `make -C src -j8` (normal MariaDB-enabled development build).
-- Flat-file build, both through `make -C src PERSISTENCE_BACKEND=flatfile -j8`
-  during implementation and the verified fixture builder on the combined tree.
-- `python3 tests/async/test_character_stat_choice.py`: production functions under
-  ASan/UBSan, exact dice parameters/extrema, all ten base/current assignments,
-  unchanged bad/mob rolls and mob floors, partial/full caps, luck/karma, counts,
-  exact descriptor preservation, reroll replacement, reset and session gates.
-- The 16-scenario creation-prompt suite passed against its built flat-file binary;
-  the added live cap/karma/repeated-luck-swap leg passed separately.
-- `python3 tests/async/test_character_stat_choice_journey.py --full-world`: all
-  five cases pass on the integrated current-master tree: Telnet Default/Advanced,
-  WebSocket Default/Advanced/legacy missing-method Default. They cover real
-  dispatch, registration, capabilities, reset in each phase, reconnect/account
-  replacement, invalid order/method/race, duplicate acceptance, four awards,
-  forbidden karma/fifth bonus, repeated swaps, matching-race creation, playing
-  guards, name collision/retry, successful-attempt consumption and another new
-  character, tutorial room 22800, durable numeric stats, restart and saved entry.
-- Post-kit vitals checks pass for all three full-world WebSocket cases and a
-  minimal Default case. A saved character bypasses the method prompt and retains
-  its stats. The inspector reads the authoritative base-stat domain.
-- Creation timeout, availability, all-races, all-classes, Chaos/Hardcore and
-  racewar admission contracts pass.
-- Account projection contracts and `tests/async/with_disposable_mariadb.sh
-  tests/async/run_account_character_projection_mysql.sh` pass using a disposable
-  container/schema. This is focused SQL evidence, not a full MariaDB game journey.
-- Creation-grant batch/reconciliation contracts, native input queue, ASan/UBSan
-  prompt/output runtime and the integrated named-locker runtime pass.
-- Changed-file formatting, Python compilation and whitespace checks pass.
+Current evidence under `bin/issue59/`:
 
-The standalone stat-choice journey builds/acquires the existing verified flat-file
-artifact when `--binary` is omitted. It does not depend on manually replacing the
-normal `bin/server/dms_new`. All generated test builds, including the older prompt
-suite's temporary build directory, are below `bin/`. Full-world fixtures copy lib,
-use their own authority/journals/ports, and use generated authored world inputs;
-`make -j8 world` passed. Generated outputs are not committed.
+| Required proof | Authoritative result |
+| --- | --- |
+| Both full builds | `fast-plan/slot-scan-build-<backend>.log`: MariaDB and flat-file builds/state tools pass after the final source repair. |
+| State/runtime regression | `fast-plan/slot-scan-state.log`: SQL/no-MySQL, golden and integration suites pass. `slot-scan-runtime.log`: 18/18 HTTPS cases under UBSan. |
+| Reducer/sender components | `fast-plan/posthog-aligned.log`: 57 reducer + 29 HTTPS cases per backend; unchanged component code. Focused ASan/UBSan gameplay adapters also pass. |
+| MariaDB gameplay | `fast-plan/slot-scan-gameplay-mariadb.log`: 38 events / 44 charged attempts; complete native journey passes. |
+| Flat-file gameplay | `fast-plan/slot-scan-gameplay-flatfile.log`: 36 events / 42 charged attempts; complete native journey passes. |
+| Domain/lifecycle assertions | Both journeys conserve time/XP, capture group/level dimensions and separate pet damage/owner links, exclude private values, save during 503, preserve identity/quota across reconnect and real failed/successful exec, and leave old SQL intervals empty. |
+| Integrated emitted volume | `fast-plan/release-mix-volume.log`: 97 emitted rows across all six families, no suppression/refusal; scaled shapes reconcile 396,454 attempts/31 days at 30 minutes. Frequencies/retries remain declared assumptions, not concurrent capacity proof. |
+| Actual cloud campaign | `fast-plan/gameplay-cloud-mariadb.log`: 41 real submissions / 40 unique IDs within 48 native reservations, scope 1002 / season 1 / tag `issue59-cloud-smoke`. Persistent campaign marker forbids another campaign/reset. |
+| Queried reports and health | `acceptance/cloud-smoke/{submitted,expected,query-evidence}.json`: exact reconciliation, repeated UUID, deliberately missing participant, all five doubled-input queries conserve results, all production queries exclude tests. REPORTS.md records totals and IDs. |
+| Saved dashboard | Project 678214, dashboard 2240639, five saved insights 13125342–13125346; readback verifies all five production definitions. |
+| Performance | Historical `fast-plan/slot-scan-performance.log` used a pooled-only check and did not prove each pair. Superseded by the matched-pair review qualification in PERFORMANCE_GATE.md: pulse off/on 1704/897, 695/560, 788/638 usec; every pulse/save pair meets 5%. |
 
-Passed website checks:
-- Eight focused wizard/actual-Pinia/socket tests plus five existing credential
-  tests: 13 total. They cover preselection/no premature roll, method payload,
-  acknowledgement ordering, caps/error recovery, reset/back/cancel, no overlapping
-  mutations, unrelated metadata/error handling, hometown waiting/retry and legacy
-  server fallback.
-- `pnpm --dir frontend format:check`, `lint`, `type-check` and `build` pass with
-  explicit local public endpoints. Build output remains ignored.
+First completed performance comparison FAILED: pulse p99 654 usec on / 557 off
+(+17.4%); save p99 1,759,083 / 1,759,045 usec (passes). Absolute host bounds passed.
+Raw failed evidence remains in `acceptance/performance-before-slot-scan-fix/`.
+The 10–15 minute completion estimate was withdrawn when this failed.
 
-## Paired browser acceptance
+Repair `18b163a20` stops activity/cohort, checkpoint and detached-retirement scans
+after visiting all residents using their existing counts. It retains all 256
+slots and sparse high-index residents. Only telemetry_activity.c,
+telemetry_session.c and telemetry_runtime.c changed; no new state, API, timing
+rule or reduced criterion. State, runtime HTTPS, both native builds and both real
+gameplay journeys pass again. Existing cloud/report/reducer evidence remains
+valid because those data contracts and reduction code did not change.
 
-Regular Playwright drove installed Chrome 155.0.8059.41 because the Browser plugin
-is unavailable. URL: `http://127.0.0.1:5179/play`; viewports 1280x900 and 320x568.
-The actual Vue wizard/store/composable talked to the changed isolated full-world
-MUD with synthetic accounts. Peripheral website HTTP bootstrap/map-data and the
-backend-notification socket were fixtures. No MUD creation message was mocked.
+The historical pooled comparison recorded all three alternating pairs,
+40 saves/run and 120 saves per condition. Individual pulse p99 off/on values
+were 615/725, 504/540 and 631/592 usec. Review established that its pooled-only
+check masked two pair regressions; it is not a matched-pair performance pass.
+The runner now enforces the original 5% pulse/save limit separately on every pair.
+Maximum enabled event pass was 188 usec; all critical oldest-age snapshots were
+0ms, with zero observed event-budget debt, capture loss, refusal or quota errors.
+Enabled game-process CPU was 0.392% of one core and maximum RSS 49,036 KiB.
+Detailed CPU/RSS, command latency, fsync and emitted-body sizes are recorded in
+PERFORMANCE_GATE.md. The fixed world and development build are not 200-player
+capacity certification. The earlier longer collection stopped before a pair and
+is diagnostic only; both complete comparisons remain preserved.
 
-Both methods completed four bonuses, swaps, creation, tutorial 22800, durable save,
-server restart, account login and saved-character entry without a creation prompt.
-Authoritative base stats were identical before/after restart, in Str/Dex/Agi/Con/
-Pow/Int/Wis/Cha/Kar/Luk order:
-- Default: `[92,94,92,90,88,89,90,90,89,93]`.
-- Advanced: `[96,86,91,82,86,88,84,82,85,92]`.
+Final verification: both full native builds/state tools, affected state/runtime
+and real gameplay journeys pass on repair `18b163a20`; unaffected component and
+cloud evidence is reused. Formatting, whitespace and final diff review accompany
+the final evidence commit. Existing PRs are published for required review; no CI
+wait, production activation, cloud rerun or broader qualification is required.
 
-Additional actual-browser proof: no pre-choice roll, Default without Reroll,
-Advanced reroll/acceptance, cap-error recovery, repeated luck swaps, acknowledged
-Back/Cancel, a fresh default choice after cancellation, keyboard Space/arrow
-selection, short-screen vertical scrolling and no horizontal overflow.
+The fixture uses a 60-second interval and 64-segment/minute cap. HTTP outage
+recovery is observed before copyover's lossy 250ms deadline. Failed exec uses
+only the private fixture's invalid staged binary (ENOEXEC), restores the binary
+and removes only its disposable handoff image before successful exec.
 
-The browser exposed and qualified these separate repairs:
-- Registration returns the actual account identity; C booleans serialize correctly;
-  the account card durably shows level 1 after first entry.
-- Race selection waits for hometown metadata, clears stale options, deduplicates
-  options requests and retains a failed lookup for retry. Rapid navigation now
-  reaches the hometown step before method selection.
-- Starter equipment is published after the initial client snapshot. Successful
-  blocking-kit completion now sends the existing vitals update. A fresh browser
-  character rendered 35/35 after its entry 1/1 snapshot, before reconnect.
+Do not merge PRs 252–255: the owner's message was a question, not an instruction.
+Deferred SQL boot-schema cleanup and broader capacity qualification remain
+outside closure. Preserve all five agreed completion conditions. Production
+activation remains separately authorized and is not a closure condition.
 
-Final game-entry/relogin checks have no app console errors or framework overlay.
-The existing Vue Router next() deprecation warning remains a baseline warning.
-The radio library selects during an asynchronous focus callback; keyboard checks
-used physical key-down duration and no custom keyboard workaround. The first map
-error was an incorrect peripheral test response, fixed to the actual nodes/edges
-API shape; no map product code changed.
+# Review publication follow-up
 
-Screenshots and redacted evidence are outside both repositories under
-`C:/Users/apexw/.codex/visualizations/2026/10/20/01a159e0-f002-79e3-9650-209e90903eb9/`:
-`stat-choice-desktop.png`, `stat-choice-default-review.png`,
-`stat-choice-mobile.png`, `stat-choice-advanced-review.png`,
-`stat-choice-fresh-entry.png`, `stat-choice-browser-evidence.json`.
+PR review corrections are qualified locally. After this stack merges, refresh the
+saved time, XP, encounter and health insights from `docs/telemetry/posthog/` as listed
+in `docs/telemetry/REPORTS.md`, then query the existing synthetic scope read-only.
+The owner chose to finish this review without PostHog access; no new capture,
+saved-view update or production activation is part of this pass. Cloud evidence
+elsewhere in this plan remains dated historical evidence. The paired-performance
+review comparison below is newly executed local evidence.
 
-## Review repairs (2026-10-20)
-
-Both reported findings reproduced and were addressed in review order:
-- #236: the recovery contract expected `TOTAL_CON=92` and recovery states at the
-  end of the connection-name table. It now checks `CON_STAT_METHOD=93`,
-  `TOTAL_CON=93` and the updated ordering, retaining recovery IDs 90–92.
-- #237 and #238 had no actionable review findings. The #236 repair was carried
-  through each parent branch and into #239 without rewriting published history.
-- #239: a second uncached build in the fixed journey build directory failed with
-  `flat build did not select __NO_MYSQL__`. Each invocation now owns a temporary
-  directory below `bin/tests`, retained until its journeys finish and then cleaned
-  up. The existing verified artifact helper, cache and `--binary` path are reused.
-
-The recovery/stat sanitizer harnesses and all 16 Telnet prompt journeys passed on
-#236. The three WebSocket lifecycle/persistence journeys passed on #237. All five
-full-world Telnet/WebSocket journeys and the disposable MariaDB account projection
-harness passed on #238. On #239, consecutive direct invocations with
-`DURIS_REGRESSION_BUILD_CACHE` unset passed all five full-world and all five minimal
-journeys, including post-kit vitals. The cached runner also passed:
-`make test-all -j8 TEST_JOBS=2 TEST_MATCH=character_stat_choice` (normal/production
-builds, editor/area tools, world, native signals and two focused Python entries;
-not the complete Python suite).
-
-The build-artifact, starter-grant batch/reconciliation/lifecycle/plan/readiness,
-transaction/item input-queue and ASan/UBSan prompt/output regressions passed.
-Formatting against `origin/master`, Python compilation and whitespace checks
-passed. Master remains `6a323feaab1a`; each updated parent is carried into its
-child. Keep the review order #236 → #237 → #238 → #239 and squash when integrating
-into linear-history master. No release tag, merge or deployment is part of this
-review repair. GitHub CI is not a completion gate for this local qualification.
-
-## Next owner action and limits
-
-No implementation or required local acceptance remains. All PRs are left for
-review/integration. The issue introduction records the selected rules and review
-stack, with the [final evidence comment](https://github.com/LuminariMUD/Duris/issues/107#issuecomment-6295870664).
-Keep #107 open until both repositories are integrated. Server protocol lands and
-releases before the website. No production operation, migration, merge, release
-tag or live changelog publication was performed. The release-note JSON is an
-unpublished local draft for the normally authorized deployment/news process.
-
-A full MariaDB game-server/browser journey and full burn-in were outside this
-focused qualification. The normal server build plus the isolated account SQL
-check are the database-side evidence. No balance certification or live production
-acceptance is claimed. The original checkout and unrelated work were preserved.
-
-Final ablation retained the required existing-path changes, narrow lifecycle
-state, copy, focused regressions and this handoff. No point-buy, numeric stat
-screen, balance change, generic workflow, saved method history, migration or new
-service was added. This change adds no OpenSpec workflow files.
+The merge review corrected XP zone/group grouping and the pooled-only performance
+guard. Local SQL regressions preserve all three independent XP zone/group buckets.
+A new local one-client, three-pair performance run exits 0 with 40 saves/run:
+pulse p99 off/on is 1704/897, 695/560 and 788/638 usec; save changes are -0.022%,
++0.111% and -0.148%. Each pair independently meets the original 5% limit. There
+are 1,026 off / 1,032 on pulse samples and 120 saves per condition; maximum enabled
+event pass is 905 usec and all twelve sampled critical ages are 0ms. Required
+capture/health fields remain clean. Raw local evidence and limits are documented
+in PERFORMANCE_GATE.md. No new cloud campaign, saved-view update or production
+operation occurred.

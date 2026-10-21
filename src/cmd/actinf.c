@@ -120,6 +120,8 @@ extern int avail_descs;
 extern int help_array[27][2];
 extern int info_array[27][2];
 extern int max_descs;
+extern int max_descs_previous_hour;
+extern bool max_descs_previous_hour_valid;
 extern const int curr_ingame_good;
 extern const int max_ingame_good;
 extern const int curr_ingame_evil;
@@ -4595,6 +4597,45 @@ static void show_world_telemetry(P_char ch)
 					     1U :
 					     0U;
 
+	telemetry_runtime_posthog_health posthog{};
+	if (health.backend == telemetry_storage_backend::posthog &&
+	    telemetry_runtime_posthog_health_copy(&posthog))
+	{
+		const auto &native = posthog.native;
+		const auto &reducer = posthog.reducer;
+		const auto &sender = posthog.sender;
+		snprintf(line, sizeof(line),
+			 "PostHog native_consumed=%llu last_consumed_seq=%llu output=%u/%uB "
+			 "sessions=%u runs=%u reduction_refused=%llu\n",
+			 (unsigned long long)native.consumed_records,
+			 (unsigned long long)native.last_consumed_record_seq, reducer.output_events,
+			 reducer.output_bytes, reducer.sessions, reducer.runs,
+			 (unsigned long long)reducer.reduction_refusals);
+		send_to_char(line, ch);
+		snprintf(line, sizeof(line),
+			 "PostHog sender_state=%u http=%u curl=%u quota_error=%u batches=%llu "
+			 "reserved=%llu retries=%llu quota_day=%lld used=%u+%u/%u\n",
+			 (unsigned int)sender.state, sender.http_status, sender.curl_error,
+			 sender.quota_error, (unsigned long long)sender.attempted_batches,
+			 (unsigned long long)sender.reserved_events,
+			 (unsigned long long)sender.retry_attempts, (long long)posthog.quota_day,
+			 posthog.normal_reserved, posthog.health_reserved, posthog.total_limit);
+		send_to_char(line, ch);
+		snprintf(
+			line, sizeof(line),
+			"PostHog acknowledged=%llu ambiguous=%llu suppressed=%llu expired=%llu "
+			"storage_failures=%llu clock_failures=%llu cancellations=%llu "
+			"last_http_ack_us=%llu (HTTP acknowledgement is not query-visible ingestion)\n",
+			(unsigned long long)reducer.http_acknowledged,
+			(unsigned long long)reducer.ambiguous_events,
+			(unsigned long long)reducer.output_suppressed,
+			(unsigned long long)reducer.output_expired,
+			(unsigned long long)sender.storage_failures,
+			(unsigned long long)sender.clock_failures,
+			(unsigned long long)sender.cancellations,
+			(unsigned long long)sender.last_http_acknowledged);
+		send_to_char(line, ch);
+	}
 	send_to_char("Telemetry health (metadata only)\n", ch);
 	snprintf(line, sizeof(line),
 		 "state=%s enabled=%u backend=%s schema=%u alert=%s reasons=%u reason_flags=%s "
@@ -4608,23 +4649,31 @@ static void show_world_telemetry(P_char ch)
 		 telemetry_health_advisory_lock_name(health.advisory_lock_state));
 	send_to_char(line, ch);
 	if (status.last_commit_age_available != 0U)
-		snprintf(line, sizeof(line),
-			 "producer=%llu:%llu last_admitted_seq=%llu last_committed_seq=%llu "
-			 "last_commit_monotonic_us=%llu last_commit_age_ms=%llu\n",
-			 (unsigned long long)health.producer.boot_id,
-			 (unsigned long long)health.producer.process_id,
-			 (unsigned long long)health.last_admitted_record_seq,
-			 (unsigned long long)health.last_committed_record_seq,
-			 (unsigned long long)health.last_success_monotonic_usec,
-			 (unsigned long long)(status.last_commit_age_usec / 1'000U));
+		snprintf(
+			line, sizeof(line),
+			health.backend == telemetry_storage_backend::posthog ?
+				"producer=%llu:%llu last_admitted_seq=%llu last_committed_seq=%llu "
+				"last_consumption_monotonic_us=%llu last_consumption_age_ms=%llu\n" :
+				"producer=%llu:%llu last_admitted_seq=%llu last_committed_seq=%llu "
+				"last_commit_monotonic_us=%llu last_commit_age_ms=%llu\n",
+			(unsigned long long)health.producer.boot_id,
+			(unsigned long long)health.producer.process_id,
+			(unsigned long long)health.last_admitted_record_seq,
+			(unsigned long long)health.last_committed_record_seq,
+			(unsigned long long)health.last_success_monotonic_usec,
+			(unsigned long long)(status.last_commit_age_usec / 1'000U));
 	else
-		snprintf(line, sizeof(line),
-			 "producer=%llu:%llu last_admitted_seq=%llu last_committed_seq=%llu "
-			 "last_commit=never\n",
-			 (unsigned long long)health.producer.boot_id,
-			 (unsigned long long)health.producer.process_id,
-			 (unsigned long long)health.last_admitted_record_seq,
-			 (unsigned long long)health.last_committed_record_seq);
+		snprintf(
+			line, sizeof(line),
+			health.backend == telemetry_storage_backend::posthog ?
+				"producer=%llu:%llu last_admitted_seq=%llu last_committed_seq=%llu "
+				"last_consumption=never\n" :
+				"producer=%llu:%llu last_admitted_seq=%llu last_committed_seq=%llu "
+				"last_commit=never\n",
+			(unsigned long long)health.producer.boot_id,
+			(unsigned long long)health.producer.process_id,
+			(unsigned long long)health.last_admitted_record_seq,
+			(unsigned long long)health.last_committed_record_seq);
 	send_to_char(line, ch);
 	snprintf(line, sizeof(line),
 		 "records admitted=%llu/%llu applied=%llu duplicate=%llu stale=%llu invalid=%llu "
@@ -7789,7 +7838,8 @@ void do_who(P_char ch, char *argument, int /*cmd*/)
 				}
 
 				strcat(who_output, "\n");
-				if (strlen(who_output) > (MAX_STRING_LENGTH - 175))
+				// Leave room for the warning and every optional summary line.
+				if (strlen(who_output) > (MAX_STRING_LENGTH - 512))
 				{
 					strcat(who_output,
 					       "-= List too long, use 'who <arg> =-'\n");
@@ -7814,6 +7864,12 @@ void do_who(P_char ch, char *argument, int /*cmd*/)
 					"&+rRecord number of connections this boot: %d.&n\n",
 					max_descs);
 			}
+			if (max_descs_previous_hour_valid)
+				checked_snprintf(
+					who_output + strlen(who_output),
+					MAX_STRING_LENGTH - strlen(who_output),
+					"&+rPeak simultaneous connections in the previous completed hour: %d.&n\n",
+					max_descs_previous_hour);
 			if ((curr_ingame_good > 0) && !IS_RACEWAR_GOOD(ch) && !IS_TRUSTED(ch))
 				checked_snprintf(who_output + strlen(who_output),
 						 MAX_STRING_LENGTH - strlen(who_output),

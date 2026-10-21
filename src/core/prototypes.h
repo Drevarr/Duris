@@ -1091,7 +1091,7 @@ int melee_damage(P_char ch, P_char vict, double dam, int type, struct damage_mes
 		 int *damAccumulator = NULL);
 int PartySizeMod(int, int, int, int);
 int TryRiposte(P_char, P_char);
-int vamp(P_char, double, double);
+int vamp(P_char, double, double, bool allow_improved_healing = true);
 void heal(P_char, P_char, int, int);
 bool blind(P_char, P_char, int);
 void retarget_event(P_char ch, P_char victim, P_obj obj, void *data);
@@ -3221,6 +3221,7 @@ void ttype_handle_subnegotiation(P_desc d, const unsigned char *data, int len);
 void check_cp437(P_desc d);
 
 /* poisons */
+void deliver_weapon_poison(P_char ch, P_char victim, P_obj weapon);
 void poison_lifeleak(int, P_char, char *, int, P_char, struct affected_type *);
 void poison_weakness(int, P_char, char *, int, P_char, struct affected_type *);
 void poison_neurotoxin(int, P_char, char *, int, P_char, struct affected_type *);
@@ -3229,6 +3230,7 @@ void poison_moveleak(int, P_char, char *, int, P_char, struct affected_type *);
 void poison_slowness(int, P_char, char *, int, P_char, struct affected_type *);
 void poison_madness(int, P_char, char *, int, P_char, struct affected_type *);
 int poison_common_remove(P_char ch);
+void event_poison(P_char, P_char, P_obj, void *);
 
 void unspecialize(P_char ch, P_obj obj);
 
