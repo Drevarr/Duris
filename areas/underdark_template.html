@@ -236,9 +236,20 @@ var ferryIcon = L.icon({
     popupAnchor:  [0, 0] // point from which the popup should open relative to the iconAnchor
 });
 
+const connections = [
+    [739234, 740051],
+    [734845, 740051],
+    [732019, 724509],
+    [711255, 714015],
+    [716416, 723207],
+    [704901, 716469],
+    [720862, 702450],
+    [704439, 702821],
+];
+
 const ferryRoutes = [
 
-]
+];
 
 const dragonRoutes = [
 
@@ -314,6 +325,17 @@ ferryRoutes.forEach(m => {
   L.marker(vnumToLatLng(m.start), {icon: ferryIcon})
     .addTo(map)
     .bindPopup(m.name);
+});
+
+connections.forEach(([start, end]) => {
+    L.polyline(
+        [vnumToLatLng(start), vnumToLatLng(end)],
+        {
+            color: "white",
+            weight: 2,
+            opacity: 0.8
+        }
+    ).addTo(map);
 });
 
 function createZoneLabel(zone) {
