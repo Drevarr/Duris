@@ -1,4 +1,5 @@
 import json
+import math
 import os
 import re
 from pathlib import Path
@@ -63,6 +64,13 @@ def find_marker_adjacent(vnum):
         if (vnum + offset) in zone_marker_points:
             return True
     return False
+
+# Convert vnum to pixel location on png map
+def vnum_to_pixel(vnum, start, width, square):
+    offset = vnum - start
+    y = offset // width
+    x = offset % width
+    return x * square, y * square
 
 def parse_zone_markers(filepath, target_zone, zone_marker_points):
     """
@@ -305,7 +313,7 @@ def parse_wld_file(directory, loaded_areas):
                                 zone_name = get_zone_name(file_start)
                                 if TARGET_MIN <= to_room <= TARGET_MAX:
                                     zone_marker = find_zone_marker(direction, to_room)
-                                    zone_name = get_zone_name(file_start)
+                                    zone_name = find_zone_for_room(to_room, zone_data)
 
                                     if zone_marker in zone_marker_points:
 
@@ -322,14 +330,22 @@ def parse_wld_file(directory, loaded_areas):
 
     return results
 
-def parse_map_file(filepath):
+def parse_map_file(filepath, max_offset_deviation=100):
     """
-    Parses a single .wld map file (e.g. surface_map) and finds all exits
-    that lead to rooms OUTSIDE the TARGET_MIN–TARGET_MAX range.
+    Parses a single .wld map file (e.g. surface_map) and finds:
+    1. Exits where either room is OUTSIDE the TARGET_MIN–TARGET_MAX range.
+    2. Exits where BOTH rooms are INSIDE the range, but the vnum offset
+       deviates significantly from the expected direction offset (long-distance).
 
-    Returns a dict keyed by the exit target vnum, with data about the exit.
+    Args:
+        filepath: Path to the .wld file
+        max_offset_deviation: Maximum allowed difference between actual and expected vnum offset
+
+    Returns:
+        dict: { 'outside_exits': {...}, 'long_distance_exits': {...} }
     """
-    results = {}
+    outside_exits = {}
+    long_distance_exits = {}
 
     # Extract the zone prefix from the filepath (e.g. 'underdark' from 'underdark.wld')
     zone_prefix = Path(filepath).stem
@@ -386,13 +402,13 @@ def parse_map_file(filepath):
                     if len(parts) >= 3:
                         to_room = int(parts[-1])
 
-                        # Only record exits that go OUTSIDE the target range
-                        if to_room < TARGET_MIN or to_room > TARGET_MAX:
+                        # Case 1: Either room is outside the surface map range
+                        if to_room < TARGET_MIN or to_room > TARGET_MAX or current_room < TARGET_MIN or current_room > TARGET_MAX:
                             zone_marker = find_zone_marker(direction, to_room)
                             #zone_name = get_zone_name(zone_prefix) if zone_prefix in zone_data else "Unknown"
                             zone_name = find_zone_for_room(to_room, zone_data)
 
-                            results[to_room] = {
+                            outside_exits[to_room] = {
                                 "zone": zone_name,
                                 "marker name": current_marker_name,
                                 "from_room": current_room,
@@ -400,10 +416,35 @@ def parse_map_file(filepath):
                                 "to_room": to_room
                             }
 
+                        # Case 2: Both rooms are inside the surface map range
+                        elif TARGET_MIN <= current_room <= TARGET_MAX and TARGET_MIN <= to_room <= TARGET_MAX:
+                            # Compare actual vnum offset to expected direction offset
+                            expected_offset = Reverse_Offsets.get(direction, 0)
+                            actual_offset = current_room - to_room
+                            deviation = abs(actual_offset - expected_offset)
+
+                            # Flag long-distance connections
+                            if deviation > max_offset_deviation and "Dispersement" not in current_marker_name:
+                                #zone_name = get_zone_name(zone_prefix) if zone_prefix in zone_data else "Unknown"
+                                zone_name = find_zone_for_room(to_room, zone_data)
+
+                                long_distance_exits[to_room] = {
+                                    "zone": zone_name,
+                                    "marker name": current_marker_name,
+                                    "from_room": current_room,
+                                    "direction": direction,
+                                    "to_room": to_room,
+                                    "expected_offset": expected_offset,
+                                    "actual_offset": actual_offset,
+                                    "deviation": deviation
+                                }
+
                 except StopIteration:
                     break
 
-    return results
+    return {"outside_exits": outside_exits, "long_distance_exits": long_distance_exits}
+
+
 
 def parse_directory(directory, loaded_areas):
     all_results = []
@@ -439,11 +480,16 @@ if __name__ == "__main__":
     # Read WLD files and find exits to Map vnums
     zone_marker_data = parse_wld_file(str(wld_directory), loaded_areas)
 
-    map_to_zone_exits = parse_map_file(str(surface_map))
+    results = parse_map_file(str(surface_map), max_offset_deviation=400)
+    map_to_zone_exits = results["outside_exits"]
+    long_distance_exits = results["long_distance_exits"]
     with open("map_to_zone_exits.txt", "w") as file:
         for key, value in map_to_zone_exits.items():
             file.write(f"{key}: {value}\n")
-
+    with open("long_distance_exits.txt", "w") as f:
+        for key, value in long_distance_exits.items():
+            f.write(f"{key}: {value}\n")
+            print(f"[{value["from_room"]}, {value["to_room"]}],")
     #print(zone_marker_data)
     # Inject Sniktiorg landmark names
     update_landmarks()
