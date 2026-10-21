@@ -1,0 +1,81 @@
+66087: {'zone': 'Ashrumite Village', 'marker name': '&+LA &+mSmall &+LCavern in the &+mUnderdark&n', 'from_room': 702069, 'direction': 'North', 'to_room': 66087}
+30282: {'zone': 'The Underworld', 'marker name': '&+MA Mushroom Filled Cavity&n', 'from_room': 709628, 'direction': 'Up', 'to_room': 30282}
+4093: {'zone': 'Caves of Mt. Skelenak', 'marker name': '&+LA &+mNetwork &+Lof &+mTunnels &+LDug by the Giant &+mPurple Worm&n', 'from_room': 709664, 'direction': 'Up', 'to_room': 4093}
+32919: {'zone': 'The Great Shaboath', 'marker name': '&+LThe Dark &+bWaters &+Lof the Sunless &+bSea&n', 'from_room': 710327, 'direction': 'North', 'to_room': 32919}
+53907: {'zone': 'The Great Realm of Duris', 'marker name': '&+LA Dark &+mTunnel &+LLeading to the &+bLake &+Lof Shadows&n', 'from_room': 712320, 'direction': 'Up', 'to_room': 53907}
+40655: {'zone': 'Golden Hall of the Crown', 'marker name': '&+LA &+mSmall &+LCavern in the &+mUnderdark&n', 'from_room': 717300, 'direction': 'East', 'to_room': 40655}
+30281: {'zone': 'The Underworld', 'marker name': '&+LA &+mSmall &+LCavern in the &+mUnderdark&n', 'from_room': 722840, 'direction': 'South', 'to_room': 30281}
+54114: {'zone': 'The Great Realm of Duris', 'marker name': '&+LThe &+rTepid &+LTunnels of the Upper Strata of the &+mUnderdark&n', 'from_room': 734844, 'direction': 'East', 'to_room': 54114}
+75778: {'zone': 'The Obsidian Citadel', 'marker name': '&+LA &+rWarm &+LCavern in the Upper Strata of the &+mUnderdark&n', 'from_room': 737288, 'direction': 'North', 'to_room': 75778}
+54115: {'zone': 'The Great Realm of Duris', 'marker name': '&+LThe &+rTepid &+LTunnels of the Upper Strata of the &+mUnderdark&n', 'from_room': 739233, 'direction': 'East', 'to_room': 54115}
+54116: {'zone': 'The Great Realm of Duris', 'marker name': '&+LA &+mSmall &+LPatch of &+mCarnivorous &+LFungi&n', 'from_room': 740451, 'direction': 'North', 'to_room': 54116}
+54549: {'zone': 'The Tunnels of Cyric the Destroyer', 'marker name': '&+LA Ledge Before a Rank Tunnel&N', 'from_room': 743256, 'direction': 'Down', 'to_room': 54549}
+54554: {'zone': 'The Tunnels of Cyric the Destroyer', 'marker name': '&+LAbove a Rank Tunnel', 'from_room': 746483, 'direction': 'Down', 'to_room': 54554}
+94646: {'zone': 'The Behemoth Herders', 'marker name': '&+LThe &+rTepid &+LTunnels of the Upper Strata of the &+mUnderdark&n', 'from_room': 746503, 'direction': 'East', 'to_room': 94646}
+54141: {'zone': 'The Great Realm of Duris', 'marker name': '&+LThe &+rTepid &+LTunnels of the Upper Strata of the &+mUnderdark&n', 'from_room': 748506, 'direction': 'North', 'to_room': 54141}
+15102: {'zone': 'New Cave city', 'marker name': '&+LThe Massive Mountain Walls of the &+mUnderdark&n', 'from_room': 749656, 'direction': 'North', 'to_room': 15102}
+42999: {'zone': "Drustl's Yerdonia Enslaved", 'marker name': '&+LA &+rWarm &+LCavern in the Upper Strata of the &+mUnderdark&n', 'from_room': 749737, 'direction': 'North', 'to_room': 42999}
+54142: {'zone': 'The Great Realm of Duris', 'marker name': '&+LThe &+rTepid &+LTunnels of the Upper Strata of the &+mUnderdark&n', 'from_room': 754915, 'direction': 'West', 'to_room': 54142}
+54529: {'zone': 'The Tunnels of Cyric the Destroyer', 'marker name': '&+LA Large &+rMagma &+LFissure, Deep Within the &+mUnderdark&n', 'from_room': 757626, 'direction': 'Up', 'to_room': 54529}
+87500: {'zone': 'The 222nd Layer of the Abyss', 'marker name': '&+LA &+rDepressed &+LSection of the &+yEarth&n', 'from_room': 772524, 'direction': 'Down', 'to_room': 87500}
+36800: {'zone': 'Domain of Lost Souls', 'marker name': '&+LA &+rTreacherous &+LTunnel in the Deep &+mUnderdark&n', 'from_room': 784930, 'direction': 'North', 'to_room': 36800}
+6696: {'zone': 'The Shaughin Hunting Grounds', 'marker name': '&+LA &+mSmall &+LPatch of &+MGlowing &+mMushrooms&n', 'from_room': 790149, 'direction': 'North', 'to_room': 6696}
+15202: {'zone': 'Faang', 'marker name': '&+LA Narrow Tunnel &+mDeep &+LWithin the &+mUnderdark&n', 'from_room': 797529, 'direction': 'North', 'to_room': 15202}
+90800: {'zone': 'Valinhaven', 'marker name': '&+BA Mysterious Underground River&n', 'from_room': 798725, 'direction': 'West', 'to_room': 90800}
+54188: {'zone': 'The Great Realm of Duris', 'marker name': '&+LA &+mSmall &+LCavern, Covered by a &+mStrange &+LMoss&n', 'from_room': 802140, 'direction': 'North', 'to_room': 54188}
+21300: {'zone': 'Mazzolin', 'marker name': '&+LA &+mMushroom &+LForest Covered in &+mSpider &+LWebs&n', 'from_room': 803053, 'direction': 'North', 'to_room': 21300}
+43500: {'zone': 'Temple of the Earth', 'marker name': '&+LA &+mCavern &+LBefore a Large &+yEarthen &+LTemple&n', 'from_room': 804038, 'direction': 'East', 'to_room': 43500}
+6500: {'zone': 'The Shaughin Settlement', 'marker name': '&+LA &+mNarrowing &+LCavern&N', 'from_room': 804249, 'direction': 'South', 'to_room': 6500}
+36262: {'zone': 'Llzazan Ghetto of Arachdrathos', 'marker name': '&+LA &+mLarge &+LCaverned Covered with &+mMoss &+Land &+mFungi&n', 'from_room': 805516, 'direction': 'North', 'to_room': 36262}
+6400: {'zone': 'The Bugger Caves', 'marker name': '&+LA &+mLarge &+LCaverned Covered with &+mMoss &+Land &+mFungi&n', 'from_room': 807099, 'direction': 'South', 'to_room': 6400}
+93069: {'zone': 'Treasure Caves', 'marker name': '&+LA &+mDark &+LCavern with &+mTapering &+LStalactites&n', 'from_room': 810962, 'direction': 'East', 'to_room': 93069}
+2392: {'zone': 'Myconid Mushroom Forest', 'marker name': '&+LA &+mLong &+LTunnel Adorned with &+mMantol-Derith &+LScriptures&n', 'from_room': 811016, 'direction': 'Up', 'to_room': 2392}
+130400: {'zone': 'The Reliquary Nexus of the Roper Den', 'marker name': '&+LA &+mHumid &+LCavern Within the &+gRoper Den&n', 'from_room': 811645, 'direction': 'North', 'to_room': 130400}
+6900: {'zone': 'The Caverns of the Worms', 'marker name': '&+LA &+mDark &+LCavern with &+mTapering &+LStalactites&n', 'from_room': 811708, 'direction': 'North', 'to_room': 6900}
+18714: {'zone': 'BogenTok', 'marker name': '&+LA &+mLarge &+LCaverned Covered with &+mMoss &+Land &+mFungi&n', 'from_room': 812256, 'direction': 'East', 'to_room': 18714}
+18700: {'zone': 'BogenTok', 'marker name': '&+LA &+mLarge &+LCaverned Covered with &+mMoss &+Land &+mFungi&n', 'from_room': 812663, 'direction': 'West', 'to_room': 18700}
+77700: {'zone': 'The Hall of the Ancients', 'marker name': '&+LA &+mHumid &+LCavern Within the &+gRoper Den&n', 'from_room': 813247, 'direction': 'South', 'to_room': 77700}
+402000: {'zone': "The Arcaneum of L'srillizzin", 'marker name': '&+LAn &+mIntricate &+LNetwork of &+mPurple Worm &+LTunnels&n', 'from_room': 813342, 'direction': 'South', 'to_room': 402000}
+53742: {'zone': 'The Great Realm of Duris', 'marker name': '&+LA Crumbled Tunnel Opening', 'from_room': 813720, 'direction': 'Down', 'to_room': 53742}
+42583: {'zone': 'Lair of the Purple Worm', 'marker name': '&+LA &+mMushroom &+LForest Covered in &+mSpider &+LWebs&n', 'from_room': 814263, 'direction': 'East', 'to_room': 42583}
+1542: {'zone': 'Kobold Settlement', 'marker name': '&+LThe Massive Cavern Walls of the &+mUrusi&n', 'from_room': 816080, 'direction': 'West', 'to_room': 1542}
+15255: {'zone': 'Faang', 'marker name': '&+LAn Underground &+BRiver &+Lin the &+yFaang &+LMountains', 'from_room': 818127, 'direction': 'North', 'to_room': 15255}
+80700: {'zone': 'The Clawed Caverns', 'marker name': '&+LA &+mLarge &+LCavern Beneath the &+yFaang &+LMountains&n', 'from_room': 819329, 'direction': 'East', 'to_room': 80700}
+24101: {'zone': 'the Mushroom Caverns', 'marker name': '&+LA &+mLong &+LTunnel Adorned with &+mMantol-Derith &+LScriptures&n', 'from_room': 820288, 'direction': 'Up', 'to_room': 24101}
+8700: {'zone': 'Lair of the Gibberling King', 'marker name': '&+LA &+mMushroom &+LForest Covered in &+mSpider &+LWebs&n', 'from_room': 820717, 'direction': 'East', 'to_room': 8700}
+10649: {'zone': "Pragtog's Domain", 'marker name': '&+LA &+mLarge &+LCaverned Covered with &+mMoss &+Land &+mFungi&n', 'from_room': 822668, 'direction': 'Down', 'to_room': 10649}
+20977: {'zone': 'Mountain Tracts of the Untamed', 'marker name': '&+LThe Immense Caverns of the &+MElder Brain&n', 'from_room': 823315, 'direction': 'North', 'to_room': 20977}
+24187: {'zone': 'the Mushroom Caverns', 'marker name': '&+MA Shaft Beneath a Soaring Mushroom Cavern&n', 'from_room': 823870, 'direction': 'Up', 'to_room': 24187}
+4530: {'zone': 'The Underworld', 'marker name': '&+LThe Immense Caverns of the &+MElder Brain&n', 'from_room': 825315, 'direction': 'West', 'to_room': 4530}
+45807: {'zone': 'Orog Encampment', 'marker name': '&+LA Grove of &+mCarnivorous &+LToadstools&n', 'from_room': 825364, 'direction': 'North', 'to_room': 45807}
+24237: {'zone': 'the Mushroom Caverns', 'marker name': '&+LA Dark, Feculent Pool', 'from_room': 825082, 'direction': 'Up', 'to_room': 24237}
+4479: {'zone': 'The Underworld', 'marker name': '&+LThe Immense Caverns of the &+MElder Brain&n', 'from_room': 825716, 'direction': 'East', 'to_room': 4479}
+4608: {'zone': 'The Underworld', 'marker name': '&+LA &+mLong &+LTunnel Adorned with &+mMantol-Derith &+LScriptures&n', 'from_room': 825440, 'direction': 'West', 'to_room': 4608}
+45800: {'zone': 'Orog Encampment', 'marker name': '&+LA &+mDark &+LCavern with &+mTapering &+LStalactites&n', 'from_room': 826159, 'direction': 'North', 'to_room': 45800}
+8100: {'zone': 'The Temple of Laduguer', 'marker name': '&+LA &+mLong &+LTunnel Adorned with &+mMantol-Derith &+LScriptures&n', 'from_room': 827455, 'direction': 'East', 'to_room': 8100}
+96471: {'zone': 'Ixarkon', 'marker name': '&+LA &+BDeep &+LUnderground &+BLake &+LBoardering the &+mMushroom &+LPastures&n', 'from_room': 828097, 'direction': 'North', 'to_room': 96471}
+3475: {'zone': 'The Minor Plane of Planitude', 'marker name': '&+LA &+BWater &+LFilled Tunnel&n', 'from_room': 829678, 'direction': 'North', 'to_room': 3475}
+53100: {'zone': 'Phantasmagoric Caverns', 'marker name': '&+LA &+mDark &+LCavern with &+mTapering &+LStalactites&n', 'from_room': 832131, 'direction': 'North', 'to_room': 53100}
+42500: {'zone': 'Lair of the Purple Worm', 'marker name': '&+LA &+mLarge &+LCaverned Covered with &+mMoss &+Land &+mFungi&n', 'from_room': 833111, 'direction': 'North', 'to_room': 42500}
+94818: {'zone': 'The Deep Ravine of Passage', 'marker name': '&+LA &+mDark &+LCavern with &+mTapering &+LStalactites&n', 'from_room': 833221, 'direction': 'North', 'to_room': 94818}
+4615: {'zone': 'The Underworld', 'marker name': '&+LA &+mDark &+LCavern with &+mTapering &+LStalactites&n', 'from_room': 833726, 'direction': 'West', 'to_room': 4615}
+15015: {'zone': 'The Chasm of the Misty Vale', 'marker name': '&+LA &+mNarrow &+LTunnel in the &+mUnderdark&n', 'from_room': 834025, 'direction': 'Up', 'to_room': 15015}
+6120: {'zone': 'The Lizardman Swamps of Clavikord', 'marker name': '&+LThe &+mSacred &+LCaverns of the &+gLizardmen&n', 'from_room': 834369, 'direction': 'South', 'to_room': 6120}
+4561: {'zone': 'The Underworld', 'marker name': '&+LA &+mNarrow &+LTunnel in the &+mUnderdark&n', 'from_room': 834829, 'direction': 'NorthEast', 'to_room': 4561}
+2300: {'zone': 'Myconid Mushroom Forest', 'marker name': '&+LThe &+mLarge &+LCaverns of the Ancient &+mM&+wy&+mc&+wo&+mn&+wi&+md&n', 'from_room': 836064, 'direction': 'Down', 'to_room': 2300}
+4440: {'zone': 'The Underworld', 'marker name': '&+LAn &+mIntricate &+LNetwork of &+mPurple Worm &+LTunnels&n', 'from_room': 836905, 'direction': 'East', 'to_room': 4440}
+34200: {'zone': 'Clan Stoutdorf Settlement', 'marker name': '&+LA &+mLarge &+LCaverned Covered with &+mMoss &+Land &+mFungi&n', 'from_room': 840288, 'direction': 'West', 'to_room': 34200}
+4625: {'zone': 'The Underworld', 'marker name': '&+LAn &+mIntricate &+LNetwork of &+mPurple Worm &+LTunnels&n', 'from_room': 841674, 'direction': 'East', 'to_room': 4625}
+4200: {'zone': 'Ixxillikor', 'marker name': '&+LA &+mSmall &+LCavern, Covered by a &+mStrange &+LMoss&n', 'from_room': 841752, 'direction': 'East', 'to_room': 4200}
+19000: {'zone': "The Gagga'Jobo Cave System", 'marker name': '&+LAn &+mImmense &+LChasm, Deep Within the &+mUnderdark&n', 'from_room': 842047, 'direction': 'East', 'to_room': 19000}
+4580: {'zone': 'The Underworld', 'marker name': '&+LA &+mDark &+LCavern with &+mTapering &+LStalactites&n', 'from_room': 843293, 'direction': 'North', 'to_room': 4580}
+88600: {'zone': "Morg's Place", 'marker name': '&+LAn &+mImmense &+LChasm, Deep Within the &+mUnderdark&n', 'from_room': 844836, 'direction': 'South', 'to_room': 88600}
+10021: {'zone': 'The Underworld Shafts', 'marker name': '&+LAn &+mIntricate &+LNetwork of &+mPurple Worm &+LTunnels&n', 'from_room': 844848, 'direction': 'Up', 'to_room': 10021}
+4470: {'zone': 'The Underworld', 'marker name': '&+LAn &+mIntricate &+LNetwork of &+mPurple Worm &+LTunnels&n', 'from_room': 846118, 'direction': 'North', 'to_room': 4470}
+1600: {'zone': 'Truktakyagyo', 'marker name': '&+LAn &+mImmense &+LChasm, Deep Within the &+mUnderdark&n', 'from_room': 846820, 'direction': 'West', 'to_room': 1600}
+4624: {'zone': 'The Underworld', 'marker name': '&+LA &+mDark &+LCavern with &+mTapering &+LStalactites&n', 'from_room': 848875, 'direction': 'North', 'to_room': 4624}
+23721: {'zone': "Malch'Hor Ganl the Goblin City", 'marker name': '&+LAn &+mIntricate &+LNetwork of &+mPurple Worm &+LTunnels&n', 'from_room': 849235, 'direction': 'West', 'to_room': 23721}
+1700: {'zone': 'The Docks of Quietus Quay', 'marker name': '&+LBeneath a Steep, Rocky Passage&n', 'from_room': 850045, 'direction': 'Up', 'to_room': 1700}
+4547: {'zone': 'The Underworld', 'marker name': '&+LA &+mLarge &+LChamber of Tall &+mStalagmites&n', 'from_room': 854866, 'direction': 'East', 'to_room': 4547}
+10100: {'zone': 'The Mushroom Forest', 'marker name': '&+LWandering Inside the &+MGreat Mushroom Forest&n', 'from_room': 856059, 'direction': 'West', 'to_room': 10100}
+87950: {'zone': 'The Stone Tomb of Kelek', 'marker name': '&+LAn &+mIntricate &+LNetwork of &+mPurple Worm &+LTunnels&n', 'from_room': 857219, 'direction': 'Down', 'to_room': 87950}

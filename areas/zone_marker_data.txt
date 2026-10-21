@@ -1,0 +1,66 @@
+701669: {'zone': 'The Twisting Tunnels of the Durian Underdark', 'marker name': '&+cZone Marker: ashrumite&n', 'from_room': 701669, 'direction': 'West', 'to_room': 701668}
+812662: {'zone': 'The Twisting Tunnels of the Durian Underdark', 'marker name': '&+cZone Marker: bogentok&n', 'from_room': 812662, 'direction': 'West', 'to_room': 812661}
+812257: {'zone': 'The Twisting Tunnels of the Durian Underdark', 'marker name': '&+cZone Marker: bogentok&n', 'from_room': 812257, 'direction': 'West', 'to_room': 812256}
+807499: {'zone': 'The Twisting Tunnels of the Durian Underdark', 'marker name': '&+cZone Marker: bugger&n', 'from_room': 807499, 'direction': 'West', 'to_room': 807498}
+819330: {'zone': 'The Twisting Tunnels of the Durian Underdark', 'marker name': '&+cZone Marker: clwcvrn&n', 'from_room': 819330, 'direction': 'West', 'to_room': 819329}
+734845: {'zone': 'The Twisting Tunnels of the Durian Underdark', 'marker name': 'Connector', 'from_room': 734845, 'direction': 'West', 'to_room': 734844}
+739234: {'zone': 'The Twisting Tunnels of the Durian Underdark', 'marker name': 'Connector', 'from_room': 739234, 'direction': 'West', 'to_room': 739233}
+740051: {'zone': 'The Twisting Tunnels of the Durian Underdark', 'marker name': 'Connector', 'from_room': 740051, 'direction': 'West', 'to_room': 740050}
+748106: {'zone': 'The Twisting Tunnels of the Durian Underdark', 'marker name': 'Connector', 'from_room': 748106, 'direction': 'West', 'to_room': 748105}
+754914: {'zone': 'The Twisting Tunnels of the Durian Underdark', 'marker name': 'Connector', 'from_room': 754914, 'direction': 'West', 'to_room': 754913}
+801740: {'zone': 'The Twisting Tunnels of the Durian Underdark', 'marker name': '&+cZone Marker: connectorzones&n', 'from_room': 801740, 'direction': 'South', 'to_room': 802140}
+757626: {'zone': 'The Twisting Tunnels of the Durian Underdark', 'marker name': '&+LA Large &+rMagma &+LFissure, Deep Within the &+mUnderdark&n', 'from_room': 757626, 'direction': 'West', 'to_room': 757625}
+784530: {'zone': 'The Twisting Tunnels of the Durian Underdark', 'marker name': 'Domain', 'from_room': 784530, 'direction': 'West', 'to_room': 784529}
+840287: {'zone': 'The Twisting Tunnels of the Durian Underdark', 'marker name': '&+cZone Marker: drst&n', 'from_room': 840287, 'direction': 'West', 'to_room': 840286}
+810963: {'zone': 'The Twisting Tunnels of the Durian Underdark', 'marker name': 'Ogre', 'from_room': 810963, 'direction': 'West', 'to_room': 810962}
+804039: {'zone': 'The Twisting Tunnels of the Durian Underdark', 'marker name': 'Zone', 'from_room': 804039, 'direction': 'West', 'to_room': 804038}
+817727: {'zone': 'The Twisting Tunnels of the Durian Underdark', 'marker name': '&+cZone Marker: faang&n', 'from_room': 817727, 'direction': 'West', 'to_room': 817726}
+829278: {'zone': 'The Twisting Tunnels of the Durian Underdark', 'marker name': '&+cZone Marker: flind&n', 'from_room': 829278, 'direction': 'West', 'to_room': 829277}
+820718: {'zone': 'The Twisting Tunnels of the Durian Underdark', 'marker name': '&+cZone Marker: gibber&n', 'from_room': 820718, 'direction': 'West', 'to_room': 820717}
+842048: {'zone': 'The Twisting Tunnels of the Durian Underdark', 'marker name': '&+cZone Marker: goblincave&n', 'from_room': 842048, 'direction': 'West', 'to_room': 842047}
+717301: {'zone': 'The Twisting Tunnels of the Durian Underdark', 'marker name': 'Golden Halls', 'from_room': 717301, 'direction': 'West', 'to_room': 717300}
+813647: {'zone': 'The Twisting Tunnels of the Durian Underdark', 'marker name': '&+cZone Marker: hall&n', 'from_room': 813647, 'direction': 'West', 'to_room': 813646}
+746504: {'zone': 'The Twisting Tunnels of the Durian Underdark', 'marker name': '&+cZone Marker: herders&n', 'from_room': 746504, 'direction': 'West', 'to_room': 746503}
+827697: {'zone': 'The Twisting Tunnels of the Durian Underdark', 'marker name': '&+cZone Marker: ixarkon&n', 'from_room': 827697, 'direction': 'West', 'to_room': 827696}
+841753: {'zone': 'The Twisting Tunnels of the Durian Underdark', 'marker name': '&+cZone Marker: ixxillikor&n', 'from_room': 841753, 'direction': 'West', 'to_room': 841752}
+772524: {'zone': 'The Twisting Tunnels of the Durian Underdark', 'marker name': '&+LA &+rDepressed &+LSection of the &+yEarth&n', 'from_room': 772524, 'direction': 'West', 'to_room': 772523}
+816079: {'zone': 'The Twisting Tunnels of the Durian Underdark', 'marker name': '&+cZone Marker: kobold&n', 'from_room': 816079, 'direction': 'West', 'to_room': 816078}
+813742: {'zone': 'The Twisting Tunnels of the Durian Underdark', 'marker name': '&+cZone Marker: library&n', 'from_room': 813742, 'direction': 'West', 'to_room': 813741}
+834769: {'zone': 'The Twisting Tunnels of the Durian Underdark', 'marker name': '&+cZone Marker: lizard&n', 'from_room': 834769, 'direction': 'West', 'to_room': 834768}
+805116: {'zone': 'The Twisting Tunnels of the Durian Underdark', 'marker name': '&+cZone Marker: llzazan&n', 'from_room': 805116, 'direction': 'West', 'to_room': 805115}
+849234: {'zone': 'The Twisting Tunnels of the Durian Underdark', 'marker name': '&+cZone Marker: malch&n', 'from_room': 849234, 'direction': 'South', 'to_room': 849634}
+802653: {'zone': 'The Twisting Tunnels of the Durian Underdark', 'marker name': 'Zone', 'from_room': 802653, 'direction': 'West', 'to_room': 802652}
+832821: {'zone': 'The Twisting Tunnels of the Durian Underdark', 'marker name': '&+cZone Marker: minopass&n', 'from_room': 832821, 'direction': 'West', 'to_room': 832820}
+845236: {'zone': 'The Twisting Tunnels of the Durian Underdark', 'marker name': "Morg's Palace", 'from_room': 845236, 'direction': 'West', 'to_room': 845235}
+822915: {'zone': 'The Twisting Tunnels of the Durian Underdark', 'marker name': '&+cZone Marker: mountaintracks&n', 'from_room': 822915, 'direction': 'West', 'to_room': 822914}
+856058: {'zone': 'The Twisting Tunnels of the Durian Underdark', 'marker name': '&+cZone Marker: mush1&n', 'from_room': 856058, 'direction': 'West', 'to_room': 856057}
+823870: {'zone': 'The Twisting Tunnels of the Durian Underdark', 'marker name': '&+MA Shaft Beneath a Soaring Mushroom Cavern&n', 'from_room': 823870, 'direction': 'West', 'to_room': 823869}
+836064: {'zone': 'The Twisting Tunnels of the Durian Underdark', 'marker name': '&+LThe &+mLarge &+LCaverns of the Ancient &+mM&+wy&+mc&+wo&+mn&+wi&+md&n', 'from_room': 836064, 'direction': 'West', 'to_room': 836063}
+749256: {'zone': 'The Twisting Tunnels of the Durian Underdark', 'marker name': 'Cave City', 'from_room': 749256, 'direction': 'West', 'to_room': 749255}
+811245: {'zone': 'The Twisting Tunnels of the Durian Underdark', 'marker name': '&+cZone Marker: nexus_roper&n', 'from_room': 811245, 'direction': 'West', 'to_room': 811244}
+736888: {'zone': 'The Twisting Tunnels of the Durian Underdark', 'marker name': 'Obsidian Citadel', 'from_room': 736888, 'direction': 'West', 'to_room': 736887}
+825759: {'zone': 'The Twisting Tunnels of the Durian Underdark', 'marker name': 'Orog SW Entrance', 'from_room': 825759, 'direction': 'West', 'to_room': 825758}
+824964: {'zone': 'The Twisting Tunnels of the Durian Underdark', 'marker name': 'Orog NE Entrance', 'from_room': 824964, 'direction': 'West', 'to_room': 824963}
+832711: {'zone': 'The Twisting Tunnels of the Durian Underdark', 'marker name': '&+cZone Marker: pworm&n', 'from_room': 832711, 'direction': 'West', 'to_room': 832710}
+814264: {'zone': 'The Twisting Tunnels of the Durian Underdark', 'marker name': '&+cZone Marker: pworm&n', 'from_room': 814264, 'direction': 'West', 'to_room': 814263}
+850045: {'zone': 'The Twisting Tunnels of the Durian Underdark', 'marker name': '&+LBeneath a Steep, Rocky Passage&n', 'from_room': 850045, 'direction': 'West', 'to_room': 850044}
+749337: {'zone': 'The Twisting Tunnels of the Durian Underdark', 'marker name': 'Raxthan', 'from_room': 749337, 'direction': 'West', 'to_room': 749336}
+709927: {'zone': 'The Twisting Tunnels of the Durian Underdark', 'marker name': 'Shabo', 'from_room': 709927, 'direction': 'West', 'to_room': 709926}
+804649: {'zone': 'The Twisting Tunnels of the Durian Underdark', 'marker name': '&+cZone Marker: shaughin&n', 'from_room': 804649, 'direction': 'West', 'to_room': 804648}
+789749: {'zone': 'The Twisting Tunnels of the Durian Underdark', 'marker name': '&+cZone Marker: shaughin2&n', 'from_room': 789749, 'direction': 'West', 'to_room': 789748}
+827456: {'zone': 'The Twisting Tunnels of the Durian Underdark', 'marker name': '&+cZone Marker: temple_laduguer&n', 'from_room': 827456, 'direction': 'West', 'to_room': 827455}
+846819: {'zone': 'The Twisting Tunnels of the Durian Underdark', 'marker name': '&+cZone Marker: truk&n', 'from_room': 846819, 'direction': 'West', 'to_room': 846818}
+723240: {'zone': 'The Underworld', 'marker name': '&+yThe Shore of a &+BLarge Underground River&n', 'from_room': 30281, 'direction': 'North', 'to_room': 722840}
+798724: {'zone': 'Valinhaven', 'marker name': '&+BAlong a Mysterious River', 'from_room': 90800, 'direction': 'East', 'to_room': 798725}
+811308: {'zone': 'The Caverns of the Worms', 'marker name': '&+LEntrance to the Caverns&N', 'from_room': 6900, 'direction': 'South', 'to_room': 811708}
+825314: {'zone': 'The Underworld', 'marker name': '&+mLarge Cavernous Lair', 'from_room': 4530, 'direction': 'East', 'to_room': 825315}
+825439: {'zone': 'The Underworld', 'marker name': '&+mDark Tunnel', 'from_room': 4608, 'direction': 'East', 'to_room': 825440}
+825717: {'zone': 'The Underworld', 'marker name': '&+mRocky Wall', 'from_room': 4479, 'direction': 'West', 'to_room': 825716}
+831731: {'zone': 'Phantasmagoric Caverns', 'marker name': '&+cA &+CPhan&+ctas&+Cmago&+cric Cavern&N', 'from_room': 53100, 'direction': 'West', 'to_room': 831730}
+833725: {'zone': 'The Underworld', 'marker name': '&+mA Widening Tunnel Before an Underworld City&N', 'from_room': 4615, 'direction': 'East', 'to_room': 833726}
+836906: {'zone': 'The Underworld', 'marker name': '&+gSlime Covered Cave', 'from_room': 4440, 'direction': 'West', 'to_room': 836905}
+841675: {'zone': 'The Underworld', 'marker name': '&+mCave Tunnel', 'from_room': 4625, 'direction': 'West', 'to_room': 841674}
+842893: {'zone': 'The Underworld', 'marker name': '&+mSmall Pocket-Like Cave', 'from_room': 4580, 'direction': 'South', 'to_room': 843293}
+845718: {'zone': 'The Underworld', 'marker name': '&+gFork on the Wide Underground River', 'from_room': 4470, 'direction': 'South', 'to_room': 846118}
+848475: {'zone': 'The Underworld', 'marker name': '&+mA Mushroom-Filled Tunnel&n', 'from_room': 4624, 'direction': 'South', 'to_room': 848875}
+854867: {'zone': 'The Underworld', 'marker name': '&+mMud Filled Cavern', 'from_room': 4547, 'direction': 'West', 'to_room': 854866}

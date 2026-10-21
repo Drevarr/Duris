@@ -221,6 +221,25 @@ def read_until_tilde(lines):
             return
     raise StopIteration
 
+def find_zone_for_room(room_vnum, zone_data):
+    """
+    Given a room VNUM and the zone_data dict, return the zone name
+    that contains this room.
+    
+    zone_data maps file_prefix -> {'vnum': zone_id, 'max_vnum': ..., 'name': ...}
+    Room range for a zone is [zone_id, max_vnum].
+    """
+    # Sort zones by their vnum so we check in order
+    sorted_zones = sorted(zone_data.values(), key=lambda z: z['vnum'])
+    
+    for zone in sorted_zones:
+        zone_vnum = zone['vnum']
+        max_vnum = zone['max_vnum']
+        if zone_vnum <= room_vnum <= max_vnum:
+            return zone['name']
+    
+    return "Unknown"
+
 def parse_wld_file(directory, loaded_areas):
     results = {}
 
@@ -282,11 +301,13 @@ def parse_wld_file(directory, loaded_areas):
                             if len(parts) >= 3:
                                 to_room = int(parts[-1])
 
+                                zone_marker = find_zone_marker(direction, to_room)
+                                zone_name = get_zone_name(file_start)
                                 if TARGET_MIN <= to_room <= TARGET_MAX:
                                     zone_marker = find_zone_marker(direction, to_room)
+                                    zone_name = get_zone_name(file_start)
 
                                     if zone_marker in zone_marker_points:
-                                        zone_name = get_zone_name(file_start)
 
                                         results[zone_marker] = {
                                             "zone": zone_name,
@@ -298,6 +319,89 @@ def parse_wld_file(directory, loaded_areas):
 
                         except StopIteration:
                             break
+
+    return results
+
+def parse_map_file(filepath):
+    """
+    Parses a single .wld map file (e.g. surface_map) and finds all exits
+    that lead to rooms OUTSIDE the TARGET_MIN–TARGET_MAX range.
+
+    Returns a dict keyed by the exit target vnum, with data about the exit.
+    """
+    results = {}
+
+    # Extract the zone prefix from the filepath (e.g. 'underdark' from 'underdark.wld')
+    zone_prefix = Path(filepath).stem
+
+    with open(filepath, "r", encoding="utf-8", errors="ignore") as f:
+        lines = iter(f.readlines())
+
+        current_room = None
+        current_marker_name = None
+
+        for raw in lines:
+            line = raw.strip()
+
+            if line.startswith("#"):
+                try:
+                    current_room = int(line[1:])
+                except ValueError:
+                    current_room = None
+
+                current_marker_name = None
+
+                if current_room is not None:
+                    try:
+                        current_marker_name = next(lines).strip().rstrip("~")
+                        read_until_tilde(lines)
+                    except StopIteration:
+                        break
+
+                continue
+
+            if line == "S":
+                current_room = None
+                current_marker_name = None
+                continue
+
+            if line == "E":
+                try:
+                    read_until_tilde(lines)
+                    read_until_tilde(lines)
+                except StopIteration:
+                    break
+                continue
+
+            if line in DIRECTIONS and current_room is not None:
+                direction = DIRECTIONS[line]
+
+                try:
+                    read_until_tilde(lines)
+                    read_until_tilde(lines)
+
+                    exit_line = next(lines).strip()
+                    parts = exit_line.split()
+
+                    if len(parts) >= 3:
+                        to_room = int(parts[-1])
+
+                        # Only record exits that go OUTSIDE the target range
+                        if to_room < TARGET_MIN or to_room > TARGET_MAX:
+                            zone_marker = find_zone_marker(direction, to_room)
+                            #zone_name = get_zone_name(zone_prefix) if zone_prefix in zone_data else "Unknown"
+                            zone_name = find_zone_for_room(to_room, zone_data)
+
+                            results[to_room] = {
+                                "zone": zone_name,
+                                "marker name": current_marker_name,
+                                "from_room": current_room,
+                                "direction": direction,
+                                "to_room": to_room
+                            }
+
+                except StopIteration:
+                    break
 
     return results
 
@@ -335,22 +439,28 @@ if __name__ == "__main__":
     # Read WLD files and find exits to Map vnums
     zone_marker_data = parse_wld_file(str(wld_directory), loaded_areas)
 
+    map_to_zone_exits = parse_map_file(str(surface_map))
+    with open("map_to_zone_exits.txt", "w") as file:
+        for key, value in map_to_zone_exits.items():
+            file.write(f"{key}: {value}\n")
+
+    #print(zone_marker_data)
     # Inject Sniktiorg landmark names
     update_landmarks()
 
     # Sort Markers based on name from zon file
     sorted_zone_marker_data = dict(
-        sorted(zone_marker_data.items(), key=lambda item: item[1]['zone'])
+        sorted(map_to_zone_exits.items(), key=lambda item: item[1]['zone'])
     )
 
     # Print markers for leaflet
-    for marker in sorted_zone_marker_data:
-        print(f'  {{ vnum: {marker}, name: "{strip_mud_colors(zone_marker_data[marker]["marker name"]).replace("Zone Marker: ", "")}" }},')
-        print(f'  {{ vnum: {marker}, name: "{zone_marker_data[marker]["zone"]}" }},')
+    #for marker in sorted_zone_marker_data:
+        #print(f'  {{ vnum: {marker}, name: "{strip_mud_colors(zone_marker_data[marker]["marker name"]).replace("Zone Marker: ", "")}" }},')
+        #print(f'  {{ vnum: {marker}, name: "{zone_marker_data[marker]["zone"]}" }},')
     # Convert the sorted dictionary into JSON
     zones_json = json.dumps(
         [
-            {"vnum": marker, "name": data["marker name"]}
+            {"vnum": data["from_room"], "name": data["zone"]}
             for marker, data in sorted_zone_marker_data.items()
         ],
         ensure_ascii=False

@@ -1,11 +1,11 @@
 <!DOCTYPE html>
 <html>
 	<head>
-		<title>New Duris - Surface Map</title>
+		<title>New Duris - Underdark Map</title>
 		<meta name="description" content="Interactive world map of New Duris with searchable zones.">
 
 		<meta property="og:title" content="New Duris Underdark Map">
-		<meta property="og:description" content="Explore the New Duris surface world with searchable zones.">
+		<meta property="og:description" content="Explore the New Duris underdark world with searchable zones.">
 		<meta property="og:type" content="website">
 		<meta property="og:url" content="https://drevarr.github.io">
 		<meta property="og:image" content="https://drevarr.github.io/DurisMUD_logo.png">
@@ -167,7 +167,7 @@
 		<body>
 			<div class="app">
 				<header class="header">
-					<h1>New Duris - Surface Map</h1>
+					<h1>New Duris - Underdark Map</h1>
 				</header>
 				<div class="main">
 					<aside class="sidebar">
@@ -244,75 +244,7 @@ const dragonRoutes = [
 
 ];
 
-const zones = [
-    { vnum: 831731, name: "Phantasmagoric Caverns" },
-    { vnum: 811308, name: "The Caverns of the Worms" },
-    { vnum: 701669, name: "ashrumite" },
-    { vnum: 812662, name: "bogentok" },
-    { vnum: 812257, name: "bogentok" },
-    { vnum: 807499, name: "bugger" },
-    { vnum: 819330, name: "clwcvrn" },
-    { vnum: 734845, name: "The Twisting Tunnels of the Durian Underdark" },
-    { vnum: 739234, name: "The Twisting Tunnels of the Durian Underdark" },
-    { vnum: 740051, name: "The Twisting Tunnels of the Durian Underdark" },
-    { vnum: 748106, name: "The Twisting Tunnels of the Durian Underdark" },
-    { vnum: 754914, name: "The Twisting Tunnels of the Durian Underdark" },
-    { vnum: 801740, name: "The Twisting Tunnels of the Durian Underdark" },
-    { vnum: 757626, name: "The Twisting Tunnels of the Durian Underdark" },
-    { vnum: 784530, name: "Domain" },
-    { vnum: 840287, name: "drst" },
-    { vnum: 810963, name: "Ogre" },
-    { vnum: 804039, name: "Zone" },
-    { vnum: 817727, name: "faang" },
-    { vnum: 829278, name: "flind" },
-    { vnum: 820718, name: "gibber" },
-    { vnum: 842048, name: "goblincave" },
-    { vnum: 717301, name: "Golden Halls" },
-    { vnum: 813647, name: "hall" },
-    { vnum: 746504, name: "herders" },
-    { vnum: 827697, name: "ixarkon" },
-    { vnum: 841753, name: "ixxillikor" },
-    { vnum: 772524, name: "The Twisting Tunnels of the Durian Underdark" },
-    { vnum: 816079, name: "kobold" },
-    { vnum: 813742, name: "library" },
-    { vnum: 834769, name: "lizard" },
-    { vnum: 805116, name: "llzazan" },
-    { vnum: 849234, name: "malch" },
-    { vnum: 802653, name: "Zone" },
-    { vnum: 802653, name: "The Twisting Tunnels of the Durian Underdark" },
-    { vnum: 832821, name: "minopass" },
-    { vnum: 845236, name: "Morg's Palace" },
-    { vnum: 822915, name: "mountaintracks" },
-    { vnum: 856058, name: "mush1" },
-    { vnum: 823870, name: "The Twisting Tunnels of the Durian Underdark" },
-    { vnum: 836064, name: "The Twisting Tunnels of the Durian Underdark" },
-    { vnum: 749256, name: "Cave City" },
-    { vnum: 811245, name: "nexus_roper" },
-    { vnum: 736888, name: "Obsidian Citadel" },
-    { vnum: 825759, name: "Orog SW Entrance" },
-    { vnum: 824964, name: "Orog NE Entrance" },
-    { vnum: 832711, name: "pworm" },
-    { vnum: 814264, name: "pworm" },
-    { vnum: 850045, name: "Beneath a Steep, Rocky Passage" },
-    { vnum: 749337, name: "Raxthan" },
-    { vnum: 709927, name: "Shabo" },
-    { vnum: 804649, name: "shaughin" },
-    { vnum: 789749, name: "shaughin2" },
-    { vnum: 827456, name: "temple_laduguer" },
-    { vnum: 846819, name: "truk" },
-    { vnum: 723240, name: "The Underworld" },
-    { vnum: 825314, name: "The Underworld" },
-    { vnum: 825439, name: "The Underworld" },
-    { vnum: 825717, name: "The Underworld" },
-    { vnum: 833725, name: "The Underworld" },
-    { vnum: 836906, name: "The Underworld" },
-    { vnum: 841675, name: "The Underworld" },
-    { vnum: 842893, name: "The Underworld" },
-    { vnum: 845718, name: "The Underworld" },
-    { vnum: 848475, name: "The Underworld" },
-    { vnum: 854867, name: "The Underworld" },
-    { vnum: 798724, name: "Valinhaven" },
-  ];
+const zones = [{"vnum": 702069, "name": "Ashrumite Village"}, {"vnum": 812256, "name": "BogenTok"}, {"vnum": 812663, "name": "BogenTok"}, {"vnum": 709664, "name": "Caves of Mt. Skelenak"}, {"vnum": 840288, "name": "Clan Stoutdorf Settlement"}, {"vnum": 784930, "name": "Domain of Lost Souls"}, {"vnum": 749737, "name": "Drustl's Yerdonia Enslaved"}, {"vnum": 797529, "name": "Faang"}, {"vnum": 818127, "name": "Faang"}, {"vnum": 717300, "name": "Golden Hall of the Crown"}, {"vnum": 828097, "name": "Ixarkon"}, {"vnum": 841752, "name": "Ixxillikor"}, {"vnum": 816080, "name": "Kobold Settlement"}, {"vnum": 820717, "name": "Lair of the Gibberling King"}, {"vnum": 814263, "name": "Lair of the Purple Worm"}, {"vnum": 833111, "name": "Lair of the Purple Worm"}, {"vnum": 805516, "name": "Llzazan Ghetto of Arachdrathos"}, {"vnum": 849235, "name": "Malch'Hor Ganl the Goblin City"}, {"vnum": 803053, "name": "Mazzolin"}, {"vnum": 844836, "name": "Morg's Place"}, {"vnum": 823315, "name": "Mountain Tracts of the Untamed"}, {"vnum": 811016, "name": "Myconid Mushroom Forest"}, {"vnum": 836064, "name": "Myconid Mushroom Forest"}, {"vnum": 749656, "name": "New Cave city"}, {"vnum": 825364, "name": "Orog Encampment"}, {"vnum": 826159, "name": "Orog Encampment"}, {"vnum": 832131, "name": "Phantasmagoric Caverns"}, {"vnum": 822668, "name": "Pragtog's Domain"}, {"vnum": 804038, "name": "Temple of the Earth"}, {"vnum": 772524, "name": "The 222nd Layer of the Abyss"}, {"vnum": 813342, "name": "The Arcaneum of L'srillizzin"}, {"vnum": 746503, "name": "The Behemoth Herders"}, {"vnum": 807099, "name": "The Bugger Caves"}, {"vnum": 811708, "name": "The Caverns of the Worms"}, {"vnum": 834025, "name": "The Chasm of the Misty Vale"}, {"vnum": 819329, "name": "The Clawed Caverns"}, {"vnum": 833221, "name": "The Deep Ravine of Passage"}, {"vnum": 850045, "name": "The Docks of Quietus Quay"}, {"vnum": 842047, "name": "The Gagga'Jobo Cave System"}, {"vnum": 712320, "name": "The Great Realm of Duris"}, {"vnum": 734844, "name": "The Great Realm of Duris"}, {"vnum": 739233, "name": "The Great Realm of Duris"}, {"vnum": 740451, "name": "The Great Realm of Duris"}, {"vnum": 748506, "name": "The Great Realm of Duris"}, {"vnum": 754915, "name": "The Great Realm of Duris"}, {"vnum": 802140, "name": "The Great Realm of Duris"}, {"vnum": 813720, "name": "The Great Realm of Duris"}, {"vnum": 710327, "name": "The Great Shaboath"}, {"vnum": 813247, "name": "The Hall of the Ancients"}, {"vnum": 834369, "name": "The Lizardman Swamps of Clavikord"}, {"vnum": 829678, "name": "The Minor Plane of Planitude"}, {"vnum": 856059, "name": "The Mushroom Forest"}, {"vnum": 737288, "name": "The Obsidian Citadel"}, {"vnum": 811645, "name": "The Reliquary Nexus of the Roper Den"}, {"vnum": 790149, "name": "The Shaughin Hunting Grounds"}, {"vnum": 804249, "name": "The Shaughin Settlement"}, {"vnum": 857219, "name": "The Stone Tomb of Kelek"}, {"vnum": 827455, "name": "The Temple of Laduguer"}, {"vnum": 743256, "name": "The Tunnels of Cyric the Destroyer"}, {"vnum": 746483, "name": "The Tunnels of Cyric the Destroyer"}, {"vnum": 757626, "name": "The Tunnels of Cyric the Destroyer"}, {"vnum": 709628, "name": "The Underworld"}, {"vnum": 722840, "name": "The Underworld"}, {"vnum": 825315, "name": "The Underworld"}, {"vnum": 825716, "name": "The Underworld"}, {"vnum": 825440, "name": "The Underworld"}, {"vnum": 833726, "name": "The Underworld"}, {"vnum": 834829, "name": "The Underworld"}, {"vnum": 836905, "name": "The Underworld"}, {"vnum": 841674, "name": "The Underworld"}, {"vnum": 843293, "name": "The Underworld"}, {"vnum": 846118, "name": "The Underworld"}, {"vnum": 848875, "name": "The Underworld"}, {"vnum": 854866, "name": "The Underworld"}, {"vnum": 844848, "name": "The Underworld Shafts"}, {"vnum": 810962, "name": "Treasure Caves"}, {"vnum": 846820, "name": "Truktakyagyo"}, {"vnum": 798725, "name": "Valinhaven"}, {"vnum": 820288, "name": "the Mushroom Caverns"}, {"vnum": 823870, "name": "the Mushroom Caverns"}, {"vnum": 825082, "name": "the Mushroom Caverns"}];
 
   // --- INIT MAP ---
   const map = L.map('map', {
