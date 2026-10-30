@@ -17,6 +17,7 @@
 #include "net/comm.h"
 #include "world/world_singletons.h"
 #include "world/db.h"
+#include "world/object_template.h"
 #include "world/events.h"
 #include "world/falling.h"
 #include "core/files.h"
@@ -111,33 +112,12 @@ int map_view_distance(P_char ch, int room);
 bool leave_safe_room(P_char ch);
 void add_weight(P_obj obj, int weight);
 
-static bool obj_is_container_type(P_obj obj)
+static const object_template *container_prototype(P_obj obj)
 {
-	if (!obj)
-	{
-		return FALSE;
-	}
-	return (obj->type == ITEM_CONTAINER || obj->type == ITEM_QUIVER ||
-		obj->type == ITEM_STORAGE || obj->type == ITEM_CORPSE);
-}
-
-static int obj_prototype_weight(P_obj obj)
-{
-	P_obj proto;
-	int w;
-
-	if (!obj || obj->R_num < 0)
-	{
-		return 0;
-	}
-	proto = read_object(obj->R_num, REAL);
-	if (!proto)
-	{
-		return 0;
-	}
-	w = proto->weight;
-	extract_obj(proto, TRUE);
-	return w;
+	// Corpses, quivers and storage objects can have instance-specific shells.
+	if (!obj || obj->type != ITEM_CONTAINER || obj->R_num < 0 || obj->R_num > top_of_objt)
+		return nullptr;
+	return find_object_template(OBJ_VNUM(obj));
 }
 
 /*
@@ -191,24 +171,28 @@ static void encumbrance_adjust(P_char ch, int weight)
 	GET_CARRYING_W(ch) += weight;
 }
 
+/* The weight a container should have, without changing its live state. */
+static int calculated_container_weight(P_obj cont)
+{
+	const object_template *prototype = container_prototype(cont);
+	return prototype ? prototype->weight + sum_direct_contents_weight(cont) : cont->weight;
+}
+
 /*
- * Recompute container weight from prototype shell + contents; repair carry_weight if wrong.
+ * Repair container weight and the holder's effective carried weight. This is a
+ * mutation and must be used at lifecycle boundaries, not by capacity queries.
  */
 void recalc_container_weight(P_obj cont)
 {
 	int delta;
 	int new_weight;
-	int shell;
-	int contents;
 
-	if (!obj_is_container_type(cont))
+	if (!cont)
 	{
 		return;
 	}
 
-	shell = obj_prototype_weight(cont);
-	contents = sum_direct_contents_weight(cont);
-	new_weight = shell + contents;
+	new_weight = calculated_container_weight(cont);
 	delta = new_weight - cont->weight;
 	if (!delta)
 	{
@@ -218,41 +202,30 @@ void recalc_container_weight(P_obj cont)
 }
 
 /*
- * Keep a WEIGHT-REDUCING container honest the moment its load changes.
- *
- * obj_to_obj()/obj_from_obj() move an item's FULL weight into and out of the
- * container it lands in. That is right for the 1,251 containers that reduce
- * nothing, and wrong for a gathering bag: until something happened to call
- * container_total_weight() -- only capacity checks do -- the bag's carrier was
- * billed the whole load and the bag's reduction did nothing at all. The same
- * asymmetry runs the other way once a recalculation HAS happened: the bag then
- * holds the reduced figure, and taking an item out subtracts its full weight,
- * leaving the bag lighter than the truth.
- *
- * Neither error accumulates -- recalc_container_weight() recomputes from the
- * shell plus a fresh sum of the contents, not by incrementing, so it corrects
- * the figure in either direction -- but between the move and the next capacity
- * check the number a player is carrying is simply wrong. Calling it here makes
- * "wrong until something asks" into "right immediately", and
- * add_weight() carries the correction up to whoever is holding the bag.
- *
- * Gated on the reduction, not on being a container: this reads the prototype,
- * and every container that reduces nothing keeps the cheap incremental path it
- * has always had.
+ * A move first propagates the item's effective weight incrementally.
+ * Correct the changed container and its ancestors, inside-out, so an
+ * enclosing reducing bag uses the child's new effective weight. Also repairs
+ * stale saved shells on successful movement; capacity queries stay read-only.
  */
-static void resync_reducing_container(P_obj cont)
+static void reconcile_container_chain(P_obj cont)
 {
-	if (container_weight_reduction_pct(cont) > 0)
-		recalc_container_weight(cont);
+	int remaining = top_of_objt + 1;
+	for (P_obj current = cont; current && remaining-- > 0;)
+	{
+		P_obj parent = OBJ_INSIDE(current) ? current->loc.inside : NULL;
+		const object_template *prototype = container_prototype(current);
+		// Ordinary containers already received the exact incremental delta.
+		// Only magical bags need a contents scan at each movement boundary.
+		if (prototype && (prototype->weight < 0 || container_weight_reduction_pct(current)))
+			recalc_container_weight(current);
+		current = parent;
+	}
 }
 
 void container_reset_empty_weight(P_obj cont)
 {
-	if (!obj_is_container_type(cont))
-	{
-		return;
-	}
-	cont->weight = obj_prototype_weight(cont);
+	if (const object_template *prototype = container_prototype(cont))
+		cont->weight = prototype->weight;
 }
 
 int container_total_weight(P_obj cont)
@@ -261,11 +234,13 @@ int container_total_weight(P_obj cont)
 	{
 		return 0;
 	}
-	if (obj_is_container_type(cont))
-	{
-		recalc_container_weight(cont);
-	}
-	return GET_OBJ_WEIGHT(cont);
+	// A corpse's capacity records its carried items, independently of body weight.
+	if (cont->type == ITEM_CORPSE)
+		return sum_direct_contents_weight(cont);
+	/* A failed put must never adjust encumbrance just by checking capacity.
+	 * Keep the existing net-weight capacity rule, including negative shells. */
+	const int weight = calculated_container_weight(cont);
+	return weight > 0 ? weight : 0;
 }
 
 /*
@@ -905,7 +880,13 @@ void poison_heart_toxin(int level, P_char ch, char * /*arg*/, [[maybe_unused]] i
 	{
 		if (!(af = poison_common(victim, POISON_HEART_TOXIN)))
 			return;
-		;
+		/* Trap casters are extracted after dispatch. Keep the potency on the
+		 * affect and use environmental attribution instead of a caster link. */
+		if (ch && IS_SET(ch->runtime_flags, CHAR_RFLAG_TRAP_CASTER))
+		{
+			af->level = level;
+			ch = nullptr;
+		}
 		add_event(event_poison,
 			  IS_AFFECTED(victim, AFF_SLOW_POISON) ? 3 * PULSE_VIOLENCE :
 								 PULSE_VIOLENCE * 3 / 2,
@@ -914,7 +895,10 @@ void poison_heart_toxin(int level, P_char ch, char * /*arg*/, [[maybe_unused]] i
 	else
 	{
 		if (!ch)
+		{
+			level = af->level;
 			ch = victim;
+		}
 		int dam_result = raw_damage(ch, victim, 3 * level + number(0, 40), RAWDAM_DEFAULT,
 					    &messages);
 		if (dam_result == DAM_NONEDEAD)
@@ -924,7 +908,8 @@ void poison_heart_toxin(int level, P_char ch, char * /*arg*/, [[maybe_unused]] i
 					  IS_AFFECTED(victim, AFF_SLOW_POISON) ?
 						  3 * PULSE_VIOLENCE :
 						  PULSE_VIOLENCE * 3 / 2,
-					  victim, ch, 0, 0, &af->type, sizeof(af->type));
+					  victim, af->level ? nullptr : ch, 0, 0, &af->type,
+					  sizeof(af->type));
 			else
 				affect_remove(victim, af);
 		}
@@ -1154,6 +1139,10 @@ bool isname(const char *str, const char *namelist)
  * move a player out of a room
  */
 
+// Terminal extraction must finish unlinking even if a leave hook redirects or vetoes it.
+// The game thread saves and restores this character-specific override around that retry.
+static P_char terminal_departure_override = nullptr;
+
 void char_from_room(P_char ch)
 {
 	P_char i;
@@ -1178,14 +1167,26 @@ void char_from_room(P_char ch)
 	/* Notify room hooks before state changes.  Legacy hooks commonly return
 	 * TRUE for handled synthetic events, so only the explicit veto result may
 	 * block removal. */
-	if (world[ch->in_room].funct)
+	if (world[ch->in_room].funct && terminal_departure_override != ch)
 	{
-		if ((*world[ch->in_room].funct)(ch->in_room, ch, CMD_FROMROOM, NULL) ==
-		    ROOM_PROC_LEAVE_VETO)
+		const int source_room = ch->in_room;
+		const uint64_t runtime_id = ch->runtime_id;
+		const uint64_t removal_before = character_removal_generation;
+		const bool was_alive = IS_ALIVE(ch);
+		const int result = (*world[source_room].funct)(source_room, ch, CMD_FROMROOM, NULL);
+		if (result == ROOM_PROC_LEAVE_VETO)
+			return;
+		/* A hook may relocate, remove or replace the character. Check membership
+		 * before touching possibly released storage, then preserve its outcome. */
+		if ((removal_before != character_removal_generation && !char_in_list(ch)) ||
+		    ch->runtime_id != runtime_id || ch->in_room != source_room ||
+		    (was_alive && !IS_ALIVE(ch)))
 			return;
 	}
 
 	/* Mark room as dirty for GMCP updates (before removal) */
+	disarm_char_nevents(ch, event_conjure_water);
+	disarm_char_nevents(ch, event_water_crossing);
 	item_actions_character_leaving(ch);
 	gmcp_mark_room_dirty(ch->in_room);
 
@@ -2960,7 +2961,7 @@ void obj_to_obj(P_obj obj, P_obj obj_to)
 	}
 
 	add_weight(obj_to, GET_OBJ_WEIGHT(obj));
-	resync_reducing_container(obj_to);
+	reconcile_container_chain(obj_to);
 	/* Broken out into a recursive function; neater and more correct for handling negative weights properly.
 	  wgt = GET_OBJ_WEIGHT(obj);
 	  for (tmp_obj = obj->loc.inside; wgt && tmp_obj;
@@ -3041,7 +3042,7 @@ void obj_to_obj_at_end(P_obj obj, P_obj obj_to)
 	append_obj_to_list(&obj_to->contains, obj);
 
 	add_weight(obj_to, GET_OBJ_WEIGHT(obj));
-	resync_reducing_container(obj_to);
+	reconcile_container_chain(obj_to);
 
 	mark_container_dirty(obj_to);
 	artifact_update_location_sql(obj);
@@ -3158,7 +3159,7 @@ void obj_from_obj(P_obj obj)
 
 	/* Safe here and nowhere earlier: `obj` has already been unlinked above,
 	 * so the fresh sum is of what actually remains inside. */
-	resync_reducing_container(obj_from);
+	reconcile_container_chain(obj_from);
 	/*    wgt = GET_OBJ_WEIGHT(obj);
 		    for( tmp = obj->loc.inside; wgt && tmp; tmp = OBJ_INSIDE(tmp) ? tmp->loc.inside : NULL )
 		    {
@@ -3693,12 +3694,63 @@ void hold_durable_pet_items(P_char ch)
 	}
 }
 
-void extract_char(P_char ch)
+static void extract_char_items(P_char ch, bool terminal_items_saved)
 {
 	P_obj obj;
+	int l;
+
+	/* clear equipment_list */
+	for (l = 0; l < MAX_WEAR; l++)
+		if (ch->equipment[l])
+		{
+			// debug: log extract_char equipment cleanup for artifact 58424
+			if (OBJ_VNUM(ch->equipment[l]) == 58424)
+			{
+				logit(LOG_DEBUG,
+				      "[handler.c:extract_char] cleaning up artifact 58424 from '%s' slot=%d in_room=%d",
+				      GET_NAME(ch), l, ch->in_room);
+			}
+			obj = unequip_char(ch, l);
+			/* Added pet check */
+			if (terminal_items_saved || ch->in_room == NOWHERE ||
+			    IS_SET(obj->extra_flags, ITEM_TRANSIENT) || IS_SHOPKEEPER(ch) ||
+			    (IS_NPC(ch) && IS_RANDOM_MOB(ch)))
+			{
+				extract_obj(obj);
+				obj = NULL;
+			}
+			else
+				obj_to_room(obj, ch->in_room);
+		}
+	if (ch && ch->carrying)
+	{
+		P_obj next_obj;
+
+		for (obj = ch->carrying; obj != NULL; obj = next_obj)
+		{
+			next_obj = obj->next_content;
+
+			if (terminal_items_saved || ch->in_room == NOWHERE || IS_SHOPKEEPER(ch) ||
+			    IS_SET(obj->extra_flags, ITEM_TRANSIENT) ||
+			    (IS_NPC(ch) && mob_index[GET_RNUM(ch)].virtual_number >= 100000 &&
+			     mob_index[GET_RNUM(ch)].virtual_number < 110000))
+			{
+				extract_obj(obj);
+				obj = NULL;
+			}
+			else
+			{
+				obj_from_char(obj);
+				obj_to_room(obj, ch->in_room);
+			}
+		}
+	}
+}
+
+void extract_char(P_char ch)
+{
 	P_char k;
 	P_desc t_desc;
-	int l;
 	struct affected_type *af, *nextaf;
 
 	if (!ch)
@@ -3706,6 +3758,10 @@ void extract_char(P_char ch)
 		logit(LOG_EXIT, "No ch in extract_char");
 		return;
 	}
+	// A locker departure can fail before it owns a coherent terminal snapshot.
+	// Leave the occupant and its inventory/relationships intact for a later retry.
+	if (!locker_leave_for_extraction(ch))
+		return;
 	++character_removal_generation;
 	item_actions_character_leaving(ch);
 	world_recovery_capture_forget_character(ch);
@@ -3854,56 +3910,68 @@ void extract_char(P_char ch)
 
 	disarm_char_nevents(ch, NULL);
 
-	/* clear equipment_list */
-	for (l = 0; l < MAX_WEAR; l++)
-		if (ch->equipment[l])
-		{
-			// debug: log extract_char equipment cleanup for artifact 58424
-			if (OBJ_VNUM(ch->equipment[l]) == 58424)
-			{
-				logit(LOG_DEBUG,
-				      "[handler.c:extract_char] cleaning up artifact 58424 from '%s' slot=%d in_room=%d",
-				      GET_NAME(ch), l, ch->in_room);
-			}
-			obj = unequip_char(ch, l);
-			/* Added pet check */
-			if (terminal_items_saved || ch->in_room == NOWHERE ||
-			    IS_SET(obj->extra_flags, ITEM_TRANSIENT) || IS_SHOPKEEPER(ch) ||
-			    (IS_NPC(ch) && IS_RANDOM_MOB(ch)))
-			{
-				extract_obj(obj);
-				obj = NULL;
-			}
-			else
-				obj_to_room(obj, ch->in_room);
-		}
-	if (ch && ch->carrying)
-	{
-		P_obj next_obj;
+	extract_char_items(ch, terminal_items_saved);
 
-		for (obj = ch->carrying; obj != NULL; obj = next_obj)
-		{
-			next_obj = obj->next_content;
-
-			if (terminal_items_saved || ch->in_room == NOWHERE || IS_SHOPKEEPER(ch) ||
-			    IS_SET(obj->extra_flags, ITEM_TRANSIENT) ||
-			    (IS_NPC(ch) && mob_index[GET_RNUM(ch)].virtual_number >= 100000 &&
-			     mob_index[GET_RNUM(ch)].virtual_number < 110000))
-			{
-				extract_obj(obj);
-				obj = NULL;
-			}
-			else
-			{
-				obj_from_char(obj);
-				obj_to_room(obj, ch->in_room);
-			}
-		}
-	}
-
+	const uint64_t room_removal_before = character_removal_generation;
+	const uint64_t room_removal_id = ch->runtime_id;
 	training_dummy_begin_removal(ch);
 	char_from_room(ch);
+	if ((room_removal_before != character_removal_generation && !char_in_list(ch)) ||
+	    ch->runtime_id != room_removal_id)
+	{
+		training_dummy_end_removal(ch);
+		return;
+	}
+	// A departure hook can create fresh relationships after the initial teardown.
+	if (ch->followers || ch->following)
+		die_follower(ch);
+	if ((room_removal_before != character_removal_generation && !char_in_list(ch)) ||
+	    ch->runtime_id != room_removal_id)
+	{
+		training_dummy_end_removal(ch);
+		return;
+	}
+	if (ch->group)
+		group_remove_member(ch);
+	if (ch->linking || ch->linked)
+		clear_all_links(ch);
+	if ((room_removal_before != character_removal_generation && !char_in_list(ch)) ||
+	    ch->runtime_id != room_removal_id)
+	{
+		training_dummy_end_removal(ch);
+		return;
+	}
+	stop_fighting_for_extraction(ch);
+	if (ch->nevents)
+		disarm_char_nevents(ch, NULL);
+	if (ch->lobj)
+		remove_all_linked_objects(ch);
+	extract_char_items(ch, terminal_items_saved);
+	if ((room_removal_before != character_removal_generation && !char_in_list(ch)) ||
+	    ch->runtime_id != room_removal_id)
+	{
+		training_dummy_end_removal(ch);
+		return;
+	}
+	if (ch->in_room != NOWHERE)
+	{
+		// A nested dummy extraction may have replaced the original override.
+		training_dummy_begin_removal(ch);
+		P_char previous_override = terminal_departure_override;
+		terminal_departure_override = ch;
+		char_from_room(ch);
+		terminal_departure_override = previous_override;
+	}
 	training_dummy_end_removal(ch);
+	if ((room_removal_before != character_removal_generation && !char_in_list(ch)) ||
+	    ch->runtime_id != room_removal_id)
+		return;
+	if (ch->in_room != NOWHERE)
+	{
+		logit(LOG_DEBUG, "extract_char: could not unlink character %llu from room %d",
+		      static_cast<unsigned long long>(room_removal_id), ch->in_room);
+		return;
+	}
 
 	if (IS_NPC(ch))
 		shopkeeper_mob_extracted(ch);
@@ -3949,6 +4017,8 @@ void extract_char(P_char ch)
 
 		if (ch->desc && ch->desc->connected != CON_DELETE)
 		{
+			// Gameplay type-ahead must not become account/menu input after extraction.
+			flush_input_queue(ch->desc);
 #ifndef USE_ACCOUNT
 			ch->desc->connected = CON_MAIN_MENU;
 			SEND_TO_Q(MENU, ch->desc);
@@ -4047,6 +4117,64 @@ P_char get_char_ranged_vis(P_char ch, char *arg, int range)
 	return NULL;
 }
 
+static bool room_target_matches(P_char ch, P_char i, const char *tmp)
+{
+	return CAN_SEE(ch, i) && (ch->specials.z_cord == i->specials.z_cord) &&
+	       ((IS_TRUSTED(ch) && isname(tmp, GET_NAME(i))) || // Is imm looking at existing name
+		(isname(tmp, GET_NAME1(i)) &&
+		 (!racewar(ch,
+			   i) || // Is name of real or disguised? & is there racewar?(no if same faction)
+		  IS_ILLITHID(ch) ||
+		  IS_PILLITHID(ch) || IS_TRUSTED(ch))) ||
+		//(IS_DISGUISE(i) && IS_DISGUISE_PC(i) && isname(tmp, GET_DISGUISE_NAME(i))) ||
+		(IS_DISGUISE(i) && IS_DISGUISE_NPC(i) && isname(tmp, GET_DISGUISE_TITLE(i)) &&
+		 racewar(ch, i)) ||
+		((isname(tmp, race_names_table[GET_RACE1(i)].normal) &&
+		  /*  !IS_DISGUISE_NPC(i) && */ (
+			  !is_introd(i, ch) ||
+			  /* racewar(ch, i) || */ (IS_DISGUISE(i) && (i != ch))))) ||
+		(isname(tmp, GET_NAME(i)) && (IS_NPC(i))) ||
+		((i != ch) && !IS_TRUSTED(ch) && !CAN_DAYPEOPLE_SEE(ch->in_room) &&
+		 (IS_AFFECTED(ch, AFF_INFRAVISION) || has_innate(ch, INNATE_OPHIDIAN_EYES)) &&
+		 (isname(tmp, "shape") || isname(tmp, "outline"))));
+}
+
+// Return a selector that normal mortal commands resolve to this exact target.
+// Counting uses the same visibility, introduction, racewar and height rules.
+bool get_char_room_target(P_char viewer, P_char target, char *out, size_t capacity)
+{
+	if (!out || !capacity)
+		return false;
+	out[0] = 0;
+	if (!viewer || !target || viewer->in_room == NOWHERE || viewer->in_room != target->in_room)
+		return false;
+	char name_word[MAX_INPUT_LENGTH], race_word[MAX_INPUT_LENGTH];
+	one_argument(GET_NAME(target), name_word);
+	one_argument(race_names_table[GET_RACE1(target)].normal, race_word);
+	const char *words[] = { name_word, race_word };
+	for (const char *word : words)
+	{
+		if (!room_target_matches(viewer, target, word))
+			continue;
+		int ordinal = 0;
+		for (P_char candidate = world[viewer->in_room].people; candidate;
+		     candidate = candidate->next_in_room)
+		{
+			if (room_target_matches(viewer, candidate, word))
+				++ordinal;
+			if (candidate == target)
+			{
+				const std::string selector = std::to_string(ordinal) + "." + word;
+				if (selector.size() >= capacity)
+					return false;
+				memcpy(out, selector.c_str(), selector.size() + 1);
+				return true;
+			}
+		}
+	}
+	return false;
+}
+
 P_char get_char_room_vis(P_char ch, const char *name)
 {
 	P_char i;
@@ -4071,25 +4199,7 @@ P_char get_char_room_vis(P_char ch, const char *name)
 
 	for (i = world[ch->in_room].people, j = 1; i && (j <= k); i = i->next_in_room)
 	{
-		if (CAN_SEE(ch, i) && (ch->specials.z_cord == i->specials.z_cord) &&
-		    ((IS_TRUSTED(ch) &&
-		      isname(tmp, GET_NAME(i))) || // Is imm looking at existing name
-		     (isname(tmp, GET_NAME1(i)) &&
-		      (!racewar(ch,
-				i) || // Is name of real or disguised? & is there racewar?(no if same faction)
-		       IS_ILLITHID(ch) ||
-		       IS_PILLITHID(ch) || IS_TRUSTED(ch))) ||
-		     //(IS_DISGUISE(i) && IS_DISGUISE_PC(i) && isname(tmp, GET_DISGUISE_NAME(i))) ||
-		     (IS_DISGUISE(i) && IS_DISGUISE_NPC(i) && isname(tmp, GET_DISGUISE_TITLE(i)) &&
-		      racewar(ch, i)) ||
-		     ((isname(tmp, race_names_table[GET_RACE1(i)].normal) &&
-		       /*  !IS_DISGUISE_NPC(i) && */ (
-			       !is_introd(i, ch) ||
-			       /* racewar(ch, i) || */ (IS_DISGUISE(i) && (i != ch))))) ||
-		     (isname(tmp, GET_NAME(i)) && (IS_NPC(i))) ||
-		     ((i != ch) && !IS_TRUSTED(ch) && !CAN_DAYPEOPLE_SEE(ch->in_room) &&
-		      (IS_AFFECTED(ch, AFF_INFRAVISION) || has_innate(ch, INNATE_OPHIDIAN_EYES)) &&
-		      (isname(tmp, "shape") || isname(tmp, "outline")))))
+		if (room_target_matches(ch, i, tmp))
 		{
 			if (j == k)
 				return (i);
@@ -4872,16 +4982,17 @@ int can_char_use_item(P_char ch, P_obj obj)
 		return TRUE;
 	}
 
+	const int mechanics_race = tutorial_mobile_mechanics_race(ch);
 	if (!IS_SET(obj->extra_flags, ITEM_ALLOWED_RACES))
 	{
-		if (obj_race_bit_set(obj, GET_RACE(ch)))
+		if (obj_race_bit_set(obj, mechanics_race))
 		{
 			return FALSE;
 		}
 	}
 	else
 	{
-		if (!obj_race_bit_set(obj, GET_RACE(ch)))
+		if (!obj_race_bit_set(obj, mechanics_race))
 		{
 			return FALSE;
 		}

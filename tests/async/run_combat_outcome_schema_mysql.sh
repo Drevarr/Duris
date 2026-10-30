@@ -41,7 +41,7 @@ fi
 mkdir -p "$ROOT/bin/tests"
 read -r -a MYSQL_CFLAGS <<< "$(mysql_config --cflags)"
 read -r -a MYSQL_LIBS <<< "$(mysql_config --libs)"
-g++ -std=c++20 -Wall -Wextra -Wpedantic -Werror -pthread -Isrc \
+g++ -std=c++20 -ffunction-sections -fdata-sections -Wall -Wextra -Wpedantic -Werror -pthread -Isrc \
     "${MYSQL_CFLAGS[@]}" tests/async/combat_outcome_mysql_harness.cpp tests/async/harness_stubs.cpp \
     src/persistence/critical_command.c src/world/epic_command.c src/economy/currency_command.c \
     src/item/item_transfer_command.c src/item/item_transfer_repository.c src/item/item_claim_repository.c src/persistence/persistence_observability.c src/item/item_claim.c src/persistence/dupe_log.c src/economy/auction_command.c \
@@ -51,10 +51,11 @@ g++ -std=c++20 -Wall -Wextra -Wpedantic -Werror -pthread -Isrc \
     src/economy/boon_reward_command.c src/economy/boon_reward_repository.c \
     src/world/zone_touch_command.c src/world/zone_touch_repository.c \
     src/account/session_audit_command.c src/account/session_audit_repository.c \
-    src/player/player_snapshot_codec.c \
+    src/player/player_snapshot_codec.c src/player/player_snapshot_repository.c \
     src/economy/collector_command.c src/economy/collector_codec.c \
     src/economy/collector_policy.c src/economy/collector_repository.c \
-    src/persistence/critical_command_repository.c "${MYSQL_LIBS[@]}" -lcrypto \
+    src/economy/divine_trade.c src/economy/divine_trade_command.c src/economy/divine_trade_repository.c \
+    src/persistence/critical_command_repository.c "${MYSQL_LIBS[@]}" -lcrypto -Wl,--gc-sections \
     -o "$ROOT/bin/tests/combat_outcome_mysql_harness"
 "$ROOT/bin/tests/combat_outcome_mysql_harness"
 
@@ -125,3 +126,27 @@ for definition in 'MEDIUMTEXT NOT NULL' \
     "$ROOT/migrations/immutable/0041_pkill_log_capacity.sh"
 done
 echo 'legacy combat log capacity, data preservation, strict limits and replay: ok'
+
+# Upgrade the exact prior inbox shape, preserve its results, and replay safely.
+[[ "$("${MYSQL[@]}" -e 'SELECT COALESCE(MAX(OCTET_LENGTH(result_payload)),0) FROM critical_operation_inbox;')" -le 4096 ]]
+"${MYSQL[@]}" -e 'ALTER TABLE critical_operation_inbox MODIFY COLUMN result_payload VARBINARY(4096) NOT NULL;'
+if "$ROOT/migrations/immutable/0054_full_group_combat_results.sh"; then
+    echo 'full-group verifier accepted the old 4096-byte inbox' >&2; exit 1
+fi
+before=$("${MYSQL[@]}" -e 'SELECT HEX(result_payload) FROM critical_operation_inbox ORDER BY operation_id LIMIT 1;')
+for _ in 1 2; do
+    "${MYSQL[@]}" < "$ROOT/migrations/immutable/0054_full_group_combat_results.sql"
+    "$ROOT/migrations/immutable/0054_full_group_combat_results.sh"
+done
+[[ "$before" == "$("${MYSQL[@]}" -e 'SELECT HEX(result_payload) FROM critical_operation_inbox ORDER BY operation_id LIMIT 1;')" ]]
+PVP_FULL_GROUP_ONLY=1 "$ROOT/bin/tests/combat_outcome_mysql_harness"
+[[ "$("${MYSQL[@]}" -e 'SELECT MAX(OCTET_LENGTH(result_payload)) FROM critical_operation_inbox;')" == 8192 ]]
+"${MYSQL[@]}" < "$ROOT/migrations/immutable/0054_full_group_combat_results.sql"
+"$ROOT/migrations/immutable/0054_full_group_combat_results.sh"
+"${MYSQL[@]}" -e 'ALTER TABLE critical_operation_inbox MODIFY COLUMN result_payload VARBINARY(16384) NOT NULL;'
+"${MYSQL[@]}" < "$ROOT/migrations/immutable/0054_full_group_combat_results.sql"
+if "$ROOT/migrations/immutable/0054_full_group_combat_results.sh"; then
+    echo 'full-group verifier accepted an unexpected wider inbox' >&2; exit 1
+fi
+[[ "$("${MYSQL[@]}" -e "SELECT character_octet_length FROM information_schema.columns WHERE table_schema=DATABASE() AND table_name='critical_operation_inbox' AND column_name='result_payload';")" == 16384 ]]
+echo 'full-group result migration, data preservation, rollback and replay: ok'

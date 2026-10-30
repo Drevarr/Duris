@@ -34,12 +34,15 @@ def section(text: str, start: str, end: str) -> str:
 HARNESS = r'''
 #include "world/world_recovery_pipeline.h"
 #include "core/utils.h"
+#include "item/storage_lockers.h"
 #include "core/prototypes.h"
 #include "world/vnum.obj.h"
 #include <cstdio>
 #include "world/world_recovery_codec.h"
 #include "world/world_singletons.h"
 #include "persistence/copyover.h"
+#include "persistence/persistence_mode.h"
+#include "flatfile/flatfile_shopkeeper_restore.h"
 #include "guild/artifact_population_repository.h"
 #include "item/item_ownership_runtime.h"
 #include <array>
@@ -93,6 +96,7 @@ P_char get_linked_char(P_char ch, ush_int type)
 
 int real_room(int vnum)
 {
+    if (vnum == 60005 && rooms[1].number == vnum) return 1;
     return vnum == 100 ? 0 : vnum == 200 ? 1 : -1;
 }
 
@@ -103,7 +107,7 @@ int real_mobile(int vnum)
 
 int real_object(int vnum)
 {
-    return vnum == 1000 ? 0 : -1;
+    return vnum == object_indexes[0].virtual_number ? 0 : -1;
 }
 
 P_obj read_object(int vnum, int mode)
@@ -272,10 +276,14 @@ bool artifact_begin_recovery(P_obj object, const artifact_payload_projection &) 
 void artifact_object_placed(P_obj) {}
 // Ordinary world objects in this fixture do not belong to shopkeepers.
 int singleton_shop_id(P_char) { return -1; }
+persistence_mode persistence_mode_get() { return PERSISTENCE_MODE_MARIADB_PRIMARY; }
+const char *persistence_mode_flatfile_root() { return nullptr; }
+bool flatfile_shopkeeper_bootstrap_new(const std::string &, std::string *) { std::abort(); }
+void fatal_boot_error(const char *, const char *, ...) { std::abort(); }
 P_obj read_object_for_recovery(const artifact_payload_projection &source)
 {
     assert(source.extra_flags_present && source.quantity == 1);
-    assert(source.payload_root_item_uid && source.item_uid && source.vnum == 1000);
+    assert(source.payload_root_item_uid && source.item_uid && source.vnum == object_indexes[0].virtual_number);
     P_obj object = read_object(source.vnum, VIRTUAL);
     if (object) { object->obj_uid = source.item_uid; object->extra_flags = source.extra_flags; }
     return object;
@@ -427,10 +435,33 @@ int main()
            captured_native.data() + sizeof(world_recovery_object_record),
            sizeof(captured_item));
     assert(captured_item.flags == WORLD_RECOVERY_ITEM_AUTHORITY_REQUIRED);
+    // A completed player save may leave the former active ownership row behind
+    // after a drop. Capture the physical floor tree; recovery checks saved holdings.
     lookup_entry.owner = {item_owner_type::player, 1, 0};
-    assert(world_recovery_write_object_to_buffer(
-               &captured, 100, reinterpret_cast<char *>(capture_buffer.data()),
-               capture_buffer.size()) == 0);
+    captured_size = world_recovery_write_object_to_buffer(
+        &captured, 100, reinterpret_cast<char *>(capture_buffer.data()), capture_buffer.size());
+    assert(captured_size > 0);
+    assert(world_recovery_encode_record(
+        world_recovery_record_type::object, capture_buffer.data(), captured_size,
+        captured_wire.data(), captured_wire.size(), &captured_wire_size));
+    assert(world_recovery_decode_record(world_recovery_record_type::object,
+                                        captured_wire.data(), captured_wire_size,
+                                        &captured_native));
+    memcpy(&captured_item, captured_native.data() + sizeof(world_recovery_object_record),
+           sizeof(captured_item));
+    assert(captured_item.item_uid == 800 && captured_item.flags == 0);
+    for (int conflict = 0; conflict != 4; ++conflict) {
+        lookup_entry.owner = {item_owner_type::player, 1, 0};
+        lookup_entry.state = item_custody_state::active;
+        lookup_entry.vnum = 1000;
+        if (conflict == 0) lookup_entry.state = item_custody_state::destroyed;
+        if (conflict == 1) lookup_entry.owner = {item_owner_type::auction, 1, 0};
+        if (conflict == 2) ++lookup_entry.vnum;
+        if (conflict == 3) lookup_entry.owner = {item_owner_type::room, 101, 0};
+        assert(world_recovery_write_object_to_buffer(
+                   &captured, 100, reinterpret_cast<char *>(capture_buffer.data()),
+                   capture_buffer.size()) == 0);
+    }
     lookup_succeeds = false;
 
     char_data master = {}, pet = {}, ordinary = {}, unlinked_summon = {};
@@ -488,6 +519,26 @@ int main()
     const auto before_semantic_reads=objects_read;
     assert(!world_recovery_validate_with_floor(blob.data(),blob.size(),300,42,nullptr,nullptr,0));
     assert(objects_read==before_semantic_reads); // the saved door no longer exists
+
+    // Ship hatches do not exist at artifact preflight, but must exist at restore.
+    rooms[1].number = 60005;
+    copyover_room ship_door = {60005, 5, EX_ISDOOR | EX_CLOSED};
+    auto ship_record = frame(world_recovery_record_type::door,
+                            reinterpret_cast<const unsigned char *>(&ship_door), sizeof(ship_door));
+    std::vector<unsigned char> ship_blob(WORLD_RECOVERY_WIRE_HEADER_BYTES + ship_record.size());
+    memcpy(ship_blob.data() + WORLD_RECOVERY_WIRE_HEADER_BYTES, ship_record.data(), ship_record.size());
+    finish(ship_blob, header);
+    assert(world_recovery_validate_with_floor(ship_blob.data(),ship_blob.size(),300,42,nullptr,nullptr,0));
+    assert(!world_recovery_restore(ship_blob.data(),ship_blob.size(),300,42,nullptr));
+    assert(objects_read == before_semantic_reads);
+    room_direction_data hatch = {};
+    hatch.exit_info = EX_ISDOOR;
+    rooms[1].dir_option[5] = &hatch;
+    assert(world_recovery_restore(ship_blob.data(),ship_blob.size(),300,42,nullptr));
+    assert(hatch.exit_info == (EX_ISDOOR | EX_CLOSED));
+    rooms[1].dir_option[5] = nullptr;
+    rooms[1].number = 200;
+
     zone_age_entry missing_zone={}; missing_zone.zone_rnum=42;
     const auto zone_record=frame(world_recovery_record_type::zone,reinterpret_cast<const unsigned char *>(&missing_zone),sizeof(missing_zone));
     auto zone_header=header; zone_header.door_count=0; zone_header.zone_count=1;
@@ -1018,6 +1069,34 @@ int main()
         extract_obj(restored, FALSE);
         assert(!object_list);
     }
+    reconcile_succeeds=true; hydrate_succeeds=true; lookup_succeeds=false;
+    owned_items.clear();
+    for (int vnum : {32820,32831,142251,142438}) {
+        object_indexes[0].virtual_number=vnum;
+        for (int charge : {-1,0,1,5}) {
+            auto saved=item(950,950,0); saved.vnum=vnum; saved.type=ITEM_CONTAINER;
+            saved.values[3]=7;
+            saved.trap_eff=vnum==32831 ? 516 : vnum==142438 ? 512 : 1536;
+            saved.trap_dam=vnum==142251 ? 12 : vnum==142438 ? 9 : 11;
+            saved.trap_level=vnum==142251 || vnum==142438 ? 60 : 50;
+            saved.trap_charge=charge;
+            for(int pass=0;pass<2;++pass) {
+                const auto generation=object_generation({{saved}});
+                assert(world_recovery_restore(generation.data(),generation.size(),300,77,nullptr));
+                auto *restored=object_list;
+                const int budget=vnum==32831 ? 0 : vnum==32820 && charge!=0 ? 1 : charge;
+                assert(restored && restored->trap_charge==budget && restored->value[3]==7);
+                assert(restored->trap_eff==(vnum==32831 ? 0 : vnum==32820 ? 512 : saved.trap_eff));
+                assert(restored->value[1]==(vnum==142251 || vnum==142438 ? 1 : 0));
+                saved.trap_eff=restored->trap_eff; saved.trap_dam=restored->trap_dam;
+                saved.trap_charge=restored->trap_charge; saved.trap_level=restored->trap_level;
+                saved.values[1]=restored->value[1];
+                extract_obj(restored,FALSE);
+                assert(!object_list);
+            }
+        }
+    }
+    object_indexes[0].virtual_number=1000;
     return 0;
 }
 '''
@@ -1164,6 +1243,7 @@ with tempfile.TemporaryDirectory(prefix="duris-world-recovery-") as temp_dir:
             "-fsanitize=address,undefined", "-fno-omit-frame-pointer",
             "-ffunction-sections", "-fdata-sections", "-Isrc", str(source),
             rel("world_recovery_pipeline.c"), rel("world_recovery_codec.c"), rel("generated_npc_state.c"), rel("generated_npc_runtime.c"), rel("pet_restore_state.c"),
+            "src/combat/trap_legacy.c",
             rel("redis_command_observability.c"),
             "-Wl,--gc-sections", "-lz", "-pthread",
             str(HARNESS_STUBS), "-o", str(binary),

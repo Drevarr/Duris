@@ -25,6 +25,7 @@
 #include "world/zone_touch_transaction.h"
 #include "cmd/interp.h"
 #include "sql/sql.h"
+#include "sql/sql_async.h"
 #include "economy/auction_transaction.h"
 #include "economy/boon_reward_transaction.h"
 #include "economy/collector_service.h"
@@ -40,6 +41,7 @@
 #include "account/account_recovery.h"
 #include "account/account_reward.h"
 #include "account/creation_availability_config.h"
+#include "account/pwipe_launch.h"
 #include "account/login_mode_banner.h"
 #include "account/password_hash.h"
 #include "combat/chaos_config.h"
@@ -69,6 +71,7 @@
 #include "persistence/maintenance_scheduler.h"
 #include "persistence/persistence_observability.h"
 #include "flatfile/flatfile_account_adapter.h"
+#include "flatfile/flatfile_identity_repository.h"
 #include "flatfile/flatfile_account_delete.h"
 #include "persistence/persistence_mode.h"
 #include "ships/ships.h"
@@ -80,6 +83,7 @@
 #include <unordered_map>
 #include <new>
 #include <string>
+#include <fstream>
 #include <utility>
 #include <vector>
 
@@ -439,22 +443,23 @@ int is_valid_email(const char *email)
 bool is_email_taken([[maybe_unused]] const char *email)
 {
 #ifdef REQUIRE_EMAIL_VERIFICATION
-	FILE *f = NULL;
-	char db_name[MAX_INPUT_LENGTH];
-
-	f = fopen(ACCOUNT_EMAIL_DB, "r");
-	if (!f)
+	std::ifstream registry(ACCOUNT_EMAIL_DB);
+	if (!registry)
 	{
 		statuslog(56, "Couldn't open Email DB!");
 		return TRUE;
 	}
 
-	while (fscanf(f, "%s\n", &db_name) != 0)
+	std::string registered_email;
+	while (registry >> registered_email)
 	{
-		if (!strcmp(email, db_name))
-		{
+		if (registered_email == email)
 			return TRUE;
-		}
+	}
+	if (!registry.eof())
+	{
+		statuslog(56, "Couldn't read Email DB!");
+		return TRUE;
 	}
 #endif
 
@@ -608,8 +613,8 @@ void select_accountname(P_desc d, char *arg)
 				send_account_password_prompt(reader);
 				return;
 			}
-			verify_account_name(reader, NULL);
 			STATE(reader) = CON_VERIFY_NEW_ACCT_NAME;
+			verify_account_name(reader, NULL);
 		});
 }
 
@@ -675,6 +680,11 @@ static void finish_account_password(P_desc d, int password_valid, const char *ne
 		return;
 	}
 
+	if (!pwipe_launch_admit(d))
+		return;
+	if (pwipe_launch_closed_at(time(NULL)))
+		SEND_TO_Q("Preparation access approved. The public gates are still closed.\r\n", d);
+
 	if (d->account->acct_blocked == ACCOUNT_BLOCK_DELETION)
 	{
 		echo_on(d);
@@ -682,7 +692,6 @@ static void finish_account_password(P_desc d, int password_valid, const char *ne
 		display_account_deletion_confirmation(d, true);
 		return;
 	}
-
 	// Auto-upgrade MD5 passwords to bcrypt
 	if (new_hash)
 	{
@@ -763,6 +772,8 @@ bool account_login_password_pulse(P_desc d)
 
 void display_account_menu(P_desc d, char *arg)
 {
+	if (!pwipe_launch_admit(d))
+		return;
 	if (!arg)
 	{
 		char buf[256];
@@ -927,6 +938,11 @@ void confirm_account(P_desc d, char *arg)
 
 void verify_account_name(P_desc d, char *arg)
 {
+	if (pwipe_launch_closed_at(time(NULL)))
+	{
+		pwipe_launch_deny(d);
+		return;
+	}
 	char buf[1024];
 
 	if (!arg)
@@ -1154,6 +1170,11 @@ void verify_new_account_password(P_desc d, char *arg)
 
 void verify_new_account_information(P_desc d, char *arg)
 {
+	if (pwipe_launch_closed_at(time(NULL)))
+	{
+		pwipe_launch_deny(d);
+		return;
+	}
 	if (!arg)
 	{
 		display_account_information(d);
@@ -1275,6 +1296,8 @@ void add_ip_entry(P_acct acct, P_desc d)
 
 void account_select_char(P_desc d, char *arg)
 {
+	if (!pwipe_launch_admit(d))
+		return;
 	struct acct_chars *c = NULL;
 	struct acct_chars *sorted_chars[MAX_CHARS_PER_ACCOUNT];
 	struct acct_chars *temp;
@@ -1399,6 +1422,8 @@ void account_select_char(P_desc d, char *arg)
 
 void account_confirm_char(P_desc d, char *arg)
 {
+	if (!pwipe_launch_admit(d))
+		return;
 	struct acct_chars *c = NULL;
 	P_char ch = NULL;
 
@@ -1609,9 +1634,6 @@ void display_delete_character_list(P_desc d)
 	char buf[256];
 	int count = 0, i, j;
 	struct acct_chars *temp;
-
-	// Enable ANSI terminal mode for color display
-	d->term_type = TERM_ANSI;
 
 	if (!c)
 	{
@@ -2090,6 +2112,8 @@ int is_char_in_game(struct acct_chars *c, P_desc d)
 {
 	if (!c || !d)
 		return 0;
+	if (!pwipe_launch_admit(d))
+		return 1;
 
 	P_desc previous_descriptor = NULL;
 	P_char ch = NULL;
@@ -2293,6 +2317,8 @@ void account_player_load_complete(P_desc d, player_load_result result)
 		return;
 	}
 	const bool deleting = d->player_load_mode == PLAYER_LOAD_MODE_ACCOUNT_DELETE;
+	if (!pwipe_launch_admit(d))
+		return;
 	if (result.pid != d->player_load_pid)
 	{
 		player_load_pipeline_note_stale();
@@ -2368,6 +2394,8 @@ void account_new_char(P_desc d, char * /*arg*/)
 
 void account_new_char_name(P_desc d, char *arg)
 {
+	if (!pwipe_launch_admit(d))
+		return;
 	P_char player = NULL;
 	char tmp_name[1024];
 
@@ -2546,6 +2574,57 @@ int sync_account_character_projection(P_char player, int room, int persist)
 	character->last_save = time(NULL);
 
 	return !persist || write_account(player->desc->account) == 1;
+}
+
+/** Persist the last played side at departure, including detached characters. */
+bool save_account_character_departure(P_char ch)
+{
+	P_acct account = ch->desc ? ch->desc->account : nullptr;
+	for (P_desc d = descriptor_list; !account && d; d = d->next)
+		for (acct_chars *entry = d->account ? d->account->acct_character_list : nullptr;
+		     entry; entry = entry->next)
+			if (entry->pid == GET_PID(ch))
+			{
+				account = d->account;
+				break;
+			}
+	const bool good = !IS_TRUSTED(ch) && IS_RACEWAR_GOOD(ch);
+	const bool evil = !IS_TRUSTED(ch) && IS_RACEWAR_EVIL(ch);
+	const long departed_at = time(nullptr);
+#ifdef __NO_MYSQL__
+	P_acct loaded = nullptr;
+	if (!account && (good || evil))
+	{
+		flatfile_identity_record identity;
+		std::string error;
+		const char *root = persistence_mode_flatfile_root();
+		if (!root || flatfile_identity_lookup_pid(root, GET_PID(ch), &identity, &error) !=
+				     flatfile_identity_result::ok)
+			return false;
+		account = loaded = flatfile_account_state_load(identity.account.c_str(), &error);
+		if (!account)
+			return false;
+	}
+#else
+	if (!account && (good || evil))
+		return sql_queue(
+			"UPDATE accounts SET %s=GREATEST(COALESCE(%s,FROM_UNIXTIME(0)),FROM_UNIXTIME(%ld)) "
+			"WHERE account_name=(SELECT account_name FROM player_data WHERE pid=%d AND active=1)",
+			good ? "last_good_char" : "last_evil_char",
+			good ? "last_good_char" : "last_evil_char", departed_at, GET_PID(ch));
+#endif
+	if (!account)
+		return true;
+	if (good)
+		account->acct_good = departed_at;
+	else if (evil)
+		account->acct_evil = departed_at;
+	const bool saved = write_account(account) == 1;
+#ifdef __NO_MYSQL__
+	if (loaded)
+		flatfile_account_state_release(loaded);
+#endif
+	return saved;
 }
 
 /* A session waiting for the writer holds its input (comm.c) until the reply, which finds

@@ -377,7 +377,7 @@ bool trade_items_match_payload(const shop_trade_payload &payload,
 		if (item.parent_index == PLAYER_SNAPSHOT_NO_PARENT)
 		{
 			++root_count;
-			if (item.object_uid != payload.selected_item_uid)
+			if (!payload.multi_root && item.object_uid != payload.selected_item_uid)
 				return false;
 		}
 		else if (item.parent_index < 0 || item.parent_index >= static_cast<int32_t>(index))
@@ -390,11 +390,12 @@ bool trade_items_match_payload(const shop_trade_payload &payload,
 			{ return candidate.item_uid < uid; });
 		if (expected == payload.items.begin() + payload.item_count ||
 		    expected->item_uid != item.object_uid ||
-		    expected->root_item_uid != payload.selected_item_uid ||
+		    (!payload.multi_root && expected->root_item_uid != payload.selected_item_uid) ||
 		    expected->parent_item_uid != parent_uid || expected->vnum != item.vnum)
 			return false;
 	}
-	return root_count == 1;
+	return payload.multi_root ? root_count >= 1 && root_count <= SHOP_TRADE_MAX_ITEMS :
+				    root_count == 1;
 }
 
 bool select_subtree(const std::vector<player_item_snapshot> &items, uint64_t root_uid,
@@ -533,6 +534,58 @@ flatfile_shopkeeper_establish(const std::string &root,
 		return flatfile_shopkeeper_result::invalid;
 	if (!flatfile_atomic_write(domains_directory(root), catalog_filename, encoded, error))
 		return flatfile_shopkeeper_result::io_error;
+	return flatfile_shopkeeper_result::ok;
+}
+
+flatfile_shopkeeper_result
+flatfile_shopkeeper_prepare_addition(const std::string &root, const flatfile_authority_lock &lock,
+				     const std::vector<flatfile_shopkeeper_record> &records,
+				     flatfile_authority_after_image *after_image,
+				     std::string *error)
+{
+	if (root.empty() || !lock.matches(root) || records.empty() || !after_image)
+		return flatfile_shopkeeper_result::invalid;
+	*after_image = {};
+	const auto recovered = recover(root, lock, error);
+	if (recovered != flatfile_shopkeeper_result::ok)
+		return recovered;
+	shopkeeper_catalog catalog;
+	const auto loaded = load_catalog(root, &catalog, error);
+	if (loaded != flatfile_shopkeeper_result::ok &&
+	    loaded != flatfile_shopkeeper_result::not_found)
+		return loaded;
+	if (loaded == flatfile_shopkeeper_result::ok)
+	{
+		if (catalog.revision == UINT64_MAX)
+			return flatfile_shopkeeper_result::invalid;
+		++catalog.revision;
+	}
+	try
+	{
+		for (auto record : records)
+		{
+			if (record.revision != 1)
+				return flatfile_shopkeeper_result::invalid;
+			if (std::any_of(catalog.records.begin(), catalog.records.end(),
+					[&](const auto &existing)
+					{ return existing.shop_id == record.shop_id; }))
+				return flatfile_shopkeeper_result::already_exists;
+			std::sort(record.affects.begin(), record.affects.end(), affect_less);
+			catalog.records.push_back(std::move(record));
+		}
+		std::sort(catalog.records.begin(), catalog.records.end(), record_less);
+		if (!encode_catalog(catalog, &after_image->bytes))
+		{
+			if (error && error->empty())
+				*error = "new shop catalog encoding rejected";
+			return flatfile_shopkeeper_result::invalid;
+		}
+		after_image->filename = catalog_filename;
+	}
+	catch (const std::bad_alloc &)
+	{
+		return flatfile_shopkeeper_result::io_error;
+	}
 	return flatfile_shopkeeper_result::ok;
 }
 

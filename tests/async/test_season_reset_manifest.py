@@ -19,9 +19,8 @@ import sys
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 SQL_C = str(source("sql.c"))
-BOOTSTRAP_SQL = os.path.join(REPO_ROOT, "migrations", "bootstrap_multithread_safe.sql")
-DURIS_SQL = os.path.join(REPO_ROOT, "migrations", "bootstrap_legacy_baseline.sql")
-HANDOFF_SQL = os.path.join(REPO_ROOT, "migrations", "immutable", "0027_saved_item_recovery_handoff.sql")
+sys.path.insert(0, os.path.join(REPO_ROOT, "scripts"))
+import validate_data_lifecycle as lifecycle
 LIFECYCLE_MANIFEST = os.path.join(
     REPO_ROOT, "migrations", "data_lifecycle_manifest.json"
 )
@@ -78,24 +77,9 @@ def extract_pwipe_tables():
 
 
 def extract_bootstrap_tables():
-    """Extract final runtime table state, honoring later DROP TABLE statements."""
-    tables = set()
-    statement_re = re.compile(
-        r'(CREATE|DROP)\s+TABLE\s+(?:IF\s+(?:NOT\s+)?EXISTS\s+)?[`"]?(\w+)[`"]?',
-        re.IGNORECASE,
-    )
-    for sql_file in [BOOTSTRAP_SQL, DURIS_SQL, HANDOFF_SQL]:
-        if not os.path.exists(sql_file):
-            continue
-        with open(sql_file, "r") as f:
-            content = f.read()
-        for m in statement_re.finditer(content):
-            operation, table = m.group(1).upper(), m.group(2).lower()
-            if operation == "CREATE":
-                tables.add(table)
-            else:
-                tables.discard(table)
-    return tables
+    """Use the supported sealed schema sequence, including current world stores."""
+    return lifecycle.schema_tables(lifecycle.default_schema_files())
+
 
 
 # ── Test 1: All pwipe tables exist in bootstrap ──
@@ -106,10 +90,10 @@ all_pwipe_tables = delete_tables | update_tables
 
 nonexistent = all_pwipe_tables - bootstrap_tables
 if nonexistent:
-    errors.append(f"Pwipe references tables not in bootstrap: {sorted(nonexistent)}")
+    errors.append(f"Pwipe references tables not in supported schema: {sorted(nonexistent)}")
 else:
     checks_passed += 1
-    print(f"pwipe table bootstrap existence: ok ({len(all_pwipe_tables)} tables)")
+    print(f"pwipe table supported-schema existence: ok ({len(all_pwipe_tables)} tables)")
 
 # ── Test 2: RETAIN tables must NOT be in DELETE FROM ──
 retained_in_delete = RETAIN_TABLES & delete_tables
@@ -165,6 +149,9 @@ if next_func == -1:
 pwipe_body = source[pwipe_start:next_func]
 
 ordering_checks = [
+    ("siege_item_affects", "siege_items", "siege item"),
+    ("siege_item_extra_descr", "siege_items", "siege item"),
+    ("auction_item_custody", "auctions", "auction item"),
     ("player_item_affects", "player_items", "player item"),
     ("player_item_extra_descr", "player_items", "player item"),
     ("player_pet_item_affects", "player_pets", "player pet"),
@@ -238,6 +225,18 @@ else:
     else:
         checks_passed += 1
         print("account_characters soft-delete with COALESCE: ok")
+
+# Every canonical deleted store must be independently empty before SQL-ready.
+postflight = pwipe_body[pwipe_body.index("const char *postflight_tables[]"):]
+postflight = postflight[:postflight.index("};")]
+postflight_tables = set(re.findall(r'"([a-z_]+)"', postflight))
+if postflight_tables != RESET_TABLES:
+    errors.append("Postflight differs from canonical reset-delete stores: "
+                  f"missing={sorted(RESET_TABLES-postflight_tables)} "
+                  f"unexpected={sorted(postflight_tables-RESET_TABLES)}")
+else:
+    checks_passed += 1
+    print(f"Complete postflight empty-store coverage: ok ({len(postflight_tables)} tables)")
 
 # ── Summary ──
 print(f"\nTotal checks passed: {checks_passed}")

@@ -33,7 +33,21 @@ owned SQL statements through `sql_async`.
 | Session audit | `session_audit_outcome` | player |
 
 Wallets and banks are not commands ([Money lives in memory](#money-lives-in-memory)).
-Fan-out is bounded at 15 participants or artifacts and 32 boon results per command.
+PvP fan-out is bounded at 40 participants, covering both configured 20-player
+groups. Artifact fan-out remains 15 and boon results remain 32 per command.
+The maximum encoded command payload is 8 MiB; coordinator admission still uses
+the existing total memory budget. Public equipment/log snapshots are not truncated.
+
+Full-group combat results use an 8,192-byte bounded buffer. Outcomes of up to 15
+participants retain their previous 1,536/2,048-byte result encodings, and both
+legacy sizes remain readable. Native player-domain/receipt format 4 admits the
+larger result; formats 1–3 remain readable with their old result bounds. A single
+flat-file authority transaction can carry 82 operations (40 player writes, up to
+40 prepared-delivery writes, the result receipt and delivery index). Its byte
+budget is unchanged. SQL installations require migration
+`0054_full_group_combat_results`, which widens the critical inbox result column.
+Older binaries cannot read the new large results/native format; do not roll back
+over stores that contain them.
 
 ## Acceptance and execution
 
@@ -136,15 +150,87 @@ fail closed. Connection loss after `COMMIT` is reconciled by rereading the inbox
 the original immutable command can retry. Test-state rows are locked in normalized key
 order. Deadlocks and lock waits are retryable with the same operation ID.
 
-Each transaction also writes a bounded typed outbox record. The dispatcher reads at
+Each transaction records its expected event count and writes bounded typed outbox
+records when publication is needed. The dispatcher reads at
 most 64 records/4 MiB at a time, passes the stable outbox ID to a typed consumer, and
 records consumer dedupe plus delivered state together. Retryable delivery uses bounded
 backoff; the eighth failure or a terminal result retains a dead-letter row. Copyover and
 shutdown drain commands first and outbox records second.
 
 `world persistence` adds cached `critical_outbox` counts for pending age, dead letters,
-incomplete inbox rows, committed operations missing outbox rows, delivery/retry/error
-totals, and high-water records/bytes.
+incomplete inbox rows, event-expectation mismatches, unknown historical expectations,
+reconciliation candidates, delivery/retry/error totals, and high-water records/bytes.
+
+Legacy boon checks use an asynchronous active-definition view (option, side and
+target only) to filter proven impossible matches before an operation ID exists.
+The view expires 60 seconds after its request; missing, failed, oversized or stale
+views fall back to the normal command. Creation/reactivation invalidates before
+queuing and on writer attempts, including retries; removal, expiry and reward
+completion invalidate too. Generations reject older in-flight reads, and each
+event uses its current side/target. Criteria and progress remain authoritative on
+the existing writer. The `boon_rewards` diagnostic reports checks, filtering,
+submissions, completions, pending work and definition refresh/failure counts.
+
+Every accepted boon ID retains its typed outcome and canonical inbox answer.
+Proven zero-entry SQL results use an eight-byte version-2 receipt (little-endian
+PID, zero uint16 entry count, uint16 version 2), zero expected events and no
+outbox insert. Replay returns the stored answer even if definitions later change.
+Nonempty results and flat-file catalog writers retain the 2,080-byte format;
+readers accept both, including historical inbox/outbox and flat-file receipts.
+No old receipt or historical NULL expectation is rewritten.
+
+Operational counts use the existing status indexes on the 250 ms delivery cadence;
+the full historical missing-outbox audit runs after delivery, initially and then
+60 seconds after each attempt, including failures. Diagnostic errors preserve the
+last successful values and do not gate delivery on a usable connection. The
+`critical_outbox_health` line labels each sample `unavailable`, `stale`, or `fresh`
+and reports its age. A stale or unavailable sample makes the aggregate state
+`unknown`, never proof of an empty queue.
+
+An outbox drain requests a new worker observation after any in-flight batch and
+checks for all pending rows, including future retries. While waiting within the
+existing deadline, the game thread runs the same auction, collector, combat, and
+artifact publishers as normal pulses. Auction events remain unacknowledged until
+their asynchronous read's
+game-thread callback has actually published; drains pump completed SQL callbacks
+as well as the publishers. Publication does not bypass durable retry
+backoff; a future retry may truthfully make a bounded drain fail. A SQL build
+without an initialized worker fails closed; the flat-file backend intentionally
+has no SQL outbox and retains its successful absent-worker drain behavior.
+
+An accepted auction read returns `publication_pending`: its row remains due,
+without consuming retry attempts or moving `next_attempt_at`. Its completed
+game-thread callback wakes the worker for acknowledgement immediately. A failed
+read/admission is observed as a real failure by the worker and retains the normal
+durable backoff before another read can be submitted.
+
+The additive `immutable/0050_critical_outbox_expectations.sql` migration must precede the new
+writer/audit consumer. New committed inbox results record the exact expected
+contiguous event indexes `0..expected_outbox_events-1` in their own transaction.
+NULL preserves unknown historical intent and replay never rewrites it. The audit
+counts all outbox statuses and compares both cardinality and indexes, so a
+partially lost multi-event operation remains visible even if one event survives.
+An unexpected event for a known zero is also a mismatch.
+
+Historical expectations are classified only with the domain contract and positive
+typed evidence. Session audits need a corresponding outcome receipt. Combat epic
+children need their canonical empty/hash identity plus the exact parent,
+participant index, ledger revision/delta, reason/source, and derived child ID;
+the parent owns their publication. Empty epic payloads or command type alone are
+insufficient. Typed mutation receipts can prove a single event. Remaining old
+ambiguity, including historical item/collector multi-event counts, stays unknown.
+All committed history is covered on every audit attempt; no timestamp window or
+permanent high-water mark skips old rows.
+
+`outbox_mismatches` is a proven integrity failure. `unknown_expectations` is a
+coverage count; `reconciliation_candidates` counts its operations with no outbox
+row. These unknowns produce `state=reconciliation`, while dead letters,
+incomplete inbox rows, or proven mismatches produce `degraded`. Diagnostic failure
+or staleness still produces `unknown`, preserving last-good values. Neither a
+candidate count nor an unknown historical set proves loss or permits claiming a
+clean audit. The legacy health member `committed_without_outbox` now carries the
+reconciliation-candidate count and is no longer an integrity verdict. Never infer
+historical intent from the rows still present or fabricate zero expectations.
 
 Treat a growing oldest age as a stop condition for copyover/shutdown and affected
 gameplay: restore the underlying database or destination and investigate before

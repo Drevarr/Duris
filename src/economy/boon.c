@@ -40,6 +40,7 @@ using namespace std;
 #include "guild/assocs.h"
 #include "economy/auction_houses.h"
 #include "economy/boon.h"
+#include "economy/divine_boon_runtime.h"
 #include "economy/boon_reward_transaction.h"
 #include "economy/boon_shop_transaction.h"
 #include "world/buildings.h"
@@ -1513,7 +1514,10 @@ int parse_boon_args(P_char ch, BoonData *bdata, char *argument)
 // a later pulse. A boon that never expires is left as it is.
 static void extend_boon_on_writer(P_char ch, int id, int extend)
 {
+	if (!divine_boon_legacy_admissions_allowed())
+		return;
 	const std::string name = GET_NAME(ch);
+	boon_reward_definition_view_invalidate();
 	sql_read_work_for(
 		ch,
 		[id, extend, name](MYSQL *connection, sql_rows *rows) -> unsigned int
@@ -1543,6 +1547,7 @@ static void extend_boon_on_writer(P_char ch, int id, int extend)
 						    ct, extend, name.c_str(), id)))
 					return error_code;
 			}
+			boon_reward_definition_view_invalidate();
 			rows->push_back(std::move(found[0]));
 			return 0;
 		},
@@ -1578,6 +1583,12 @@ void do_boon(P_char ch, char *argument, int /*cmd*/)
 	int i, dresult;
 
 	argument = one_argument(argument, arg);
+	if ((!strcmp(arg, "add") || !strcmp(arg, "extend") || !strcmp(arg, "random")) &&
+	    !divine_boon_legacy_admissions_allowed())
+	{
+		send_to_char("Legacy boons are closed while Divine Boons are prepared.\r\n", ch);
+		return;
+	}
 
 	// The mortal arguments
 	// Handle list (or no arguments)
@@ -1912,6 +1923,12 @@ void boon_shop(P_char ch, char *argument)
 	int i;
 
 	argument = one_argument(argument, arg);
+	if ((!strcmp(arg, "stat") || !strcmp(arg, "stats")) &&
+	    !divine_boon_legacy_admissions_allowed())
+	{
+		send_to_char("The legacy boon shop is closed.\r\n", ch);
+		return;
+	}
 
 	// Flat-file reads the shop here; MariaDB reads it on the writer, where the boon
 	// rewards add the points.
@@ -2675,6 +2692,8 @@ static void boon_create_told(P_char ch, bool created)
 // MariaDB on a later pulse, since the count, the insert and its id come from the writer.
 int create_boon(BoonData *bdata, P_char ch)
 {
+	if (!divine_boon_legacy_admissions_allowed())
+		return FALSE;
 	if (!bdata)
 	{
 		debug("create_boon(): NULL bdata passed to function");
@@ -2685,6 +2704,7 @@ int create_boon(BoonData *bdata, P_char ch)
 	{
 		const BoonData boon = *bdata;
 		const uint64_t runtime_id = ch ? ch->runtime_id : 0;
+		boon_reward_definition_view_invalidate();
 		return sql_read_work(
 			[boon](MYSQL *connection, sql_rows *rows) -> unsigned int
 			{
@@ -2707,6 +2727,7 @@ int create_boon(BoonData *bdata, P_char ch)
 						    boon.bonus2, boon.random, boon.author.c_str(),
 						    boon.pid, boon.repeat)))
 					return error_code;
+				boon_reward_definition_view_invalidate();
 				return sql_select(connection, "SELECT LAST_INSERT_ID()", rows);
 			},
 			[boon, runtime_id](bool ok, const sql_rows &rows)
@@ -2755,12 +2776,15 @@ int remove_boon(int id)
 		       flatfile_boon_result::ok;
 	}
 	// Gona leave boons on the DB for history lookup purposes. Queued on the writer.
+	boon_reward_definition_view_invalidate();
 	return sql_queue("UPDATE boons SET active='0', duration='0' WHERE id='%d'", id);
 }
 
 // Flat-file only: MariaDB extends on the writer (extend_boon_on_writer()).
 int extend_boon(int id, int extend, const char *name)
 {
+	if (!divine_boon_legacy_admissions_allowed())
+		return FALSE;
 	const char *root = flat_boon_root();
 	if (!root || id <= 0 || extend < 0 || !name || !*name)
 		return FALSE;
@@ -2932,6 +2956,8 @@ void boon_randomize(P_char ch, char *argument)
 // does this on the writer).
 void boon_maintenance()
 {
+	if (!divine_boon_legacy_admissions_allowed())
+		return;
 	BoonData bdata;
 	int expire;
 	std::vector<int> active_ids;
@@ -3026,6 +3052,8 @@ void boon_maintenance()
 
 void check_boon_completion(P_char ch, P_char victim, double data, int option)
 {
+	if (!divine_boon_legacy_admissions_allowed())
+		return;
 	if (!ch || IS_NPC(ch) || option < 0 || option >= MAX_BOPT ||
 	    !IS_SET(ch->specials.act2, PLR2_BOON))
 		return;

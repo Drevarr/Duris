@@ -99,7 +99,9 @@ Representative entry points by feature:
 - **Guilds and social systems:** `src/guild/` plus social handlers in
   `src/cmd/` and `src/world/`.
 - **Quests:** `src/world/quest.c`, `src/cmd/nq.c`,
-  `src/world/world_quest.c`, and `src/mob/encounters.c`.
+  `src/world/world_quest.c`, and `src/mob/encounters.c`; see the
+  [quest-system reference](QUEST_SYSTEMS.md) for authoring, runtime behavior,
+  tracking, XML, and epic tasks.
 - **Immortal and building commands:** primarily `src/cmd/actwiz.c`,
   `src/cmd/wikihelp.c`, `src/world/properties.c`, and `src/cmd/testcmd.c`.
 - **Chaos mode:** `src/combat/chaos.c`, `src/combat/chaos_config.c`, and the
@@ -275,56 +277,12 @@ and `test_relic_lab_reset_bounds.py` cover these paths.
 
 ## Bartender world-quest catalog
 
-`src/world/world_quest_policy.c` builds the global catalog once at boot through
-`calc_zone_mob_level()`, after world indexes, special procedures, and map setup.
-Both persistence backends use loaded content; `zones.quest_zone` is not an
-approval list. Repeated quest requests reuse cached mobile profiles, reward
-pools, and per-level scores rather than scanning all prototypes or querying SQL
-for zone eligibility. Temporary probes restore live entity counts.
-
-Policy excludes sentinel/non-normal zones, explicit zones 0/292/536, towns and
-hometowns, and zones without eligible local rewards. The truncated average
-prototype level must lie strictly inside `(L - 7, L + 5)`. Mapless zones require
-level 41 or higher. Source-eligible rewards pass the floor `2 * itemvalue >= L`;
-reward counts and means are calculated after that filter. Items that any
-hand-built quest pays out or asks players to hand in (the item goals of
-`quest_index`) are never rewards, flagged `ITEM2_QUESTITEM` or not. Each zone
-also withholds its most valuable `world.quest.reward.top.withheld.percent`
-(default 20) percent of source-eligible items, rounded up and including value
-ties. A zone whose items are all worth the same has no top tier, so nothing is
-withheld there; a zone's only item is. Per-level pools and scores are built from
-what remains, and the boot log reports both withheld counts. The setting is read
-when the catalog is built, so a change applies at the next boot.
-
-For eligible zones, the relative selection weight is
-`exp(-abs(average_level - L) / 6) * (average_ivalue / L) * eligible_item_count`.
-Item count is deliberately linear; zero-reward zones have zero weight. See
-`world_quest_policy_math.h` for boundaries and constants.
-
-Targets use the inclusive level band `[L - 4, L + 5]`. Kill targets need at
-least two existing instances; ask targets need exactly one, speech capability,
-and no player-specific aggression. Below level 31, invisible/concealed/hidden
-ask targets are excluded. Dynamic aggression probes and completion-history
-checks each have a request-wide budget of 32. Previously completed targets are
-excluded from subsequent retries; a history-read error stops assignment.
-
-`createQuest()` distinguishes no eligible zone from no valid target. Bartender
-payments use the currency transaction API: the debit changes the wallet in memory
-and invokes its completion before the API returns. A failed later selection
-refunds the fee in memory; player saves persist the wallet. The deferred
-quest continuation stores the bartender's stable vnum rather than a live NPC pointer,
-so disconnect/reconnect cannot resume against stale room state. Completion
-history still uses each backend's world-quest adapter. Reward selection uses
-the accepted quest level's cached pool, with the existing logged random-
-equipment fallback if unavailable.
-`tests/async/run_world_quest_dual_backend.py` exercises real quest grant and
-persistence in disposable MariaDB and flat-file instances; focused
-`test_world_quest_*` tests cover policy and failure boundaries.
-
-Quests cannot be shared unless `world.quest.share.max` (default 0, at most 4)
-allows it. Every completed quest pays one item reward to the player who
-completed it; kill quests pay at completion instead of rolling rewards onto
-corpses. The fee is `world.quest.cost.per.level` copper per level (default 20).
+The [standalone bartender quest reference](BARTENDER_QUESTS.md) documents
+`world_quest.c`, the cached selection/reward catalog, route proofs, completion,
+fees, sharing, maps/GMCP, recovery, persistence, and validation. Its
+[source map](BARTENDER_QUESTS.md#source-map) links the owning handlers and hooks;
+its [policy section](BARTENDER_QUESTS.md#catalog-target-and-route-policy) gives
+the exact level windows, reward weighting, target rules, and work budgets.
 
 ## Shared NPC area-target pruning
 
@@ -385,9 +343,12 @@ feeding in
 
 `mana_regen(ch, display_only)` supplies PSP admission, each recovery callback and staff
 `stat`. Rates are points per game tick (300 pulses, nominally 75 seconds). Dead, dying,
-incapacitated, fighting and sun-vulnerable characters in the existing suppressing light
+incapacitated and sun-vulnerable characters in the existing suppressing light
 conditions have zero recovery, including with meditation or equipment bonuses. Twilight
 rooms and Globe of Darkness retain their existing sunlight exemptions.
+Combat permits normal recovery for players and NPCs: it uses the same rate and
+modifiers, can start after expenditure during a fight, and preserves pending fractional
+credit across combat entry and exit. No item, buff or innate is required.
 
 Eligible characters above maximum decay at `min(-1, (maximum - current) / 5)`. Otherwise
 the base is the integer conversion of `(POW + INT) / 2.5`, or `/ 0.2` while meditating,
@@ -395,7 +356,7 @@ for both players and NPCs. Feeblemind quarters that base; sleeping doubles it an
 adds half. Posture does not change PSP. The signed flat `mana_reg` modifier is added once,
 then the recovery dial scales positive player gains only. There is no final square and
 no extra meditation-skill bonus. At POW=INT=100, neutral normal/resting/sleeping rates
-are 80/120/160; normal meditation is 1,000. Combat/sun suppression, status bonuses,
+are 80/120/160; normal meditation is 1,000. Sun suppression, status bonuses,
 feeblemind, equipment and difficulty now affect the callback as well as the displayed
 rate.
 
@@ -405,8 +366,7 @@ maximum; negative increments preserve gradual over-cap decay and clamp at zero. 
 existing fractional accumulator, elapsed-pulse catch-up, duplicate suppression and NPC
 cadence remain. Blocked callbacks terminate and discard fractional credit; a later start
 begins with fresh elapsed accounting. Existing casting, meditation, rest, affect changes
-and periodic player affect updates supply restarts. Combat exit relies on the next
-eligible player affect tick, nominally within 75 seconds. That restart covers every
+and periodic player affect updates supply restarts. The periodic restart covers every
 `USES_MANA` character, including racial PSP users without a psionic class, and lets
 `StartRegen()` check the current rate at full or above-maximum PSP too. Negative
 equipment recovery therefore resumes after suppression even from full PSP.

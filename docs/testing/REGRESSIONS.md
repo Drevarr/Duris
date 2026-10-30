@@ -11,6 +11,539 @@ own schema. Flat-file journeys take a server built with
 Four of these sections note that the full-server path was never driven under sanitizers; no
 journey does that yet.
 
+## Private locker registry, access, receipts and audit (#490 / #497)
+
+`python3 tests/async/test_private_chest_regressions.py` compiles the production
+sorting, wrapper registry, actor/visit access, password continuation, private-save
+receipt, management reconciliation and audit code under ASan/UBSan. It controls
+world/prototype, item capture and writer/SQL boundaries; it is not a server journey.
+The fixture keeps private identity/contents across repeated custom sorting, rejects
+stale or borrowed access, retains failed/refused snapshots, publishes management
+only after readback, retries an audit event with the same ID, and renders deleted
+chest IDs. The existing container/weight regression covers real transfer admission.
+
+`tests/async/with_disposable_mariadb.sh python3 tests/async/run_private_chest_purchase_mysql.py`
+executes the production purchase transaction/controller on disposable InnoDB. It
+checks atomic wallet/bank payment, rollback after insertion, queue refusal, lost
+COMMIT response, extracted purchaser, duplicate name, limit and stale revision.
+Repeat with `TEST_DB_IMAGE=mysql:8.0` for MySQL. Currency preparation/publication
+is a controlled boundary here; `test_currency_in_memory.py` executes that module.
+The existing game-loop-query journey exercises the actual locker command path,
+custom sorting and saved item/history routing through leave and re-entry. The
+journey injects a terminal private-save rejection on disposable MariaDB/MySQL,
+verifies the actor and contents remain live, then removes the fault and proves
+retry/re-entry. After the fault is removed, it requires automatic persistence
+before any further save or exit. The native fixture also holds an older write in
+flight and verifies that only the newest retained capture is flushed, without
+reading later unsaved live changes; refusal, predecessor failure and exceptions
+retain retry data. The journey catches a movement visibility pass ignoring a veto.
+`test_private_chest_lifecycle.py` carries the 25 access/role/backend and durable
+legacy-upgrade cases from the consolidated #502/#503 stack.
+
+
+## Combat callbacks and terminal locker departure (#430)
+
+`python3 tests/async/test_combat_edge_cases_runtime.py` runs the production combat
+handlers and forced movement under ASan/UBSan. Delayed snake bites recheck the
+selected target and combat permission before damage or poison, without another
+guard selection or innate charge. Controls cover safe-room and permission changes,
+target departure/death/removal, attacker removal, and a successful guarded bite.
+
+`python3 tests/async/test_char_from_room_callbacks.py` exercises production room
+departure, locker leave, extraction admission, and item cleanup under ASan/UBSan.
+Busy item movement, a missing locker character, and failed snapshot preparation
+retain the occupant, inventory, group, events, and locker contents. Retrying can
+finish through the writer or its existing deferred-save path; saved inventory is
+retired and unsaved drops remain outside the released locker. Persistence capture
+and writer admission are controlled boundaries, not a live database fault test.
+`test_locker_leave_during_save.py` separately verifies that an older in-flight save
+cannot retire the locker character before the newer terminal contents are written.
+
+## Legacy object trap restoration (#368)
+
+`python3 tests/async/test_legacy_trap_editor.py` compiles and executes the actual area
+editor trap formatter with ASan/UBSan for all 4096 flag combinations. It checks that
+the editor's flag indexes and constants match runtime N/E/S/W/U/D bits, verifies exact
+east/west/OPEN displays, and catches the former OPEN separator out-of-bounds read.
+It does not establish runtime support for effects 9–16 or the authored content repairs.
+
+`python3 tests/async/test_legacy_trap_restore.py` executes the binary writer and both
+binary restoration paths, legacy SQL extra-row loading, and reward JSON snapshots with
+the real shared normalizer. Its independent 61-row golden manifest covers retired traps,
+partial/spent/unlimited charges, custom mask/type/level fields, open container state and
+repeated load/save cycles under ASan/UBSan. Stock grouping and binary override detection
+must compare all four trap fields. `test_player_load_items.py` and
+`test_world_recovery_pipeline.py` also execute matching repairs through their complete
+materializers after the final stored-field application. These restoration fixtures do not
+establish spell effects, live database journeys, generated-world boot or deployment; the
+separate checks below cover runtime acceptance.
+
+`python3 tests/async/test_legacy_trap_effects.py` executes the real trap dispatcher,
+dispel/wither/harm/poison/minor-paralysis spells, Stun, and retained chest/tower procedures
+with controlled saves and RNG. ASan/UBSan checks include duration boundaries, native
+defenses, duplicate control rejection, ROOM filtering, all seven creature profiles,
+whole-batch failure/cap handling, deferred gate memory for PCs/pets, and extraction during
+ROOM effects. Atomic builder edits, one-activation glyph visitation, and all six encoded
+directions versus diagonal/control-bit overlap are also checked. The real scheduler runs
+Heart Toxin after temporary-caster extraction and the mundane NPC prefix through memory
+handling for PC/pet gate targets, safe rooms, missing targets and attacker extraction.
+The fixture controls lower damage, allocation, placement, character-link storage and
+unrelated NPC services; loaded journeys exercise those actual server owners.
+
+`python3 tests/async/test_put_trap_lifecycle.py` executes real single/bulk put paths.
+Invalid capacity/permission checks preserve charges. An armed restored trap rejects the
+item before acknowledgement or transfer, and extraction of the actor, item, container
+or a later bulk candidate cannot publish a rejected delivery. Earlier successful items
+still reach their destination save. Legacy 0–8 puts and destination-container traps are
+not newly activated by this hook.
+
+`python3 tests/async/test_legacy_trap_content.py --generated areas/world.obj` compares
+AREA-selected authored inputs and an explicitly regenerated aggregate against the
+independent 61-row golden manifest, seven profiles and four first-open container flags.
+Run `make world` first; omitting `--generated` checks authored inputs only.
+
+`python3 tests/async/test_legacy_trap_journey.py "$PWD/bin/issue368-flatfile/server/dms_new"
+flatfile` and `tests/async/with_disposable_mariadb.sh python3
+tests/async/test_legacy_trap_journey.py "$PWD/bin/server/dms_new" mariadb` use the full
+generated world with ordinary corpse/shopkeeper/floor restoration. They exercise real
+commands, loaded profiles, an unrelated invalid definition, remaining/spent budgets and
+open state across save/restart. MariaDB uses a private Redis world snapshot cache; the
+flat-file journey uses existing saved-container storage for floor records because loose
+Redis snapshots require a SQL season epoch. Synthetic authorities/listeners are isolated;
+the test never sources `.env`. Evidence is retained under ignored `bin/issue368-evidence/`.
+Keep `test_corpse_trap_restart_journey.py` as the separate lethal legacy-effect control.
+
+## Kjelgar crystal harp recipe
+
+Kjelgar (mobile 47124) accepts five moonstone crystals (400094), two gnomish
+shopkeeper tokens (55033), and 100 platinum for the Vokstron harp (47096).
+The recipe previously required five copies of nonexistent object 400941.
+`python3 tests/async/test_kjelgar_crystal_quest.py` compiles the authored vehicle
+quests with the real area compiler in a temporary directory, resolves the named
+ingredients and reward from object definitions, and checks their quantities and
+the coin cost. It fails on the old recipe.
+
+`python3 tests/async/run_kjelgar_quest_journey.py --binary
+bin/server/dms_kjelgar_flat --output bin/analysis/kjelgar-turn-in.json` runs the
+real server with private world/player state and loopback listeners. It copies the
+authored captain, quest, ingredient and harp definitions into the fixture. A mortal
+pays 100 platinum and hands over the items with ordinary `give` commands.
+Incomplete turn-ins grant no harp; the full turn-in grants exactly
+one harp, which survives a save, server restart and reconnect. The same journey
+with `--baseline` reinstates 400941 only in its temporary quest file and proves
+the original recipe grants no harp despite receiving every advertised ingredient.
+
+## Account email registry lookup
+
+With optional `REQUIRE_EMAIL_VERIFICATION` enabled, `is_email_taken` previously
+used `fscanf(...) != 0`: EOF is nonzero, so empty/nonmatching registries could loop
+forever; matching returns leaked the FILE. A baseline call against an owned empty
+registry exceeded its one-second process bound. The lookup now uses a scoped input
+stream, preserves whitespace-token/exact-case matching, terminates at EOF and fails
+closed on open/read errors. Default-disabled behavior still touches no registry.
+`python3 tests/async/test_account_email_registry.py` executes the actual function
+under ASan/UBSan in both configurations. It checks empty/nonmatching/matching input,
+whitespace/long tokens, missing/directory read failure and 2,000 repeated lookups
+with unchanged descriptor count. It uses private synthetic files and no mail send.
+
+## Sealed schema inventory consumers
+
+The lifecycle archive module and schema tests consume `default_schema_files()` from
+the validator rather than its removed `DEFAULT_SCHEMA_FILES` export. The archive
+keeps its own resolved tuple for existing default arguments; it contains the sealed
+bootstrap/migration sequence. The old import raised AttributeError and also blocked
+erasure/export. Archive execution, erasure/export and telemetry-rollup schema tests
+plus all three read-only CLI help paths cover the repaired consumers.
+
+## Pwipe SQL/filesystem handoff
+
+`python3 tests/async/test_cycle_pwipe_status.py` executes the real filesystem
+script in synthetic trees: read-only preflight, preserve accounts/config/backups,
+repeat cleanup, nested links, top-level/dangling links, wrong target types and
+permission denial. SQL/Redis/reward completion must leave startup fenced until
+filesystem cleanup and activation of the same epoch. Exit 55 is cleanup-ready;
+58 is an incomplete reset and cannot authorize deletion. Neither restarts in the
+production service policy.
+
+`test_maintenance_scheduler.py` now reproduces old captured-request replay after
+successful quiesce/drain through the actual native scheduler. Before the fix, the
+new pwipe assertion failed because its checkpoint remained live after cleanup.
+The actual wiper must archive default, external/custom and wipe-target checkpoints
+and `.tmp` byte-exact with private permissions, then actual scheduler init must
+have no restored work/cursor/completion. Ordinary same-season retry/version-2/3/4
+recovery remains covered. The filesystem suite additionally refuses unknown files,
+symlinks/parent aliases, wrong types and denied access before deletion, and proves
+partial main/temporary archive retry without lost evidence. The real SQL/launcher
+matrix archives these inputs before activation and preserves a fresh checkpoint
+on duplicate completion and activation-ACK retry. No checkpoint format change or
+new epoch column is needed because the automatic startup input is isolated.
+
+`python3 tests/async/test_pwipe_mail.py` compiles the actual native mail producer,
+boot scanner, block-chain reader, name matcher and memory pool with controlled
+allocation bookkeeping/network boundaries. Separate processes prove a valid old
+multi-block message can be read by name before cleanup. The previous wiper leaves
+that input live (recorded failing baseline). Current, legacy and dual-spool layouts
+must pass read-only preflight, archive each exact byte privately, and boot without
+old mail for the same name; fresh mail round-trips normally and archived bytes stay
+unchanged. The filesystem suite adds wrong-type/symlink/parent-alias/access refusal
+and partial preferred/fallback archival retry. The native SQL/launcher matrix
+archives both paths before activation and keeps fresh mail after duplicate or
+ambiguous activation acknowledgment. This qualifies input isolation and actual
+native reader behavior; it does not simulate a postmaster NPC interaction.
+
+Recovery-path regressions additionally refuse parents nested below a cleared store
+before cleanup can remove them and make resume impossible. Direct target-root paths
+remain supported. Unprivileged mode-0600/0000 checkpoint parents and inaccessible
+higher ancestors must refuse preflight/cleanup with old files intact; missing
+searchable directories remain allowed. The actual native SQL/launcher matrix also
+checks hidden checkpoints and nested native parents before the boundary, and
+launcher refusal against a SQL-ready reset until checkpoint access is repaired.
+
+`test_cycle_pwipe_status.py` also proves native handoff archival: default/custom
+paths (including an external directory and a wipe target), publication/claim and
+consumption barriers, byte preservation/private archive, unsafe-state refusal,
+partial move/retry and idempotence. `test_copyover_evidence.py` runs the actual native
+producer/reader under ASan/UBSan: a previously readable world/descriptor image is
+archived by the real wiper; cold inspection and warm preparation then see absence,
+while archived bytes remain exact. Ordinary pinning/format/race cases still pass.
+
+`python3 tests/async/run_pwipe_handoff_mysql.py` creates a private MariaDB via the
+existing disposable wrapper, applies the sealed migration sequence and compares
+all live tables with the lifecycle inventory. It compiles the actual native season
+functions and executes begin/ready/boot fencing against that DB, then drives the
+actual launcher's resume path with synthetic filesystem data. Cases cover missing
+SQL readiness, wrong epoch, overlapping cleanup, unsafe paths/nonexecutable artifact,
+partial cleanup, fixed retries, duplicate completion and a lost activation ACK.
+Native inputs remain live when SQL is unready, move to retained archives before
+activation, stay archived after a failed cleanup, and a new season's handoff survives
+a duplicate or lost-ACK completion retry.
+The canonical empty-store postflight now covers all 103 delete/reset tables; the
+previous 35-table subset wrongly accepted a real late account-locker row and
+published SQL-ready (recorded failing baseline). The native query wrapper inserts
+that actual row after the owning delete and before postflight. Correct behavior
+refuses readiness and launcher cleanup, retains the epoch/committed roster, then
+same-epoch SQL recovery clears the row and activates normally. The contract test
+requires exact equality with canonical reset-delete tables. Additional native
+canaries check all outpost reset fields, cap/side/deadline, nexus catalogue versus
+alignment/touch, timer values and zone catalogue/alignment. Actual before-boundary
+missing/nonexecutable wiper and denied-target cases retain exact old SQL/file values.
+
+The native matrix additionally asks the actual database to kill the caller's live
+connection, confirms further SQL fails, then executes the owning wipe function.
+It must refuse before the irreversible boundary without readiness or writer resume;
+an independent connection verifies exact old epoch, roster, account, bank and item
+payload values, and the filesystem canary remains unchanged. This is actual server-
+side connection loss, not a mocked query result or unavailable-connect-only probe.
+
+The same matrix also pauses the unmodified wiper's actual `find` after clearing
+one old store and archiving native handoff evidence. It SIGKILLs both launcher
+parents while leaving the real wipe child alive: the child's inherited fd 9 must
+still name the lock inode and a second actual launcher must refuse overlap. After
+the orphan finishes, SQL remains resetting because its activator was killed. A
+second case SIGKILLs the entire owned process group at that partial-cleanup barrier.
+Both cases must resume the same epoch, preserve backups and leave fresh files
+untouched on duplicate completion. PID descriptors bound child-exit observation;
+only private fixture processes are signaled.
+Add `--server /absolute/path/to/bin/server/dms_new` to execute the native SQL-only
+recovery entry point against the same sealed private DB and synthetic data root.
+It proves wrong/active/legacy refusal, concurrent runtime exclusion, SIGKILL during
+roster commit, same-epoch retry and launcher completion, loaded lifecycle policy,
+post-roster Redis selection, and reward-commit/readiness failure without duplicate
+PIDs or reward consumption. Existing `TEST_DB_*` variables can select an owned
+MySQL 8 fixture instead of creating MariaDB. No real `.env`, player data or external
+notifications are used. This does not replace the full command/countdown, writer
+drain, gameplay, matched restore or external integration journeys in #264.
+
+`python3 tests/async/run_pwipe_runtime_journey.py --redis --restore /absolute/path/to/dms_new`
+extends the real command/reset/fresh-gameplay journey with a matched recovery drill.
+It stops all fixture game writers, captures a sealed SQL/journal backup through the
+actual CLI and pairs it with hashed filesystem and authenticated Redis RDB snapshots.
+After the actual wipe and new-season gameplay, it imports that generation into a
+new private Unix-socket MariaDB and restores filesystem/Redis into separate candidates.
+It checks original epoch/PID/bank/reward/item state, real authenticated world recovery,
+account login/save/reconnect/second boot, retained hashes and unchanged new-season
+source authorities. It uses existing backup/import/reconciliation/tombstone/native
+receipt verification; it adds no production promotion path. The source/code assets
+and native binary are pinned to the reported revision/hash. This option requires
+`--redis` and the direct launcher; existing system-service evidence is reused. Its
+private databases/Redis/temporary trees are removed afterward.
+
+`python3 tests/async/run_pwipe_runtime_journey.py --redis --redis-reenable /absolute/path/to/dms_new`
+qualifies Redis off during the actual wipe and back on after activation. It first
+accepts an authenticated epoch-1 world generation and retrieves/re-drops a real floor
+item. The stopped old Redis payload is hashed and left in place while a new process
+runs the real countdown/reset with Redis disabled. Epoch-2 re-enable must ignore
+that floor marker and old namespace, publish new presence, and pass fresh combat/
+save/reconnect/second-boot recovery. Old payload bytes and unrelated keys remain.
+This option uses the direct launcher and excludes restore/flat-file modes.
+
+`python3 tests/async/test_shutdown_broadcast.py` executes the actual command,
+countdown, broadcast and shutdown-info writer with an isolated descriptor/event
+fixture and fake wall clock. It covers invalid/underlevel/unsupported requests,
+strict confirmation and bounded delay parsing without cancelling an old request,
+replacement/cancellation, late deadlines, duplicate ticks and each pwipe failure
+outcome, menu/link/permission loss at the final tick, explicit grants/revocation, switched issuer identity,
+automatic reboot and launcher signals. SQL wipe is a controlled call counter;
+the real SQL/launcher journey covers its persistence behavior. The actual runtime
+journey also exercises granted staff access/revocation, underlevel pwipe denial,
+malformed/repeated requests and both menu and
+network disconnect cancellation before its valid full wipe. Staff level 60 with an explicit grant is
+seeded and must be retired while the exact level-62 issuer is recreated.
+
+`python3 tests/async/test_pwipe_quiescence.py` executes the production writer
+preparation with the real shared writer and controlled peripheral drains. Held
+jobs and read-callback follow-up writes finish before admission closes; late jobs
+are refused, and timeouts/new terminal failures abort and resume normal persistence.
+`test_player_save_worker.py` also proves that a quiesce timeout preserves queued
+owners and their order. `run_critical_command_schema_mysql.sh` executes actual
+outbox pause/drain/resume against its private database, including a record committed
+while paused. These do not replace the full server/reset/reconnect journey.
+
+`python3 tests/async/run_pwipe_writer_mysql.py` extends that proof through the
+actual SQL callback queue, player snapshot and SQL-work repositories, connection
+pool and shared writer on a canonically migrated disposable database. The owning
+preparation is extracted directly from `comm.c`. A held SQL read has a player save
+and SQL write queued behind it; success must commit both, then two dependent read
+callbacks and their final write before closing admission. Independent SQL observes
+no early commit, durable player revision/language payload and the final counter;
+late SQL/player captures are refused and deleted fixture rows stay absent. Timeout
+retains accepted jobs until release; a real missing-column error rolls back an
+otherwise successful update and refuses preparation. Both refusal paths resume
+normal accepted player/SQL saves. Peripheral drains are controlled empty stages,
+and connection configuration uses the owned loopback target; this does not replace
+their subsystem, runtime exclusion or full command journeys. The MySQL variant is
+`TEST_DB_IMAGE=mysql:8.0 tests/async/with_disposable_mariadb.sh python3 tests/async/run_pwipe_writer_mysql.py`.
+Both MariaDB 10.11.19 and MySQL 8.0.46 pass success/timeout/error.
+
+The native journey also verifies the real loader sees a positive save timestamp
+for every recreated Overlord, initialized with birth time. A failing baseline loaded
+zero. Later cases recreate active level-62 bodies with missing, stale-name and
+wrong-account mappings through durable ownership, repair canonical new-PID links,
+exclude explicit deletion tombstones/unregistered owners, and keep the same roster
+and clocks on recovery. No old assets or progression are copied.
+
+The same native SQL journey now seeds levels 56, 61, 62 and 63. Only the exact
+62 is recreated, under its account/name with a higher PID, clean currency and
+progression, and new opening baselines. Retired names permit new characters. A
+failure after body insertion rolls back the entire roster and keeps the reset
+fenced; a missing recreation column is refused before the boundary. The bank cases
+reset every side while retaining credentials, donations and historical baselines.
+Real staff login and cold replay remain part of the full #264 journey.
+
+`python3 tests/async/test_locker_receipt_recovery.py` additionally runs eight
+cross-reset identity cases (four receipt states, wallet/bank model). The production
+service/receipt codec and actual disk receipts retain old bytes while a higher PID
+on the same account/side gets no old display or payment submission. A deliberately
+copied old receipt under the new PID's filename fails encoded-PID validation; after
+removing that fixture alias, fresh identification succeeds. Currency scheduling and
+saved purses are modeled, as in the existing crash matrix; actual SQL bank reset,
+monotonic new PIDs and new-season gameplay use the recorded full/native journeys.
+The existing load-pipeline/mode executables hold SQL-only provider selection and
+mixed-mode refusal. Filesystem preservation canaries now use actual registration,
+ban and invitation/name-policy paths in addition to account/config/archive sentinels.
+
+`test_zone_story_quest_feature.py` now reloads a retained history blob across a new
+season and higher PID with a reused display name. Both identity dimensions isolate
+progress/daily state; fresh assignment/completion/renown works, old completion replay
+is idempotent, and both historical/new partitions survive another reload. The old
+completion has explicit known-solo telemetry so the existing evidence policy admits
+a daily candidate; unknown-party evidence remains rejected by the original cases.
+The runtime's `current_season_id()` binds SQL-primary calls to `sql_season_epoch()`.
+
+`python3 tests/async/run_pwipe_runtime_journey.py /absolute/mariadb/server` runs the
+real command and unaccelerated five-minute wall-clock deadline through the copied
+launcher in a private MariaDB/world/filesystem. It checks mortal rejection, invalid
+confirmation, cancellation, cleanup, preserved account and recreated Overlord login,
+then fresh mortal creation/combat/loot/save/reconnect and another boot. MariaDB
+migration adopt/run uses the supported runner; only tracked scripts/migrations and
+synthetic state are copied. The report records wall and monotonic durations (which
+drift on some hosts), revision/diff and binary hash under `bin/analysis`. Redis is
+disabled and the mini world is used: optional systems, Redis-on cutover and installed
+system-service qualification remain separate #264 gates. The native handoff runner
+also forces the actual SIGCHLD reaper to finish preflight first and proves the SQL
+caller consumes its saved exit status rather than spuriously rejecting ECHILD.
+
+The real journey also creates exact permanent, seven-day, one-wipe and three-wipe
+grants through the staff command for a separate surviving account. It checks the
+post-wipe grant payload/lifetime and old summon cleanup, creates a new mortal on
+that account, and verifies unique new reward UIDs, exact item values, duplicate
+summon refusal, dismissal cooldown, save/reconnect and second boot. Run the same
+journey with `--discard-rewards` to boot with `pwipe.preserve=false`; all grants
+must disappear and the new character's claims must refuse, including after reboot.
+The alternate report is `bin/analysis/pwipe-runtime-mariadb-discard-rewards.json`.
+This option cannot combine with the matched-restore or flat-file rejection modes.
+
+The native handoff matrix also invokes the actual SQL player-load repository and
+item UID allocator around the real reset. An ordinary old player payload is readable
+beforehand. Custody, owner revision and opening baseline survive byte-for-value;
+afterward the loader reports the missing payload and returns no old item/pet graph,
+while the recreated Overlord has no inherited graph/revision. Player payload row IDs
+and item UIDs keep advancing, so retained baseline source IDs cannot alias a new
+payload. A real allocator lease yields a bounded, contiguous fresh range. These
+checks supplement the existing artifact, collector and cargo receipt readers;
+protected metadata alone is not a substitute for recovery-input season isolation.
+
+The native matrix wraps the real client query call only after the owning epoch
+UPDATE and hides its COMMIT result once before application and once after a real
+commit. It requires the SQL caller's crossed-boundary flag, no writer-resume call
+and no filesystem-ready flag, while old rows/payload/files/grants remain intact.
+The committed outcome rejects actual direct server startup at the explicit season
+fence and makes the real launcher refuse cleanup. Actual SQL-only recovery then
+finishes the same epoch, decrements an eligible grant once, clears old summons and
+payload, and supports readiness/activation retries without repeating the roster,
+rewards or deleting fresh files. Raw-server fatal status 1 is distinct from the
+maintained launcher's recovery status 58. This complements reward-COMMIT and
+activation lost-ACK cases; no proxy or production fault hook is introduced.
+
+The handoff runner now executes the real account reward hook against the private DB.
+Permanent/unexpired grants survive, finite grants decrement once and exhausted/expired
+grants disappear under the configured policy. It checks wrong/zero epoch, active or
+missing reset boundary, same-reset retry after 90 days, distinct resets inside/outside
+28 days, summon cleanup, rollback, lost COMMIT acknowledgment and preserve=false.
+The test clock changes only that native fixture connection. No new schema or ledger
+is used: the policy timestamp records the fixed reset boundary atomically with grants.
+
+The Divine Boon model test covers atomic season retirement, retained IDs/history/
+pause configuration, revision overflow, idempotent retry and subsequent ID allocation.
+The native SQL journey seeds live EXP/cargo objectives, rejects a corrupt snapshot
+before epoch advance, and verifies empty objectives/repeat preferences after actual
+pwipe. A database-triggered update failure keeps the reset fenced; a repaired retry
+retires the same stored state once. It uses the actual codec/repository CAS, with no
+snapshot deletion or new season schema.
+
+`python3 tests/async/test_telemetry_runtime_integration.py --posthog` also
+rehearses telemetry season cutover with the actual worker, protected ledger,
+native `telemetry-state` CLI and loopback HTTPS receiver. It first refuses rollover
+while the old sender owns the directory, then drains/reaps it, preserves the old
+frame/history, rolls the season and proves a retry changes no bytes. Stale-season
+startup refuses; actual environment configuration starts the new scope with distinct
+identities for the same subject but no fresh same-day HTTP quota. The existing
+outage harness proves next-UTC-day allowance and all interrupted-publication cases.
+Both compiled backend variants use synthetic state and local receivers only.
+The shutdown source contract includes SQL-ready 55 versus fenced 58 behavior.
+
+`python3 tests/async/run_pwipe_runtime_journey.py --redis --website /absolute/companion/checkout /absolute/production/dms_new`
+extends the same real reset with the normal companion backend listener. Its owned
+wrapper automatically selects the jointly supported MySQL 8 image; ordinary MUD
+journeys retain the MariaDB 10.11 default. The target
+must have its built backend/probe/dependencies and no root/backend runtime env
+files. It uses the parent-owned SQL/Redis/world and source-owned website schema.
+Old HTTP/session/WHO/rank/cache/live-event checks precede graceful WS close and
+publisher drain. New sessions reconnect after activation while stale general cache
+entries survive; retired staff are refused. A queued synthetic webhook publishes
+on the new `nchat` epoch and the actual game client receives it; duplicate callbacks
+must not add credit. Reports use `pwipe-runtime-mariadb-redis-website.json` with both
+repository revisions/diffs and binary hash. No cloud provider, real data/settings,
+production service or frontend release is used. Run the companion's separate
+PrivateTmp keeper and mount/alias native cases for the pre-stop preservation gate.
+
+Run the direct-launcher qualifier as an ordinary user, never through sudo.
+The root-required systemd mode has been removed. Historical systemd exit-55/58
+results cover the unchanged service restart policy; this qualifier does not
+create units or install privileged helpers. The supported wipe procedure uses
+supervised downtime and explicit service stop/start.
+
+The roster checkpoint migration is guarded and re-runnable on both database
+families. Legacy NULL values and committed markers survive migration replay;
+malformed shape/value are refused. The native SQL journey proves begin arms 0,
+roster failure rolls back its marker with the bodies, successful recreation commits
+1, SQL-ready refuses an uncommitted checkpoint, and post-roster Redis failure retains
+1 while fenced. Filesystem resume remains compatible with legacy SQL-ready NULL.
+
+The roster checkpoint migration is guarded and re-runnable on both database
+families. Legacy NULL values and committed markers survive migration replay;
+malformed shape/value are refused. The native SQL journey proves begin arms 0,
+roster failure rolls back its marker with the bodies, successful recreation commits
+1, SQL-ready refuses an uncommitted checkpoint, and post-roster Redis failure retains
+1 while fenced. Filesystem resume remains compatible with legacy SQL-ready NULL.
+
+The native SQL journey also exercises the actual Redis maintenance provider against
+a private process. An unavailable endpoint aborts before the boundary with unchanged
+SQL/Redis state. A SCAN-denying ACL causes post-boundary invalidation to fail and
+keeps SQL fenced. Repaired repeated cleanup preserves unrelated keys and never
+activates incomplete SQL. The command/worker path is qualified separately by the
+real runtime journey; the native harness holds those peripheral callbacks controlled.
+
+Run the real unsupported flat-file path with:
+`python3 tests/async/run_pwipe_runtime_journey.py --flatfile-rejection /absolute/path/to/flatfile/dms_new`.
+It reuses the private world/account/Overlord helpers and verifies immediate rejection,
+unchanged player snapshot and legacy files, preservation of a scheduled reboot,
+then normal save/logout/reconnect/second boot. Evidence is written under
+`bin/analysis/pwipe-runtime-flatfile.json`; no DB or checkout environment is used.
+
+The native reset journey seeds auction custody plus nested siege items with affects
+and descriptions. Actual startup population readers see those bodies before reset
+and none afterward. Missing siege child schema aborts before epoch advance, and a
+triggered deletion failure leaves the reset fenced without SQL-ready publication.
+Canonical manifest and dependency-order checks cover the four stores.
+
+Cargo replay coverage prepares two real trades: one commits before wipe and the
+other remains unapplied. The actual reset preserves the first receipt and historical
+book/generation, deletes ships/cargo/markets and retires the player. Receipt replay
+is inert; the unapplied command returns stale from both the SQL executor and normal
+critical repository. The same checks pass after a same-named fresh mortal and a
+higher-ID ship are created, without changing either wallet or restoring after-images.
+This uses the existing policy/codec/repository; no source behavior change is needed.
+
+Artifact reset coverage seeds owned, retired and unresolved identities plus real
+historical receipts and a pending delivery. The actual SQL reset clears current
+ownership/timers/souls while retaining UID rejection, history and revisions. The
+existing artifact snapshot executable then loads that DB, scans population, creates
+a fresh body, saves and reloads it; old delivery and receipt replay do not restore
+old timers or bindings. A failed domain update leaves the reset fenced. Baselines
+and ledgers remain byte-for-byte unchanged.
+
+The native SQL journey now seeds collector candidates, collected, available and
+paused stock and prepares a real purchase before reset. Wipe closes them through
+the real critical executor, destroys held custody, preserves payload/audit/IDs and
+loads an empty new-season catalog. The old prepared buy returns stale without credit
+or materialization; a new character's candidate uses the next listing ID. A corrupt
+record and a missing delegated ledger column abort before epoch advance. A triggered
+mid-batch ledger failure leaves the reset fenced; repaired retries close remaining
+listings without duplicate receipts. The existing SQL collector suite also passes.
+
+## Contained-being learning feedback
+
+A failed recipe-learning roll reports the failure to the eligible summoner in
+both solo and group kills. A group member's failure does not suppress another
+member's successful attempt. Containment expiry announces that the target's
+essence can no longer be learned; its existing duration remains 25 seconds.
+
+`python3 tests/async/test_world_quest_xp_feedback.py` executes the production
+kill-experience paths and spell handler under ASan/UBSan on both persistence
+build variants. It enumerates every roll for representative levels, the strict
+success boundary, zero and guaranteed success, and the Charisma cap. It also
+covers per-recipient group feedback, inactive marks, existing eligibility
+rejection, and expiry message registration. Target eligibility and recipe
+persistence are stubbed; this is not a live-player or network journey.
+
+## NPC quest staff inspection
+
+`qview <mobile-vnum>` displays authored dialogue, all completion requirements,
+rewards, and disappearance messages. `qref <object-vnum>` identifies every
+completion that gives or receives that exact object; `qinfo` expands those same
+matches into full exchanges. `qlist` (`hlqlist`) lists givers in the current
+zone's prototype partition or an explicit inclusive VNUM range. All require
+IMMORTAL and read indexes without instantiating mobiles or objects.
+
+`python3 tests/async/test_quest_staff_commands.py` runs the production handlers
+and real prototype/quest lookups under ASan/UBSan. It covers both roles in one
+completion, later completions, repeated requirements, every goal type, broken
+references, invalid/overflowing input, current-zone boundaries, exact/reversed
+ranges, NPC exclusion, empty tables, long reports, and unchanged indexes. Entity
+loaders abort if called. Coin amounts retain their raw copper values, including
+zero and integer limits, and EXP values do not invent dynamic reward semantics.
+Large reports with paging disabled request paging; reports beyond the pager's
+capacity return an explicit error instead of disappearing behind its generic warning.
+
+`python3 tests/async/run_quest_staff_journey.py --binary
+bin/server/dms_quest_staff_flat --output bin/analysis/quest-staff-journey.json`
+boots a disposable flat-file server and drives Telnet commands as a mortal and
+then staff. It checks actual dispatch restrictions, all five help/wizhelp entries,
+multi-page dialogue, compact references versus full exchanges, and bad input.
+It uses synthetic state and a private world; no production deployment or
+database help import is performed. The normal MariaDB build is checked separately.
+
 ## Bounded builder inspection (#231)
 
 `rlist`, `mlist`, and `olist` default to the standing zone, use the public zone
@@ -48,11 +581,13 @@ equipment recovery below the maximum still drains normally. The native sanitizer
 regression covers both cases at recovery dials 1, 5 and 10.
 
 The same native test executes real `affect_update()`, `StartRegen()`, policy and
-callbacks after combat and sunlight suppression. It covers Human/Pillithid/Illithid
+callbacks after sunlight suppression while combat remains active. It covers Human/Pillithid/Illithid
 PSP users, including racial warriors and sorcerers, missing/full/over-cap PSP,
 negative recovery at full, fresh elapsed credit and duplicate suppression. An
 ordinary human warrior remains excluded. The full-world combat case uses a
-Pillithid warrior to verify the periodic restart beyond psionic classes.
+Pillithid warrior to verify ordinary recovery through combat entry and exit beyond
+psionic classes, then verifies fresh in-combat casting restarts for Psionicist and
+MindFlayer from full reserves.
 Its disposable runtime creates the launcher's `logs/log/.since` marker so log
 retention does not archive the callback trace as an unknown-age log set.
 
@@ -61,15 +596,16 @@ functions, PSP callback, `StartRegen()`, difficulty module and `use_spell()` und
 ASan/UBSan. It checks the POW+INT base and truncation, recovery dials 1/5/10,
 PC/NPC behavior, signed equipment modifiers, feeblemind, sunlight exemptions,
 all six statuses crossed with all four postures and meditation, combat entry with
-fractional credit, delayed callbacks, full/zero/over-cap bounds, one completion
+preserved fractional credit, delayed callbacks, full/zero/over-cap bounds, one completion
 message, psionicist/mindflayer casting restarts, duplicate starts and NPC cadence.
 One- and four-pulse recovery agrees with the rate within one point of float credit.
 
 The fixture queue and ordinary engine dependencies are stubs. Meditation flags and
 combat state are seeded. The existing `test_nevent_scheduler_runtime.py` now also
 executes the real PSP callback and admission on the production queue, with a controlled
-rate: duplicate suppression, NPC first/recurring cadence, delayed events, combat
-termination, fresh restart payload and full termination pass under ASan/UBSan.
+rate: duplicate suppression, NPC first/recurring cadence, delayed events, continued
+combat recovery, incapacitation termination, fresh restart payload during combat and
+full termination pass under ASan/UBSan.
 Every queued callback asserts its elapsed interval: one/four pulses for PCs and
 four initially then five for NPCs. Four-pulse delays use the previous callback tick,
 so advancing the heartbeat cannot introduce a three- or five-pulse interval.
@@ -86,6 +622,9 @@ rest command, rate and callback are actual source functions.
 `run_psp_regen_journey.py --binary bin/server/dms_issue57_flatfile --output
 bin/analysis/issue57-plan/journey.json` drives a fresh flat-file full-world server via
 Telnet; run `make world` first to generate the authored world in a clean checkout.
+As of 2026-10-28, the journey expects ordinary combat recovery, including fresh casting
+restarts, and asserts an active training-dummy opponent throughout its combat samples.
+The following measurements describe the earlier combat-suppression policy.
 Against production sources `0b245add9223f12bd483cd451a15d805a37733a6`,
 current POW=INT=100, no equipment/boons/rested bonus, dials 5/1/10 display 80/160/40
 and gain 33/65/17 PSP over 123 traced callbacks each (staff snapshots bound elapsed
@@ -621,6 +1160,17 @@ snapshots, today exclusion and UTC/Sydney boundaries. The temporary user-unit
 journey `run_login_stats_service.py` checks ordering, first-run directory creation
 and recovery after the first query fails. No test changes the live deployment.
 
+`test_last_command.py` links the production staff handler for argument validation,
+staff/fog/NPC access, deferred output, admission failure, and the flat-file response.
+Its `--mysql` leg runs the generated SQL against disposable tables with strict
+grouping enabled: exact time boundaries, non-UTC connection settings, repeated
+logins, tied timestamps, account snapshots after transfers, missing characters,
+unknown accounts, and every page of normal and unique results. The real-socket
+`run_last_command_journey.py` verifies mortal denial, Avatar command dispatch,
+persisted login events, offline character lookup, filters, paging and imported help.
+Both database legs are registered in `make test-db`; neither uses the checkout's
+environment or player data.
+
 ## Monster shrug and Rrakkma
 
 The seven restored monster shrug values leave playable vampires at 40 through a
@@ -753,7 +1303,9 @@ covers the real naming function, not the live reveal-true-name spell command.
 belongs to the zone with the highest first vnum (zone number × 100) at or below its giver's
 vnum, which is the area its giver comes from: an area's mobs run past its first hundred
 vnums and past its top room. `zone_for_giver_vnum()` and `scripts/zone_story_quest_catalog.py`
-use the same rule, so the checked-in catalog snapshot matches the runtime catalog. The
+use the same zone rule. Snapshot freshness is separately checked against the
+current area sources using the comparison in
+[the catalog reference](../reference/ZONE_STORY_QUEST_CATALOG.md). The
 heavens givers (zone 0) stay on zone 1, because the catalog needs a positive zone. Zones
 with equal counts are ordered by the name a player reads: color codes are skipped as
 `strip_ansi()` skips them, and case is ignored. `achievements zone <area>` finds an area by
@@ -770,7 +1322,7 @@ The production harness maps givers past a zone's first hundred vnums and past it
 The catalog test checks a Winterhaven giver and a Tower of Darkness giver in the real world
 files. The feature harness ties seven zones with real colored names. The lookup test runs
 the command's lookup with the real `is_abbrev()`, `strip_ansi()` and `skip_spaces()` on the
-text `one_argument()` hands it. No test completes a quest on a running server.
+text `one_argument()` hands it. These four tests do not complete a quest on a running server.
 
 ## Addresses kept 30 days after their last use
 
@@ -1418,6 +1970,10 @@ the switch on: each save of the looted banana wrote an `unowned_object` line, an
 the boot the ghost is gone, the rows whose items the save holds stay, and the login counts
 nothing. The capture test runs the production save with the switch off (three saves, no
 line) and on (one line per save).
+A dropped player tree whose cache still names the former player is captured without
+asserting room authority. The pipeline codec regression proves its payload survives;
+recovery still filters a UID held by saved player/economic/terminal state, and capture
+keeps terminal/non-player/vnum conflicts closed.
 
 Not covered: a stale container in the flat-file catalog whose contents a payload still
 holds (no transfer path produces that state there; the rule is held by the MariaDB
@@ -1437,6 +1993,52 @@ python3 tests/async/test_websocket_runtime.py
 
 The harness runs the real `websocket_parse_handshake()` over a socket pair. No test sends
 these through the tunnel.
+
+## WebSocket blank input advances the pager
+
+An authenticated playing character's `game` command accepts both `data: ""` and
+`data: {"command": ""}` as one intentional input line. The former nonempty-string
+check dropped those requests before they reached the pager (Duris #443).
+
+```sh
+python3 tests/async/test_pager_contract.py
+SANITIZE=1 python3 tests/async/test_pager_contract.py
+```
+
+The native harness compiles the production WebSocket dispatcher, game handler,
+input queue, session routing and pager bodies with real descriptor types and cJSON.
+It checks both blank payload forms, separate FIFO continuations through the last
+page, pager-state release, page numbers, q/r/b, ordinary commands, malformed or
+missing payloads, non-playing/missing-character rejection and pending-authentication
+guards. World gates, non-game WebSocket handlers, command execution, output delivery
+and telemetry are controlled boundaries. The regression fails before the fix when
+the first blank request produces no queue entry. Sanitizer mode checks address and
+undefined behavior errors with leak detection enabled.
+
+The client also needs [DurisWeb #120](https://github.com/LuminariMUD/DurisWeb/pull/120)
+for [DurisWeb #119](https://github.com/LuminariMUD/DurisWeb/issues/119): it must send a
+blank continuation instead of repeating the selected help command or dropping an
+empty submission.
+
+Paired local browser verification on 2026-10-28 used Duris source revision
+`ff3a6ff19872c2c3513ca61e537b034436f18198` and DurisWeb revision
+`7bae8f35d9196a3f2785d10d341d640d15e0ad48`. Installed Chromium at 1280x900 opened the
+actual `/play` frontend, authenticated a synthetic account and entered a disposable
+minimal-world MUD backed by an isolated migrated MariaDB. Website HTTP shell/config
+and map responses were fixtures; MUD authentication, WebSocket transport, command
+input, paging and rendered output were real.
+
+With `toggle screensize 12` and paging enabled, `help new-combat` traversed seven
+pages and `score` traversed four, alternating empty Enter and empty Send through
+completion. Every submission sent exactly one game frame, with ordered page numbers
+and no duplicate pages. Numeric selection, r, b and q also worked, and `look` worked
+after each completed/cancelled report. Page identity, rendering, absence of framework
+overlays and screenshots were checked. The existing Vue Router `next()` deprecation
+warning was recorded; there were no other console errors or warnings.
+
+These are local test revisions, not deployed revisions. No shared MUD or production
+service was changed. Deployment and live acceptance remain separate release work;
+repeat both paged-output journeys against the actual paired deployed revisions.
 
 ## Player save decoding refuses what it cannot read
 
@@ -1487,8 +2089,8 @@ python3 tests/async/test_world_quest_xp_feedback.py
 
 The test compiles `gain_exp()`, `display_gain()`, `quest_kill()` and `quest_full_reward()`
 from the source on both backends and checks the line for kills, turn-ins, every cap and
-exit that credits nothing, and an immortal, whose staff log it reads. No test turns in a
-quest on a running server.
+exit that credits nothing, and an immortal, whose staff log it reads. This focused
+test does not turn in a quest on a running server; separate world-quest journeys do.
 
 ## Random drop message for a pet's kill
 
@@ -1789,3 +2391,31 @@ in `bin/analysis/integrated/observer-probe.log` and `connection-fixed.log`.
 The controlled scheduling probe supplies the regression's before/after evidence;
 a normal timely server can pass the old fixture, so its green result alone does
 not establish correct observer cleanup.
+
+## Gith Monk creation eligibility
+
+Normal character creation permits Githzerai Monks with fixed good alignment and
+Githyanki Monks with fixed evil alignment in both Telnet and WebSocket clients.
+The Monk starter kits and both Monk specializations were already defined for
+these races; changing creation eligibility must not broaden random NPC class
+selection. The random-mobile selector continues to skip Monk for both Gith
+races, while using the unchanged `class_table` permission for other races.
+
+`python3 tests/async/test_gith_monk_creation.py` validates the two matrix
+cells, the client entry points, specialization and kit coverage, and the help
+and documentation; it compiles the random-mobile eligibility predicate with the
+real class table and race constants under ASan/UBSan. The specialization lookup
+and actual `specialize list` command are covered by
+`python3 tests/async/test_specialization_permissions_runtime.py`; unmatched
+permissions must not read beyond the table. `python3
+tests/async/test_random_mob_theme_runtime.py` executes `create_random_mob()` for
+themes 4/5/6 with every template faction, checking bounded selection and the
+resulting race/faction while retaining the no-legal-class failure path.
+
+After a fresh flat-file build, run `python3 tests/async/test_gith_monk_journey.py
+--binary bin/gith-monk/server/dms_new`. It creates both races as normal Monks
+through real Telnet and WebSocket clients in isolated mini-world servers, then
+checks saved race/class/faction/alignment and all five equipped Monk kit items
+with stable UIDs across save/restart/relogin. It does not exercise teacher-led
+specialization or a loaded production world. Keep both help import sources in
+sync with `python3 tests/async/test_class_helpfiles_contract.py`.

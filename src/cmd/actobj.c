@@ -304,26 +304,48 @@ static void announce_corpse_bulk_get(P_char actor, bulk_get_state &state, P_obj 
 		act("$n begins pulling things from $p.", TRUE, actor, container, 0, TO_ROOM);
 }
 
-// Add coins taken from a pile to the actor's purse. A player's wallet refuses them when a
-// denomination would overflow; its revision advances only when it took them. The caller
-// takes the coins out of the pile only once this returns true.
-static bool credit_coins(P_char actor, int64_t value)
+// NPCs and characters without a persistent identity do not use the player transaction
+// facade. Check the whole vector before changing any denomination.
+static bool change_nonpersistent_coins(P_char actor, const currency_vector &delta)
 {
-	if (value <= 0)
+	if (!actor || (IS_PC(actor) && GET_PID(actor) > 0))
+		return false;
+	for (size_t index = 0; index < delta.amount.size(); ++index)
+	{
+		const int64_t after = actor->points.cash[index] + delta.amount[index];
+		if (after < 0 || after > INT_MAX)
+			return false;
+	}
+	for (size_t index = 0; index < delta.amount.size(); ++index)
+		actor->points.cash[index] += static_cast<int>(delta.amount[index]);
+	if (IS_PC(actor))
+		mark_player_dirty_components(GET_PID(actor), PLAYER_COMPONENT_STATUS);
+	gmcp_char_vitals(actor);
+	return true;
+}
+
+// Keep the exact denominations; callers remove coins from the source only after success.
+static bool credit_coins(P_char actor,
+			 const std::array<int32_t, CURRENCY_DENOMINATION_COUNT> &amount)
+{
+	currency_vector delta = {};
+	bool any = false;
+	for (size_t index = 0; index < amount.size(); ++index)
+	{
+		if (amount[index] < 0)
+			return false;
+		delta.amount[index] = amount[index];
+		any = any || amount[index];
+	}
+	if (!actor || !any)
 		return false;
 	if (!IS_PC(actor) || GET_PID(actor) <= 0)
-	{
-		if (value > INT_MAX)
-			return false;
-		ADD_MONEY(actor, static_cast<int>(value));
-		return true;
-	}
+		return change_nonpersistent_coins(actor, delta);
 	const uint64_t revision = actor->only.pc->wallet_revision;
-	return currency_transaction_submit_wallet_value(actor, value,
-							currency_reason_type::wallet_reward, 0,
-							critical_source_site::command,
-							critical_deadline_class::interactive,
-							nullptr, nullptr, 0) &&
+	return currency_transaction_submit(actor, delta, {}, currency_reason_type::wallet_reward, 0,
+					   critical_source_site::command,
+					   critical_deadline_class::interactive, nullptr, nullptr,
+					   0) &&
 	       actor->only.pc->wallet_revision != revision;
 }
 
@@ -331,23 +353,20 @@ static bool credit_coins(P_char actor, int64_t value)
 static bool take_coins(P_char actor, P_obj money, P_obj container, int showit,
 		       const coin_get_submission_options &options)
 {
-	static constexpr std::array<int64_t, CURRENCY_DENOMINATION_COUNT> values = { 1, 10, 100,
-										     1000 };
 	std::array<int32_t, CURRENCY_DENOMINATION_COUNT> got = {};
-	int64_t value = 0;
 	bool emptied = true;
 	for (size_t index = 0; index < got.size(); ++index)
 	{
 		got[index] =
 			std::min(money->value[index], std::max(options.amount_limit[index], 0));
 		emptied = emptied && got[index] == money->value[index];
-		value += got[index] * values[index];
 	}
-	if (!credit_coins(actor, value))
+	if (!locker_container_access_allowed(actor, container) || !credit_coins(actor, got))
 		return false;
 	for (size_t index = 0; index < got.size(); ++index)
 		money->value[index] -= got[index];
 	const std::string coins = coins_to_string(got[3], got[2], got[1], got[0], "&+y");
+	locker_record_movement(actor, container, NULL, false, coins.c_str());
 	if (bulk_get_state *haul = container ? corpse_bulk_get(actor, container->obj_uid) : NULL)
 		haul->haul.push_back(coins);
 	else
@@ -383,6 +402,7 @@ static bool get_can_continue(P_char actor, uint64_t runtime_id, int room, P_obj 
 	    actor->in_room != room || !IS_AWAKE(actor) || IS_IMMOBILE(actor))
 		return false;
 	return !container || (find_live_item_uid(container_uid) == container &&
+			      locker_container_access_allowed(actor, container) &&
 			      (OBJ_CARRIED_BY(container, actor) || OBJ_WORN_BY(container, actor) ||
 			       (OBJ_ROOM(container) && container->loc.room == room)));
 }
@@ -390,6 +410,7 @@ static bool get_can_continue(P_char actor, uint64_t runtime_id, int room, P_obj 
 static void publish_container_get(P_char ch, P_obj o_obj, P_obj s_obj, int showit, bool slip)
 {
 	obj_from_obj(o_obj);
+	locker_record_movement(ch, s_obj, o_obj, false);
 
 #if USE_SPACE
 	s_obj->space -= GET_OBJ_SPACE(o_obj);
@@ -448,6 +469,11 @@ void get(P_char ch, P_obj o_obj, P_obj s_obj, int showit)
 	P_obj corpse = NULL;
 	bool slip = FALSE;
 	item_get_rejected = true;
+	if (ch && s_obj && !locker_container_access_allowed(ch, s_obj))
+	{
+		send_to_char("You must open that private chest first.\r\n", ch);
+		return;
+	}
 	if (item_get_ack_publication)
 	{
 		if (s_obj && s_obj->type == ITEM_CORPSE && IS_SET(s_obj->value[1], PC_CORPSE))
@@ -567,6 +593,8 @@ void get(P_char ch, P_obj o_obj, P_obj s_obj, int showit)
 		showit = TRUE;
 
 publish_after_ack:
+	if (s_obj && !locker_container_access_allowed(ch, s_obj))
+		return;
 
 	if ((o_obj->type == ITEM_MONEY) && ((o_obj->value[0] > 0) || (o_obj->value[1] > 0) ||
 					    (o_obj->value[2] > 0) || (o_obj->value[3] > 0)))
@@ -588,7 +616,7 @@ publish_after_ack:
 			s_obj && s_obj->short_description ? s_obj->short_description : "(none)",
 			s_obj ? OBJ_VNUM(s_obj) : -1);
 
-		if (!credit_coins(ch, total_value))
+		if (!credit_coins(ch, { got_c, got_s, got_g, got_p }))
 		{
 			GETDBG_LOG(
 				"GETDBG[get-coins-empty]: ch=%s room=%d obj=%s [%d] uid=%lu total=%lld showit=%d slip=%d container=%s [%d]",
@@ -602,6 +630,8 @@ publish_after_ack:
 			send_to_char("You can't carry any of the coins.\r\n", ch);
 			return;
 		}
+		const std::string chest_coins = coins_to_string(got_p, got_g, got_s, got_c, "");
+		locker_record_movement(ch, s_obj, NULL, false, chest_coins.c_str());
 		o_obj->value[3] = o_obj->value[2] = o_obj->value[1] = o_obj->value[0] = 0;
 		if (total_value > 999999)
 		{
@@ -1078,6 +1108,12 @@ static bool do_get_container_preflight(P_char ch, P_obj s_obj, bool &corpse_flag
 				       bool check_front_line, const char *arg1, const char *arg2,
 				       bool &fail)
 {
+	if (!locker_container_access_allowed(ch, s_obj))
+	{
+		send_to_char("You must open that private chest first.\r\n", ch);
+		fail = true;
+		return FALSE;
+	}
 	if ((GET_ITEM_TYPE(s_obj) != ITEM_CORPSE) && IS_SET(s_obj->value[1], CONT_CLOSED))
 	{
 		GETDBG_LOG(
@@ -2607,25 +2643,33 @@ int64_t coin_debit_value(const coin_debit_context &context)
 	return total;
 }
 
-void refund_committed_coin_debit(P_char actor, int64_t value, int64_t reason_id)
+void refund_committed_coin_debit(P_char actor,
+				 const std::array<int32_t, CURRENCY_DENOMINATION_COUNT> &amount,
+				 int64_t reason_id)
 {
-	if (!actor || value <= 0)
+	if (!actor)
 		return;
+	currency_vector delta = {};
+	for (size_t index = 0; index < amount.size(); ++index)
+		delta.amount[index] = amount[index];
+	bool restored;
 	if (IS_PC(actor) && GET_PID(actor) > 0)
 	{
-		/* Compensation must remain rebasable if another wallet reward was queued while
-		 * the original debit was in flight. */
-		if (!currency_transaction_submit_wallet_value(
-			    actor, value, currency_reason_type::wallet_reward, reason_id,
-			    critical_source_site::recovery, critical_deadline_class::recovery,
-			    nullptr, nullptr, 0))
-			persistence_alert(AVATAR, "currency", "coin_refund", "none", "none",
-					  "submission_failed", "pid=%d value=%lld", GET_PID(actor),
-					  static_cast<long long>(value));
-		return;
+		const uint64_t revision = actor->only.pc->wallet_revision;
+		restored = currency_transaction_submit(actor, delta, {},
+						       currency_reason_type::wallet_reward,
+						       reason_id, critical_source_site::recovery,
+						       critical_deadline_class::recovery, nullptr,
+						       nullptr, 0) &&
+			   actor->only.pc->wallet_revision != revision;
 	}
-	if (value <= INT_MAX)
-		ADD_MONEY(actor, static_cast<int>(value));
+	else
+		restored = change_nonpersistent_coins(actor, delta);
+	if (!restored)
+		persistence_alert(AVATAR, "currency", "coin_refund", "none", "none",
+				  "refund_failed", "pid=%d copper=%d silver=%d gold=%d platinum=%d",
+				  IS_PC(actor) ? GET_PID(actor) : 0, amount[0], amount[1],
+				  amount[2], amount[3]);
 }
 
 bool coin_put_destination_available(P_char actor, P_obj container)
@@ -2636,7 +2680,8 @@ bool coin_put_destination_available(P_char actor, P_obj container)
 		return false;
 	const int type = GET_ITEM_TYPE(container);
 	return (type == ITEM_CONTAINER || type == ITEM_STORAGE || type == ITEM_CORPSE) &&
-	       !IS_SET(container->value[1], CONT_CLOSED);
+	       !IS_SET(container->value[1], CONT_CLOSED) &&
+	       locker_container_access_allowed(actor, container);
 }
 
 void announce_coin_give(P_char sender, P_char recipient, const coin_give_credit_context &context)
@@ -2701,7 +2746,9 @@ void coin_give_credit_completion(P_char recipient, bool committed, const currenc
 		{
 			if (context.debit_committed)
 			{
-				refund_committed_coin_debit(sender, context.value, context.room);
+				std::array<int32_t, CURRENCY_DENOMINATION_COUNT> amount = {};
+				amount[context.coin_type] = context.amount;
+				refund_committed_coin_debit(sender, amount, context.room);
 				send_to_char(
 					"The coin transfer did not commit; your coins are being restored.\r\n",
 					sender);
@@ -2730,6 +2777,8 @@ bool begin_coin_give_credit(P_char sender, P_char recipient, const coin_debit_co
 {
 	if (!sender || !recipient || debit.coin_type >= CURRENCY_DENOMINATION_COUNT)
 		return false;
+	currency_vector delta = {};
+	delta.amount[debit.coin_type] = debit.amount[debit.coin_type];
 	const int64_t value = coin_debit_value(debit);
 	coin_give_credit_context context = { sender->runtime_id,
 					     value,
@@ -2745,16 +2794,15 @@ bool begin_coin_give_credit(P_char sender, P_char recipient, const coin_debit_co
 		// The giver's save goes first: a crash before the recipient's loses the coins
 		// instead of paying them twice.
 		currency_transaction_save_first(sender);
-		return currency_transaction_submit_wallet_value(
-			recipient, value, currency_reason_type::wallet_reward,
+		return currency_transaction_submit(
+			recipient, delta, {}, currency_reason_type::wallet_reward,
 			IS_PC(sender) ? GET_PID(sender) : 0, critical_source_site::command,
 			critical_deadline_class::interactive, coin_give_credit_completion, &context,
 			sizeof(context));
 	}
 
-	if (value > INT_MAX)
+	if (!credit_coins(recipient, debit.amount))
 		return false;
-	ADD_MONEY(recipient, static_cast<int>(value));
 	announce_coin_give(sender, recipient, context);
 	return true;
 }
@@ -2790,6 +2838,9 @@ bool publish_transient_coin_put(P_char actor, P_obj container, P_obj old_money,
 	{
 		add_coins(old_money, context.amount[0], context.amount[1], context.amount[2],
 			  context.amount[3]);
+		const std::string coins = coins_to_string(context.amount[3], context.amount[2],
+							  context.amount[1], context.amount[0], "");
+		locker_record_movement(actor, container, NULL, true, coins.c_str());
 		finish_coin_put_publication(actor, container, context);
 		return true;
 	}
@@ -2856,7 +2907,7 @@ void publish_coin_drop(P_char actor, const coin_debit_context &context)
 				   context.amount[3]);
 	if (!money)
 	{
-		refund_committed_coin_debit(actor, coin_debit_value(context), context.room);
+		refund_committed_coin_debit(actor, context.amount, context.room);
 		send_to_char("The coins could not be placed; your wallet is being restored.\r\n",
 			     actor);
 		return;
@@ -2920,10 +2971,9 @@ void coin_debit_completion(P_char actor, bool committed, const currency_command_
 		return;
 	}
 	memcpy(&context, encoded, sizeof(context));
-	const int64_t value = coin_debit_value(context);
 	if (context.room < 0 || context.room > top_of_world || actor->in_room != context.room)
 	{
-		refund_committed_coin_debit(actor, value, context.room);
+		refund_committed_coin_debit(actor, context.amount, context.room);
 		send_to_char("The coin destination changed; your wallet is being restored.\r\n",
 			     actor);
 		return;
@@ -2937,7 +2987,7 @@ void coin_debit_completion(P_char actor, bool committed, const currency_command_
 	case coin_debit_action::put:
 		if (!publish_coin_put(actor, context))
 		{
-			refund_committed_coin_debit(actor, value, context.container_uid);
+			refund_committed_coin_debit(actor, context.amount, context.container_uid);
 			send_to_char(
 				"The coins could not be put away; your wallet is being restored.\r\n",
 				actor);
@@ -2949,7 +2999,8 @@ void coin_debit_completion(P_char actor, bool committed, const currency_command_
 		if (!recipient || recipient->in_room != context.room ||
 		    !begin_coin_give_credit(actor, recipient, context, true))
 		{
-			refund_committed_coin_debit(actor, value, context.target_runtime_id);
+			refund_committed_coin_debit(actor, context.amount,
+						    context.target_runtime_id);
 			send_to_char(
 				"The coin transfer could not be completed; your wallet is being restored.\r\n",
 				actor);
@@ -2964,7 +3015,19 @@ bool submit_coin_debit(P_char actor, const coin_debit_context &context)
 	const int64_t value = coin_debit_value(context);
 	if (!actor || value <= 0)
 		return false;
-	if (value > INT_MAX || SUB_MONEY(actor, static_cast<int>(value), 0) != 0)
+	currency_vector delta = {};
+	for (size_t index = 0; index < context.amount.size(); ++index)
+	{
+		if (context.amount[index] < 0)
+			return false;
+		delta.amount[index] = -static_cast<int64_t>(context.amount[index]);
+	}
+	if (IS_PC(actor) && GET_PID(actor) > 0)
+		return currency_transaction_submit(
+			actor, delta, {}, currency_reason_type::wallet_spend, 0,
+			critical_source_site::command, critical_deadline_class::interactive,
+			coin_debit_completion, &context, sizeof(context));
+	if (!change_nonpersistent_coins(actor, delta))
 		return false;
 	coin_debit_completion(actor, true, {}, 0, reinterpret_cast<const uint8_t *>(&context),
 			      sizeof(context));
@@ -3422,9 +3485,10 @@ void report_bulk_put(P_char actor, const bulk_put_state &state, P_obj container)
 	}
 	char_light(actor);
 	room_light(actor->in_room, REAL);
-	mark_player_dirty_components(GET_PID(actor), PLAYER_COMPONENT_STATUS |
-							     PLAYER_COMPONENT_EQUIPMENT |
-							     PLAYER_COMPONENT_INVENTORY);
+	if (IS_PC(actor))
+		mark_player_dirty_components(GET_PID(actor), PLAYER_COMPONENT_STATUS |
+								     PLAYER_COMPONENT_EQUIPMENT |
+								     PLAYER_COMPONENT_INVENTORY);
 	save_filled_container(container);
 }
 
@@ -3435,7 +3499,8 @@ bool bulk_put_destination_available(P_char actor, P_obj container)
 	     (!OBJ_ROOM(container) || container->loc.room != actor->in_room)))
 		return false;
 	return item_command_container_is_valid(container) &&
-	       !IS_SET(container->value[1], CONT_CLOSED);
+	       !IS_SET(container->value[1], CONT_CLOSED) &&
+	       locker_container_access_allowed(actor, container);
 }
 
 /**
@@ -3492,19 +3557,52 @@ void start_bulk_put(P_char actor, P_obj container, const char *filter, bool alld
 		send_to_char("It is not an open container.\r\n", actor);
 		return;
 	}
-	bulk_put_state state = { filter ? filter : "", 0, false, alldot };
-	// Count only what landed: put() also returns TRUE for a candidate it refused.
-	// obj_to_obj() neither merges nor frees, so the object is still live to inspect.
-	for (P_obj object = actor->carrying, next = NULL; object; object = next)
+	const uint64_t actor_id = actor->runtime_id, container_uid = container->obj_uid;
+	const int room = actor->in_room;
+	const auto valid = [&]()
 	{
-		next = object->next_content;
-		if (object == container ||
+		return get_can_continue(actor, actor_id, room, nullptr, 0) &&
+		       find_live_object(container, container_uid) &&
+		       bulk_put_destination_available(actor, container);
+	};
+	std::vector<std::pair<P_obj, uint64_t>> candidates;
+	try
+	{
+		for (P_obj object = actor->carrying; object; object = object->next_content)
+			candidates.emplace_back(object, object->obj_uid);
+	}
+	catch (const std::bad_alloc &)
+	{
+		return;
+	}
+	bulk_put_state state = { filter ? filter : "", 0, false, alldot };
+	bool trap_rejected = false;
+	for (const auto &[expected, uid] : candidates)
+	{
+		if (!valid())
+			break;
+		P_obj object = find_live_object(expected, uid);
+		if (!object || !OBJ_CARRIED_BY(object, actor) || object == container ||
 		    (alldot && (!CAN_SEE_OBJ(actor, object) || !object->name ||
 				!isname(state.filter.c_str(), object->name))))
 			continue;
 		state.attempted = true;
-		if (put(actor, object, container, FALSE) && OBJ_INSIDE_OBJ(object, container))
+		const bool moved = put(actor, object, container, FALSE, &trap_rejected);
+		if (!valid())
+			break;
+		object = find_live_object(expected, uid);
+		if (moved && object && OBJ_INSIDE_OBJ(object, container))
 			++state.total;
+		if (trap_rejected)
+			break;
+	}
+	if (trap_rejected || !valid())
+	{
+		// Earlier successful items still need their destination save even if a later
+		// trap extracted/disabled the actor. The rejected candidate is never delivered.
+		if (state.total && find_live_object(container, container_uid))
+			save_filled_container(container);
+		return;
 	}
 	report_bulk_put(actor, state, container);
 }
@@ -3512,7 +3610,7 @@ void start_bulk_put(P_char actor, P_obj container, const char *filter, bool alld
 
 void do_put(P_char ch, char *argument, int /*cmd*/)
 {
-	P_obj o_obj = NULL, s_obj = NULL, next_obj;
+	P_obj o_obj = NULL, s_obj = NULL;
 	P_char t_ch;
 	int amount, ctype, count = 0, attempted = 0;
 	int plat = 0, gold = 0, silv = 0, copp = 0;
@@ -3700,27 +3798,9 @@ void do_put(P_char ch, char *argument, int /*cmd*/)
 		}
 		else
 		{
-			/* A durable container serialises the moves; ownership revisions make
-			 * concurrent submissions for one player unsafe. */
-			if (IS_PC(ch) && s_obj->obj_uid > 0)
-			{
-				start_bulk_put(ch, s_obj, type == PUT_ALLDOT ? obj_name : NULL,
-					       type == PUT_ALLDOT);
-				return;
-			}
-			for (o_obj = ch->carrying; o_obj; o_obj = next_obj)
-			{
-				next_obj = o_obj->next_content;
-				if (o_obj == s_obj)
-					continue;
-				if (!CAN_SEE_OBJ(ch, o_obj) && type != PUT_ALL)
-					continue;
-				if (type == PUT_ALLDOT && !isname(obj_name, o_obj->name))
-					continue;
-				attempted = 1;
-				if (put(ch, o_obj, s_obj, FALSE))
-					count++;
-			}
+			start_bulk_put(ch, s_obj, type == PUT_ALLDOT ? obj_name : NULL,
+				       type == PUT_ALLDOT);
+			return;
 		}
 	}
 	if (chaos_pouch_target && attempted == 0)
@@ -3732,51 +3812,11 @@ void do_put(P_char ch, char *argument, int /*cmd*/)
 	}
 	if (attempted == 0)
 	{
-		if (type != PUT_ITEM)
-		{
-			send_to_char("You don't have anything to put in it.\r\n", ch);
-		}
-		else
-		{
-			checked_snprintf(buf, MAX_STRING_LENGTH, "You don't have the %s.\r\n",
-					 obj_name);
-			send_to_char(buf, ch);
-		}
+		checked_snprintf(buf, MAX_STRING_LENGTH, "You don't have the %s.\r\n", obj_name);
+		send_to_char(buf, ch);
 	}
 	else if (count)
 	{
-		if (chaos_pouch_target)
-		{
-			snprintf(buf, MAX_STRING_LENGTH,
-				 "You record %d collected material%s in $p's scoreboard.", count,
-				 count == 1 ? "" : "s");
-			act(buf, FALSE, ch, s_obj, 0, TO_CHAR);
-			act("$n records collected materials in $p's scoreboard.", TRUE, ch, s_obj,
-			    0, TO_ROOM);
-		}
-		else if (type == PUT_ALL)
-		{
-			snprintf(buf, MAX_STRING_LENGTH, "You put %d items into $p.", count);
-			act(buf, FALSE, ch, s_obj, 0, TO_CHAR);
-			if (count < 6)
-				act("$n puts some stuff into $p.", TRUE, ch, s_obj, 0, TO_ROOM);
-			else
-				act("$n puts a bunch of stuff into $p.", TRUE, ch, s_obj, 0,
-				    TO_ROOM);
-		}
-		else if (type == PUT_ALLDOT)
-		{
-			checked_snprintf(buf, MAX_STRING_LENGTH, "You put %d %s(s) into $p.", count,
-					 obj_name);
-			act(buf, FALSE, ch, s_obj, 0, TO_CHAR);
-			if (count < 6)
-				checked_snprintf(buf, MAX_STRING_LENGTH,
-						 "$n puts some %s(s) into $p.", obj_name);
-			else
-				checked_snprintf(buf, MAX_STRING_LENGTH,
-						 "$n puts a bunch of %s(s) into $p.", obj_name);
-			act(buf, TRUE, ch, s_obj, 0, TO_ROOM);
-		}
 		char_light(ch);
 		room_light(ch->in_room, REAL);
 		if (IS_PC(ch))
@@ -3792,9 +3832,29 @@ void do_put(P_char ch, char *argument, int /*cmd*/)
 #undef PUT_ALLDOT
 #undef PUT_ITEM
 
-bool put(P_char ch, P_obj o_obj, P_obj s_obj, int showit)
+static bool reject_put_trap(P_char actor, P_obj item, bool *trap_rejected)
+{
+	if (item->trap_dam >= 9 && item->trap_dam <= 16 && checkgetput(actor, item))
+	{
+		if (trap_rejected)
+			*trap_rejected = true;
+		return true;
+	}
+	return false;
+}
+
+bool put(P_char ch, P_obj o_obj, P_obj s_obj, int showit, bool *trap_rejected)
 {
 	char Gbuf3[MAX_STRING_LENGTH];
+	if (trap_rejected)
+		*trap_rejected = false;
+
+	if (!locker_container_access_allowed(ch, s_obj))
+	{
+		if (showit)
+			send_to_char("You must open that private chest first.\r\n", ch);
+		return FALSE;
+	}
 
 	if (IS_ARTIFACT(o_obj) && !IS_TRUSTED(ch))
 	{
@@ -3839,6 +3899,9 @@ bool put(P_char ch, P_obj o_obj, P_obj s_obj, int showit)
 				}
 				if (s_obj->value[0] > s_obj->value[3])
 				{
+					if (reject_put_trap(ch, o_obj, trap_rejected) ||
+					    !locker_container_access_allowed(ch, s_obj))
+						return FALSE;
 					if (showit)
 						send_to_char("Ok.\r\n", ch);
 					if (OBJ_CARRIED(o_obj))
@@ -3856,6 +3919,7 @@ bool put(P_char ch, P_obj o_obj, P_obj s_obj, int showit)
 						 */
 						obj_from_char(o_obj);
 						obj_to_obj(o_obj, s_obj);
+						locker_record_movement(ch, s_obj, o_obj, true);
 						s_obj->value[3]++;
 					}
 					else
@@ -3865,6 +3929,7 @@ bool put(P_char ch, P_obj o_obj, P_obj s_obj, int showit)
 						 * Do we need obj_from_room???(s_obj, ....);
 						 */
 						obj_to_obj(o_obj, s_obj);
+						locker_record_movement(ch, s_obj, o_obj, true);
 						/*
 						 * Do we need obj_to_room???(s_obj, ch);
 						 */
@@ -3945,6 +4010,9 @@ bool put(P_char ch, P_obj o_obj, P_obj s_obj, int showit)
 					      GET_ITEM_TYPE(s_obj) == ITEM_CONTAINER)))
 					{
 #endif
+						if (reject_put_trap(ch, o_obj, trap_rejected) ||
+						    !locker_container_access_allowed(ch, s_obj))
+							return FALSE;
 						if (showit)
 							send_to_char("Ok.\r\n", ch);
 						if (OBJ_CARRIED(o_obj))
@@ -3962,6 +4030,8 @@ bool put(P_char ch, P_obj o_obj, P_obj s_obj, int showit)
 							 */
 							obj_from_char(o_obj);
 							obj_to_obj(o_obj, s_obj);
+							locker_record_movement(ch, s_obj, o_obj,
+									       true);
 #if USE_SPACE
 							s_obj->space += GET_OBJ_SPACE(o_obj);
 #endif
@@ -3974,6 +4044,8 @@ bool put(P_char ch, P_obj o_obj, P_obj s_obj, int showit)
 							 */
 							obj_from_room(o_obj);
 							obj_to_obj(o_obj, s_obj);
+							locker_record_movement(ch, s_obj, o_obj,
+									       true);
 						}
 
 						if (IS_TRUSTED(ch))
@@ -7711,8 +7783,13 @@ void start_empty(P_char actor, P_obj source, P_obj target)
 			act("$P will not fit in $p.", FALSE, actor, target, content, TO_CHAR);
 			break;
 		}
+		if (!locker_container_access_allowed(actor, source) ||
+		    !locker_container_access_allowed(actor, target))
+			break;
 		obj_from_obj(content);
 		obj_to_obj(content, target);
+		locker_record_movement(actor, source, content, false);
+		locker_record_movement(actor, target, content, true);
 		if (GET_ITEM_TYPE(target) == ITEM_QUIVER)
 			++target->value[3];
 		++moved;

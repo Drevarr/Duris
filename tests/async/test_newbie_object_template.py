@@ -1,16 +1,18 @@
 #!/usr/bin/env python3
-"""Synthetic runtime regression for boot-only starter/artifact template caching.
+"""Runtime regression for object-template caching and Minor Creation instruments.
 
 Executes extracted production db.c parser/cache/publisher, fread_string,
-strn_cmp, isname, and the default proc parser against a temporary object file.
+strn_cmp, isname, and the default proc parser against temporary object files,
+including all six authored instruments from the full and mini datasets.
 Memory pool, identity, event, conversion,
 and procedure-library endpoints are fixtures; no database or game is started.
 Linux g++, ASan/UBSan and the repository headers are required.
 """
 from pathlib import Path
+import re
 import subprocess
 import tempfile
-from _paths import ROOT, extract_function
+from _paths import ROOT, SRC, extract_function
 from _paths import HARNESS_STUBS
 
 PRELUDE = r'''
@@ -42,6 +44,12 @@ mm_ds *dead_obj_pool = nullptr;
 static unsigned pool_allocations, uid_allocations, proc_calls, conversion_calls;
 static unsigned periodic_calls, event_calls, duplicate_strings;
 static unsigned empty_proc_rejections, noarg_proc_calls;
+static unsigned unsupported_traps;
+void logit(const char *, const char *format, ...)
+{
+    if (std::string(format).find("unsupported trap damage type") != std::string::npos)
+        ++unsupported_traps;
+}
 char *proclibobj_parse_default(char *);
 static std::unordered_set<void *> allocations;
 static std::unordered_map<int, object_template> object_templates;
@@ -249,8 +257,49 @@ static void check_boot_names()
     }
     assert(allocations.empty());
 }
-int main()
+
+static void check_minor_instruments(const char *path)
 {
+    obj_f = fopen(path, "r"); assert(obj_f);
+    int top = -1;
+    P_index generated = generate_indices(obj_f, &top);
+    assert(top == 6);
+    for (int nr = 0; nr <= top; ++nr) indexes[nr] = generated[nr];
+    FREE(generated);
+    const int instrument_types[] = {185, 189, 188, 186, 187, 184};
+    for (int nr = 0; nr <= top; ++nr)
+    {
+        const bool minor = nr < 6;
+        const auto prototype = parse_object_template(nr);
+        assert(indexes[nr].virtual_number == (minor ? 1241 + nr : 89177));
+        assert(prototype.type == ITEM_INSTRUMENT);
+        assert(IS_SET(prototype.wear_flags, ITEM_TAKE));
+        assert(IS_SET(prototype.wear_flags, ITEM_HOLD));
+        assert(!!IS_SET(prototype.wear_flags, ITEM_ATTACH_BELT) == minor);
+        if (minor)
+        {
+            assert(prototype.weight == (nr == 0 ? 0 : 1));
+            assert(prototype.value[0] == instrument_types[nr]);
+            for (int i = 1; i < 8; ++i)
+                assert(prototype.value[i] == (i <= 3 ? 1 : 0));
+        }
+        P_obj item = instantiate_object_template(prototype);
+        assert(item->type == ITEM_INSTRUMENT && item->R_num == nr);
+        assert(item->wear_flags == prototype.wear_flags && item->weight == prototype.weight);
+        assert(item->extra_flags == prototype.extra_flags &&
+               item->extra2_flags == prototype.extra2_flags);
+        assert(item->anti_flags == prototype.anti_flags &&
+               item->anti2_flags == prototype.anti2_flags);
+        for (int i = 0; i < 8; ++i) assert(item->value[i] == prototype.value[i]);
+    }
+    cleanup();
+    fclose(obj_f); obj_f = nullptr;
+    puts("Minor Creation instruments: six attachable prototypes and unflagged control passed");
+}
+
+int main(int argc, char **argv)
+{
+    if (argc == 2) { check_minor_instruments(argv[1]); return 0; }
     check_boot_names();
     obj_f = tmpfile(); assert(obj_f);
     write_record(0, "BAG random_exit", ITEM_CONTAINER, 12, ITEM_TAKE, true, "",
@@ -269,8 +318,7 @@ int main()
     write_record(8, "NOARG_PROC", ITEM_CONTAINER, 0, ITEM_TAKE, false,
                  "E\n_proclib_hummer~\n~\n");
     fflush(obj_f);
-    // Boot caches flagged prototypes, saved-flag promotions and previously
-    // tracked ordinary vnums, while leaving unrelated ordinary templates uncached.
+    // Boot caches artifact templates and every bag used by weight accounting.
     population.complete = true;
     artifact_payload_projection promoted = {};
     promoted.vnum = 101; promoted.extra_flags = ITEM_ARTIFACT; promoted.extra_flags_present = true;
@@ -286,7 +334,11 @@ int main()
     assert(find_object_template(101) && "saved-flag artifact promotion was not cached");
     assert(find_object_template(102) && "previous artifact identity was not cached");
     assert(find_object_template(103) && "unknown saved flags must retain the inferred identity template");
-    assert(!find_object_template(104) && object_templates.size() == 4);
+    for (int vnum = 104; vnum <= 108; ++vnum) {
+        assert(find_object_template(vnum) && "ordinary bag shell must be cached at boot");
+        assert(find_object_template(vnum)->weight == 17);
+    }
+    assert(object_templates.size() == 9);
     semantic_valid=false; expected_complete=false; population.complete=true;
     auto unknown=legacy; unknown.vnum=103; unknown.extra_flags_present=false;
     population.items={promoted,unknown,legacy};
@@ -309,6 +361,7 @@ int main()
     assert(bag->affected[0].location == 4 && bag->affected[0].modifier == -2);
     assert(bag->affected[1].location == 5 && bag->affected[1].modifier == 3);
     assert(bag->trap_eff == 9 && bag->trap_dam == 10 && bag->trap_charge == 11 && bag->trap_level == 12);
+    assert(unsupported_traps > 0 && "unsupported trap type was not reported at boot");
     assert(bag->descriptions.size() == 2 && bag->descriptions[0].keyword == "_proclib_fixture");
     assert(IS_SET(bag->wear_flags, ITEM_TAKE) && IS_SET(bag->wear_flags, ITEM_HOLD) &&
            IS_SET(bag->wear_flags, ITEM_ATTACH_BELT));
@@ -421,7 +474,9 @@ int main()
 
 
 def main() -> int:
+    trap = (SRC / "trap.c").read_text()
     functions = [
+        trap[trap.index("#define TRAP_DAM_SLEEP"):trap.index("static bool trap_damage_supported")],
         extract_function("specs/specs.library.c", "char *proclibobj_parse_default(char *)"),
         extract_function("db.c", "char *fread_string(FILE *fl)"),
         extract_function("core/utility.c", "int strn_cmp(const char *arg1, const char *arg2, uint n)"),
@@ -436,7 +491,8 @@ def main() -> int:
         extract_function("db.c", "static P_obj instantiate_object_template_impl("),
         extract_function("db.c", "P_obj instantiate_object_template(const object_template &prototype)"),
     ]
-    with tempfile.TemporaryDirectory() as directory:
+    (ROOT / "bin/tests").mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(prefix="object-template-", dir=ROOT / "bin/tests") as directory:
         source = Path(directory) / "newbie_object_template.cpp"
         binary = Path(directory) / "newbie_object_template"
         source.write_text("\n".join([PRELUDE, *functions, DRIVER]), encoding="utf-8")
@@ -445,6 +501,20 @@ def main() -> int:
             "-fsanitize=address,undefined", "-Isrc", str(source), str(HARNESS_STUBS), "-o", str(binary),
         ], cwd=ROOT, check=True)
         subprocess.run([str(binary)], check=True)
+        # Only frame real records here; production generates the index, parses
+        # numeric fields, and materializes every object in the same executable.
+        control = re.search(r"(?ms)^#89177\n.*?(?=^#\d+\n)",
+                            (ROOT / "areas/obj/newhope.obj").read_text())[0]
+        results = []
+        for dataset in ("areas/obj/heavens.obj", "areas_mini/mini.obj"):
+            content = (ROOT / dataset).read_text()
+            records = [re.search(rf"(?ms)^#{vnum}\n.*?(?=^#\d+\n)", content)[0]
+                       for vnum in range(1241, 1247)]
+            fixture = Path(directory) / "instruments.obj"
+            fixture.write_text("".join(records) + control + "#9999999\n$~\n")
+            print(f"Production loader: {dataset}", flush=True)
+            results.append(subprocess.run([str(binary), str(fixture)]).returncode)
+        assert results == [0, 0], f"instrument loader failures: {results}"
     print("All newbie object template checks passed.")
     return 0
 

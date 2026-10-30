@@ -33,6 +33,9 @@
 #include <string.h>
 #include "account/account_reward.h"
 #include "world/achievements.h"
+#include "economy/divine_boon_delivery.h"
+#include "economy/divine_boon_math.h"
+#include "world/experience_share.h"
 #include "combat/arena.h"
 #include "combat/arenadef.h"
 #include "combat/attack_continuation.h"
@@ -909,7 +912,7 @@ static void combat_outcome_committed(bool committed, const combat_outcome_result
 			af.duration = get_property("epic.frag.thrill.duration", 45) * WAIT_SEC;
 			affect_from_char(ch, TAG_PLR_RECENT_FRAG);
 			affect_to_char(ch, &af);
-			if (entry.epic_delta)
+			if (entry.epic_delta && !(entry.flags & COMBAT_PARTICIPANT_DIVINE_EPIC))
 				epic_publish_pvp_award(ch, static_cast<int>(entry.epic_delta));
 			if (entry.wallet_delta_copper)
 			{
@@ -917,7 +920,8 @@ static void combat_outcome_committed(bool committed, const combat_outcome_result
 					 coin_stringv(entry.wallet_delta_copper));
 				send_to_char(buffer, ch);
 			}
-			if (entry.flags & COMBAT_PARTICIPANT_SPILL_BLOOD)
+			if ((entry.flags & COMBAT_PARTICIPANT_SPILL_BLOOD) &&
+			    !(entry.flags & COMBAT_PARTICIPANT_DIVINE_EPIC))
 			{
 				struct affected_type *task = get_epic_task(ch);
 				if (task && abs(task->modifier) == SPILL_BLOOD)
@@ -944,7 +948,8 @@ static void combat_outcome_committed(bool committed, const combat_outcome_result
 			af.flags = AFFTYPE_SHORT | AFFTYPE_NODISPEL | AFFTYPE_NOAPPLY;
 			af.duration = 60 * WAIT_SEC;
 			affect_to_char(ch, &af);
-			if (entry.flags & COMBAT_PARTICIPANT_SPILL_BLOOD)
+			if ((entry.flags & COMBAT_PARTICIPANT_SPILL_BLOOD) &&
+			    !(entry.flags & COMBAT_PARTICIPANT_DIVINE_EPIC))
 			{
 				send_to_char("The &+yGods of Duris&n are very pleased with YOUR "
 					     "&+Rblood&n, too!!!\n",
@@ -972,15 +977,17 @@ static bool submit_pvp_outcome(P_char ch, P_char victim, bool award_frags)
 		ch = ch->following;
 	}
 	combat_outcome_payload payload = {};
+	const int64_t prepared_at = time(nullptr);
 	payload.victim_pid = static_cast<uint32_t>(GET_PID(victim));
 	payload.room_vnum = world[ch->in_room].number;
 	strlcpy(payload.room_name.data(), world[ch->in_room].name, payload.room_name.size());
 	if (!combat_outcome_add_participant(&payload, ch, combat_participant_role::killer, true,
 					    ch->group && ch->group->ch == ch))
 		return false;
+	// Groups can include pets; only players have PvP history and rewards.
 	if (ch->group)
 		for (struct group_list *gl = ch->group; gl; gl = gl->next)
-			if (gl->ch != ch &&
+			if (gl->ch != ch && IS_PC(gl->ch) &&
 			    !combat_outcome_add_participant(&payload, gl->ch,
 							    combat_participant_role::killer_group,
 							    gl->ch->in_room == ch->in_room, false))
@@ -990,7 +997,7 @@ static bool submit_pvp_outcome(P_char ch, P_char victim, bool award_frags)
 		return false;
 	if (victim->group)
 		for (struct group_list *gl = victim->group; gl; gl = gl->next)
-			if (gl->ch != victim &&
+			if (gl->ch != victim && IS_PC(gl->ch) &&
 			    !combat_outcome_add_participant(
 				    &payload, gl->ch, combat_participant_role::victim_group,
 				    gl->ch->in_room == victim->in_room, false))
@@ -1044,13 +1051,28 @@ static bool submit_pvp_outcome(P_char ch, P_char victim, bool award_frags)
 				epic_gain = std::clamp(
 					epic_gain, get_property("epic.frag.minimum.epics", 100),
 					get_property("epic.frag.maximum.epics", 1500));
+				const double precise_base = std::clamp(
+					(static_cast<double>(real_gain) / 100.0) *
+							divine_boon_modifier(get_property(
+								"epic.frag.amount", 20.000)) +
+						GET_FRAGS(victim),
+					static_cast<double>(
+						get_property("epic.frag.minimum.epics", 100)),
+					static_cast<double>(
+						get_property("epic.frag.maximum.epics", 1500)));
+				int spill_blood = 0;
 				struct affected_type *task = get_epic_task(current);
 				if (task && abs(task->modifier) == SPILL_BLOOD)
 				{
-					epic_gain += 500;
+					spill_blood = 500;
 					entry->flags |= COMBAT_PARTICIPANT_SPILL_BLOOD;
 				}
-				entry->epic_delta = epic_calculate_pvp_award(current, epic_gain);
+				if (!epic_prepare_pvp_award(current, victim, precise_base,
+							    epic_gain, spill_blood, prepared_at,
+							    entry))
+					return false;
+				if (entry->flags & COMBAT_PARTICIPANT_DIVINE_EPIC)
+					payload.prepared_at = prepared_at;
 			}
 			if (GET_RACE(current) == RACE_HALFLING ||
 			    GET_CLASS(current, CLASS_MERCENARY))
@@ -1086,7 +1108,8 @@ static bool submit_pvp_outcome(P_char ch, P_char victim, bool award_frags)
 	for (size_t index = 0; index < payload.participant_count; ++index)
 	{
 		const auto &entry = payload.participants[index];
-		if (entry.epic_delta <= 0)
+		// Prepared Divine rewards are published only from a committed receipt.
+		if (entry.epic_delta <= 0 || (entry.flags & COMBAT_PARTICIPANT_DIVINE_EPIC))
 			continue;
 		P_char participant = find_player_by_pid(entry.pid);
 		if (!participant || IS_NPC(participant) ||
@@ -2539,8 +2562,8 @@ void die(P_char ch, P_char killer)
 		add_event(retarget_event, PULSE_VIOLENCE - 1, killer, NULL, NULL, 0, NULL, 0);
 	}
 	/* count xp loss for victim and apply */
-	if (IS_PC(ch) && !CHAR_IN_ARENA(ch) && (GET_LEVEL(ch) > 1) && !IS_TRUSTED(ch))
-	// && (GET_RACEWAR(ch) != 1)) Goods lose exp again.
+	if (IS_PC(ch) && !CHAR_IN_ARENA(ch) && (GET_LEVEL(ch) > 1) && !IS_TRUSTED(ch) &&
+	    GET_LEVEL(ch) >= death_exp_loss_level_threshold())
 	{
 		if (IS_PC(ch) && (GET_RACE(ch) == RACE_LICH))
 		{
@@ -2771,6 +2794,7 @@ void die(P_char ch, P_char killer)
 				if (ch->desc && ch->desc->account)
 				{
 					P_desc d = ch->desc;
+					flush_input_queue(d);
 
 					if (hardcore_config_get()->death_messages_enabled)
 					{
@@ -2794,7 +2818,6 @@ void die(P_char ch, P_char killer)
 
 					// Return to account menu
 					d->character = NULL;
-					d->term_type = TERM_ANSI; // Preserve ANSI mode
 					SEND_TO_Q(
 						"&+RYour character has been permanently deleted.&n\r\n\r\n",
 						d);
@@ -3078,6 +3101,10 @@ void kill_gain(P_char ch, P_char victim)
 				if ((number(1, GET_C_INT(victim)) < chance) &&
 				    (GET_VNUM(victim) != 1255))
 					learn_conjure_recipe(ch, victim);
+				else if (!sql_has_spellbook_mob(GET_PID(ch), GET_VNUM(victim)))
+					send_to_char(
+						"&+yYou fail to learn how to conjure that being from its fading essence.&n\r\n",
+						ch);
 			}
 		}
 		return;
@@ -3125,16 +3152,31 @@ void kill_gain(P_char ch, P_char victim)
 		{
 			XP = (int)(((float)GET_LEVEL(gl->ch) / (float)highest_level) *
 				   ((float)gain / exp_divider));
+			double precise_XP =
+				(static_cast<double>(GET_LEVEL(gl->ch)) / highest_level) *
+				(static_cast<double>(gain) / exp_divider);
 
 			/* power leveler stopgap measure */
 			if ((GET_LEVEL(gl->ch) + 40) < highest_level)
+			{
 				XP /= 5000;
+				precise_XP /= 5000;
+			}
 			else if ((GET_LEVEL(gl->ch) + 30) < highest_level)
+			{
 				XP /= 1000;
+				precise_XP /= 1000;
+			}
 			else if ((GET_LEVEL(gl->ch) + 20) < highest_level)
+			{
 				XP /= 150;
+				precise_XP /= 150;
+			}
 			else if ((GET_LEVEL(gl->ch) + 15) < highest_level)
+			{
 				XP /= 40;
+				precise_XP /= 40;
+			}
 
 			if (XP && IS_PC(gl->ch))
 			{
@@ -3144,7 +3186,7 @@ void kill_gain(P_char ch, P_char victim)
 			}
 
 			send_to_char("You receive your share of experience.\r\n", gl->ch);
-			gain_exp(gl->ch, victim, XP, EXP_KILL);
+			gain_exp_combat_share(gl->ch, victim, precise_XP, XP, EXP_KILL);
 			if (IS_PC(gl->ch))
 				add_bloodlust(gl->ch, victim);
 			// this is for all kinds of kill-type quests
@@ -3187,6 +3229,11 @@ void kill_gain(P_char ch, P_char victim)
 					if ((number(1, GET_C_INT(victim)) < chance) &&
 					    (GET_VNUM(victim) != 1255))
 						learn_conjure_recipe(gl->ch, victim);
+					else if (!sql_has_spellbook_mob(GET_PID(gl->ch),
+									GET_VNUM(victim)))
+						send_to_char(
+							"&+yYou fail to learn how to conjure that being from its fading essence.&n\r\n",
+							gl->ch);
 				}
 			}
 		}
@@ -5526,6 +5573,8 @@ int raw_damage(P_char ch, P_char victim, double dam, uint flags, struct damage_m
 
 	if (!victim)
 		return DAM_NONEDEAD;
+	if (IS_SET(victim->runtime_flags, CHAR_RFLAG_TRAP_CASTER))
+		flags |= RAWDAM_NOKILL | RAWDAM_NOEXP;
 	if (collector_presence_is_npc(ch) || collector_presence_is_npc(victim))
 		return DAM_NONEDEAD;
 	if (training_dummy_is(victim) && !training_dummy_target_allowed(ch, victim))
@@ -6064,7 +6113,7 @@ int raw_damage(P_char ch, P_char victim, double dam, uint flags, struct damage_m
 				return DAM_VICTDEAD;
 		}
 
-		if (IS_MINOTAUR(victim) && !number(0, 5) &&
+		if (tutorial_mobile_mechanics_race(victim) == RACE_MINOTAUR && !number(0, 5) &&
 		    (GET_HIT(victim) < GET_MAX_HIT(victim) / 6) &&
 		    !affected_by_spell(victim, SKILL_BERSERK))
 		{
@@ -7157,7 +7206,15 @@ bool hit(P_char ch, P_char victim, P_obj weapon, int *damAccumulator)
 				      get_property("skill.notch.criticalAttack", 10)) ||
 			  (1 * GET_CHAR_SKILL(ch, SKILL_CRITICAL_ATTACK)) > number(1, 100)))
 	{
+		const attack_continuation continuation =
+			begin_attack_continuation(ch, victim, weapon);
 		critical_attack(ch, victim, msg);
+		const attack_continuation_result checked = check_attack_continuation(continuation);
+		if (!checked.can_continue())
+			return FALSE;
+		ch = checked.actor;
+		victim = checked.target;
+		weapon = checked.weapon;
 	}
 
 	if (has_innate(ch, INNATE_BATTLE_FRENZY) && !number(0, 20) && IS_HUMANOID(victim) &&
@@ -7457,9 +7514,9 @@ bool hit(P_char ch, P_char victim, P_obj weapon, int *damAccumulator)
 	if (difficulty_world_npc(ch))
 		dam *= difficulty_multiplier(DIFFICULTY_MOB_MELEE);
 
-	if (GET_RACE(ch) == RACE_ORC)
+	if (tutorial_mobile_mechanics_race(ch) == RACE_ORC)
 		dam = orc_horde_dam_modifier(ch, dam, TRUE);
-	else if (GET_RACE(victim) == RACE_ORC)
+	else if (tutorial_mobile_mechanics_race(victim) == RACE_ORC)
 		dam = orc_horde_dam_modifier(victim, dam, FALSE);
 
 	if (weapon && IS_SLAYING(weapon, victim))
@@ -7514,7 +7571,7 @@ bool hit(P_char ch, P_char victim, P_obj weapon, int *damAccumulator)
 	if (GET_CLASS(ch, CLASS_PALADIN) && holy_weapon_proc(ch, victim))
 		return TRUE;
 
-	if (GET_RACE(ch) == RACE_MINOTAUR)
+	if (tutorial_mobile_mechanics_race(ch) == RACE_MINOTAUR)
 		minotaur_race_proc(ch, victim);
 
 	if (affected_by_spell(ch, ACH_YOUSTRAHDME) && IS_UNDEADRACE(victim) &&
@@ -7800,6 +7857,8 @@ void set_fighting(P_char ch, P_char vict)
 		show_string(victim->desc, Gbuf);
 	}
 	GET_OPPONENT(ch) = victim;
+	disarm_char_nevents(ch, event_water_crossing);
+	disarm_char_nevents(victim, event_water_crossing);
 	gmcp_char_vitals(ch);
 	gmcp_combat_target(ch, victim);
 	ch->specials.next_fighting = combat_list;
@@ -8104,7 +8163,7 @@ int dodgeSucceed(P_char char_dodger, P_char attacker, P_obj wpn)
 	// Level 56 drow has 10% innate dodge.  Excessive weight will negate this bonus.
 	// This is actually a 9% dodge for all !stunned drow within weight limit..
 	//   I set the weight limit to 100 since the range for load_modifier is between 75 and 300.
-	if (GET_RACE(char_dodger) == RACE_DROW && !IS_STUNNED(char_dodger) &&
+	if (tutorial_mobile_mechanics_race(char_dodger) == RACE_DROW && !IS_STUNNED(char_dodger) &&
 	    (load_modifier(char_dodger) < 100) && !number(0, 10))
 	{
 		// debug("Drow dodge (%s).", GET_NAME(char_dodger));
@@ -8678,15 +8737,10 @@ int parrySucceed(P_char victim, P_char attacker, P_obj wpn)
 	*/
 /* remove a char from the list of fighting chars */
 
-void stop_fighting(P_char ch)
+// Terminal removal also accepts characters already detached or killed by a room hook.
+static void unlink_fighting(P_char ch)
 {
 	P_char tmp;
-
-	if (!SanityCheck(ch, "stop_fighting") || !IS_FIGHTING(ch))
-		return;
-
-	if (IS_SET(ch->specials.affected_by3, AFF3_TRACKING)) // needed for new track *Alv*
-		REMOVE_BIT(ch->specials.affected_by3, AFF3_TRACKING);
 
 	ch->specials.was_fighting = GET_OPPONENT(ch);
 
@@ -8710,6 +8764,24 @@ void stop_fighting(P_char ch)
 
 	ch->specials.next_fighting = NULL;
 	GET_OPPONENT(ch) = NULL;
+}
+
+void stop_fighting_for_extraction(P_char ch)
+{
+	if (GET_OPPONENT(ch))
+		unlink_fighting(ch);
+	StopAllAttackers(ch);
+}
+
+void stop_fighting(P_char ch)
+{
+	if (!SanityCheck(ch, "stop_fighting") || !IS_FIGHTING(ch))
+		return;
+
+	if (IS_SET(ch->specials.affected_by3, AFF3_TRACKING)) // needed for new track *Alv*
+		REMOVE_BIT(ch->specials.affected_by3, AFF3_TRACKING);
+
+	unlink_fighting(ch);
 	telemetry_combat_context_changed(ch);
 
 	if (affected_by_spell(ch, SPELL_CEGILUNE_BLADE))
@@ -9332,9 +9404,15 @@ void perform_violence(void)
 			}
 		}
 
-		// If someone's hitting on opponent (ch is) then give opponent melee exp.
-		if (melee_exp_pulse && opponent && !IS_IMMOBILE(ch) && (opponent != ch) &&
-		    IS_PC(opponent) && (opponent->in_room == ch->in_room))
+		if (!FightingCheck(ch, opponent, "perform_violence"))
+			continue;
+
+		// Keep periodic XP independent of attack timers, but require an attacker
+		// that can act. The attack-round checks below also handle their feedback.
+		if (melee_exp_pulse && !IS_IMMOBILE(ch) && !HOLD_CANT_ATTACK(ch) &&
+		    !item_action_active(ch) &&
+		    (!IS_AFFECTED2(ch, AFF2_CASTING) || affected_by_spell(ch, SPELL_BATTLEMAGE)) &&
+		    !IS_AFFECTED5(ch, AFF5_NOT_OFFENSIVE) && opponent != ch && IS_PC(opponent))
 		{
 			// Make sure we're gaining a positive amount.
 			if (GET_LEVEL(ch) * 2 > GET_LEVEL(opponent))
@@ -9365,9 +9443,6 @@ void perform_violence(void)
 			startPvP(ch, GET_RACEWAR(ch) != GET_RACEWAR(opponent));
 			startPvP(opponent, GET_RACEWAR(ch) != GET_RACEWAR(opponent));
 		}
-
-		if (!FightingCheck(ch, opponent, "perform_violence"))
-			continue;
 
 		/* misfire */
 		if (IS_PC(ch))
@@ -10255,12 +10330,12 @@ double orc_horde_dam_modifier(P_char ch, double dam, int attacking)
 
 		if (attacking)
 		{
-			if (GET_RACE(horde) == RACE_ORC && ch != horde)
+			if (tutorial_mobile_mechanics_race(horde) == RACE_ORC && ch != horde)
 				c++;
 		}
 		else
 		{
-			if (GET_RACE(horde) == RACE_ORC)
+			if (tutorial_mobile_mechanics_race(horde) == RACE_ORC)
 				c--;
 		}
 	}

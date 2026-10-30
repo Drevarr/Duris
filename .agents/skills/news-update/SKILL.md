@@ -67,6 +67,13 @@ differ, so unpublished local work cannot slip into announcements. If remote acce
 fails, continue useful local research but report the exact verified boundary.
 Do not claim GitHub is fully covered or substitute an unverified local HEAD.
 
+When an authorized deployment supplies newly authored and published help, include
+those specific additions as a separate content source alongside the GitHub history
+inventory. Verify their source diff and successful in-game lookup, and announce
+the useful topics/commands without calling local edits merged history. Keep the
+GitHub baseline/tip accounting unchanged. This exception does not include other
+unpublished local work or bug-report triage and issue creation.
+
 ## Account for the whole range
 
 Keep a working inventory keyed by commit SHA or PR, with the source, each distinct
@@ -177,12 +184,22 @@ at most 78 where practical, counting color tokens as zero width. Shorten or wrap
 headlines too. Never split a color token; keep command syntax together where it
 fits. Read a color-stripped preview as well as the source to catch awkward wraps.
 
+Keep the current season's completed PWIPE announcement pinned immediately below
+the `DURIS PLAYER NEWS` title and its rule, above `Updated:`, the introduction and
+all dated news. Preserve its confirmed date/time and short celebratory wording
+when adding later updates; newest-first ordering applies to the dated sections
+below it. Replace the pinned announcement only for a confirmed later wipe or an
+explicit user request. Keep it compact so the newest release still fits on the
+first page. Adding or restyling this banner does not advance the history coverage
+boundary.
+
 Use this shape, adapting dates, headline and topics to the evidence:
 
 ```text
 &+W======================================================================&n
 &+Y                           DURIS PLAYER NEWS&n
 &+W======================================================================&n
+[Preserve the current season's colored PWIPE announcement and closing rule.]
 &+WUpdated: Month DD, YYYY&n
 
 Welcome back! [Brief, accurate summary of the period and its highlights.]
@@ -224,7 +241,8 @@ Before calling the file fully up to date:
   source prevents a complete audit, report the precise outstanding range.
 - Read the full new text for tone, practical detail and nontechnical clarity.
   Inspect visible widths, complete/reset color tokens, date order, blank lines,
-  final newline and the diff. Keep unrelated edits and the archive intact.
+  final newline and the diff. Confirm the current PWIPE announcement remains
+  pinned above all dated updates. Keep unrelated edits and the archive intact.
 - Run `git diff --check -- lib/information/news` and
   `bash -n scripts/import_help_to_prod.sh`, then always run
   `./scripts/import_help_to_prod.sh --news-only --dry-run` before publication in
@@ -259,5 +277,9 @@ be completed, report publication and verification separately with the missing
 check; do not claim the update is fully verified. Quit and close the session.
 
 Stop on errors and inspect the result before retrying. Do not restart the game,
-change unrelated data, commit/push, or send announcements as part of this workflow.
+change unrelated data, or send announcements as part of this workflow. A standalone
+news update does not commit/push. When invoked by an authorized
+[deployment](../deploy-production/SKILL.md#6-commit-and-push-verified-content-and-feedback-directly-to-master),
+return to its final step to commit the verified news alongside that deployment's
+verified help and feedback cleanup, and push directly to `master` after verification.
 Details are in `docs/content/HELP_SYSTEM.md`, under "Publishing news only".

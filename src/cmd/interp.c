@@ -20,6 +20,8 @@
 #include "world/events.h"
 #include "world/falling.h"
 #include "cmd/interp.h"
+#include "cmd/battleprep.h"
+#include "cmd/last.h"
 #include "kingdom/kingdom.h"
 #include "core/utils.h"
 #include <arpa/telnet.h>
@@ -35,6 +37,7 @@
 #include "economy/boon.h"
 #include "world/buildings.h"
 #include "combat/ctf.h"
+#include "combat/training_dummy.h"
 #include "classes/disguise.h"
 #include "world/epic.h"
 #include "world/graph.h"
@@ -1271,7 +1274,15 @@ const char *command[MAX_CMD] = {
 	"_retired_863",
 	"dummy",
 	"flights",
-	"\n" /* MAX_CMD = 866, MAX_CMD_LIST = 1000 */
+	"qview",
+	"qref",
+	"qlist",
+	"hlqlist",
+	"qinfo",
+	"divineboon",
+	"battleprep",
+	"last",
+	"\n" /* MAX_CMD = 874, MAX_CMD_LIST = 1000 */
 };
 
 const char *fill_words[] = { "in", "from", "with", "the", "on", "at", "to", "\n" };
@@ -1395,7 +1406,8 @@ bool cmd_allowed_while_casting(P_char ch, int cmd)
 {
 	return cmd == CMD_PETITION || cmd == CMD_RETURN ||
 	       (cmd == CMD_ABORT && ch &&
-		(item_action_active(ch) || PLR3_FLAGGED(ch, PLR3_ABORT_CASTING)));
+		(item_action_active(ch) || get_scheduled(ch, event_water_crossing) ||
+		 PLR3_FLAGGED(ch, PLR3_ABORT_CASTING)));
 }
 
 static bool is_retired_command_spelling(const char *word, uint length)
@@ -1562,6 +1574,18 @@ static int input_command_number(const char *input)
 	word[len] = '\0';
 
 	return old_search_block(word, 0, len, command, 2);
+}
+
+/* Preserve the old state until the AFK toggle can apply its value. "a" resolves
+ * to anonymous, while "af" and "afk" resolve to afk in the toggle table. */
+bool input_is_afk_toggle(const char *input)
+{
+	if (input_command_number(input) != CMD_TOGGLE)
+		return false;
+	char word[MAX_INPUT_LENGTH];
+	const char *arguments = one_argument(input, word);
+	one_argument(arguments, word);
+	return !strcmp(word, "af") || !strcmp(word, "afk");
 }
 
 /** Return whether a speech line is a stateful blackjack continuation of OFFER. */
@@ -1849,7 +1873,7 @@ void command_interpreter(P_char ch, char *argument)
 		}
 	}
 
-	if (IS_PC(ch) && IS_SET(ch->specials.act, PLR_AFK))
+	if (IS_PC(ch) && IS_SET(ch->specials.act, PLR_AFK) && !input_is_afk_toggle(argument))
 	{
 		REMOVE_BIT(ch->specials.act, PLR_AFK);
 		if (ch->desc && ch->desc->connected == CON_PLAYING)
@@ -1861,6 +1885,22 @@ void command_interpreter(P_char ch, char *argument)
 	 * falling and water-current checks below would otherwise roll the dice --
 	 * and even move the character out of the room -- on a command that is about
 	 * to be rejected anyway. */
+	if (get_scheduled(ch, event_water_crossing))
+	{
+		/* Cancel before a fall or current can consume the abort command. */
+		if (cmd == CMD_ABORT)
+		{
+			do_abort(ch, argument + begin + look_at, cmd);
+			return;
+		}
+		if (!cmd_allowed_while_casting(ch, cmd))
+		{
+			send_to_char(
+				"You're preparing to cross the shoreline! Try 'abort' to stop.\r\n",
+				ch);
+			return;
+		}
+	}
 	if (item_action_active(ch) && !cmd_allowed_while_casting(ch, cmd))
 	{
 		send_to_char("You're busy using an item! Try 'abort' to stop.\r\n", ch);
@@ -2820,7 +2860,7 @@ bool special(P_char ch, int cmd, char *arg)
 			{
 				continue;
 			}
-			if ((k != ch) && IS_NPC(k) && IS_AWAKE(k) &&
+			if ((k != ch) && IS_NPC(k) && !training_dummy_is(k) && IS_AWAKE(k) &&
 			    mob_index[GET_RNUM(k)].func.mob &&
 			    !affected_by_spell(k, TAG_CONJURED_PET) &&
 			    (!IS_IMMOBILE(k) ||
@@ -2836,7 +2876,7 @@ bool special(P_char ch, int cmd, char *arg)
 		 * quest mobile present?
 		 */
 		for (k = world[ch->in_room].people; k; k = k->next_in_room)
-			if ((k != ch) && IS_NPC(k) && IS_AWAKE(k) &&
+			if ((k != ch) && IS_NPC(k) && !training_dummy_is(k) && IS_AWAKE(k) &&
 			    mob_index[GET_RNUM(k)].qst_func)
 				if ((*mob_index[GET_RNUM(k)].qst_func)(k, ch, cmd, arg))
 					return (1);
@@ -2984,6 +3024,7 @@ void assign_command_pointers(void)
 	CMD_GRT(CMD_ECHOG, STAT_DEAD + POS_PRONE, do_echog, LESSER_G);
 	CMD_GRT(CMD_ECHOZ, STAT_DEAD + POS_PRONE, do_echoz, LESSER_G);
 	CMD_GRT(CMD_FINGER, STAT_DEAD + POS_PRONE, do_finger, AVATAR);
+	CMD_GRT(CMD_LAST, STAT_DEAD + POS_PRONE, do_last, AVATAR);
 	CMD_GRT(CMD_FORCE, STAT_DEAD + POS_PRONE, do_force, GREATER_G);
 	CMD_GRT(CMD_FREEZE, STAT_DEAD + POS_PRONE, do_freeze, LESSER_G);
 	CMD_GRT(CMD_GRANT, STAT_DEAD + POS_PRONE, do_grant, 0);
@@ -3091,7 +3132,7 @@ void assign_command_pointers(void)
 #endif
 	CMD_Y(CMD_NCHAT, STAT_SLEEPING + POS_PRONE, do_nchat, 1, FALSE);
 	CMD_Y(CMD_JESTROS, STAT_SLEEPING + POS_PRONE, do_jestros, 1, FALSE);
-	CMD_Y(CMD_PAGE, STAT_NORMAL + POS_STANDING, do_page, IMMORTAL, FALSE);
+	CMD_Y(CMD_PAGE, STAT_NORMAL + POS_STANDING, do_page, GREATER_G, FALSE);
 	CMD_Y(CMD_SKILLS, STAT_SLEEPING + POS_PRONE, do_skills, 1, FALSE);
 	CMD_Y(CMD_SPELLS, STAT_SLEEPING + POS_PRONE, do_spells, 1, FALSE);
 	CMD_Y(CMD_TELL, STAT_RESTING + POS_PRONE, do_tell, 1, FALSE);
@@ -3451,7 +3492,8 @@ void assign_command_pointers(void)
 	CMD_N(CMD_OUTPOST, STAT_RESTING + POS_PRONE, do_outpost, 0, FALSE);
 	CMD_Y(CMD_OFFENSIVE, STAT_RESTING + POS_PRONE, do_offensive, 0, FALSE);
 	CMD_Y(CMD_FOCUS, STAT_RESTING + POS_SITTING, do_assimilate, 0, TRUE);
-	CMD_Y(CMD_BOON, STAT_SLEEPING + POS_PRONE, do_boon, 0, FALSE);
+	CMD_Y(CMD_DIVINEBOON, STAT_DEAD + POS_PRONE, do_divineboon, IMMORTAL, FALSE);
+	CMD_Y(CMD_BOON, STAT_SLEEPING + POS_PRONE, do_divine_boon, 0, FALSE);
 	CMD_Y(CMD_CTF, STAT_NORMAL + POS_STANDING, do_ctf, 0, FALSE);
 	CMD_Y(CMD_AUCTION, STAT_NORMAL + POS_STANDING, new_ah_call, 0, FALSE);
 
@@ -3460,6 +3502,11 @@ void assign_command_pointers(void)
 	CMD_Y(CMD_HLIST, STAT_DEAD + POS_PRONE, do_hlist, IMMORTAL, FALSE);
 	CMD_Y(CMD_OLIST, STAT_DEAD + POS_PRONE, do_olist, IMMORTAL, FALSE);
 	CMD_Y(CMD_MLIST, STAT_DEAD + POS_PRONE, do_mlist, IMMORTAL, FALSE);
+	CMD_Y(CMD_QVIEW, STAT_DEAD + POS_PRONE, do_qview, IMMORTAL, FALSE);
+	CMD_Y(CMD_QREF, STAT_DEAD + POS_PRONE, do_qref, IMMORTAL, FALSE);
+	CMD_Y(CMD_QINFO, STAT_DEAD + POS_PRONE, do_qref, IMMORTAL, FALSE);
+	CMD_Y(CMD_QLIST, STAT_DEAD + POS_PRONE, do_qlist, IMMORTAL, FALSE);
+	CMD_Y(CMD_HLQLIST, STAT_DEAD + POS_PRONE, do_qlist, IMMORTAL, FALSE);
 	CMD_Y(CMD_ZCHECK, STAT_DEAD + POS_PRONE, do_zcheck, IMMORTAL, FALSE);
 	CMD_Y(CMD_ABORT, STAT_RESTING + POS_PRONE, do_abort, 0, TRUE);
 	CMD_N(CMD_KINGDOM, STAT_RESTING + POS_PRONE, do_kingdom, 0, FALSE);
@@ -3471,6 +3518,7 @@ void assign_command_pointers(void)
 	CMD_Y(CMD_FLIGHTS, STAT_DEAD + POS_PRONE, do_flights, 0, FALSE);
 	CMD_N(CMD_POLL, STAT_NORMAL + POS_PRONE, do_poll, 30, FALSE);
 	CMD_GRT(CMD_NEWCHAR, STAT_DEAD + POS_PRONE, do_newchar, OVERLORD);
+	CMD_GRT(CMD_BATTLEPREP, STAT_DEAD + POS_PRONE, do_battleprep, OVERLORD);
 
 	/*
 	 * 'commands' which exist only to trigger specials

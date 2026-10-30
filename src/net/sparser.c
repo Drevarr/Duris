@@ -311,7 +311,7 @@ int get_weight_allies_in_room(P_char ch, int room_index)
 	{
 		if (is_ally(ch, t_char))
 		{
-			chrace = GET_RACE(t_char);
+			chrace = tutorial_mobile_mechanics_race(t_char);
 			switch (chrace)
 			{
 			case RACE_OGRE:
@@ -940,7 +940,7 @@ int SpellCastTime(P_char ch, int spl)
 
 	dura = (int)skills[spl].beats;
 	// if( IS_PC(ch) ) debug( "SpellCastTime: initial beats: %d, PULSE_SPELLCAST: %d", dura, PULSE_SPELLCAST );
-	dura = (dura * spell_pulse_data[GET_RACE(ch)]);
+	dura = (dura * spell_pulse_data[tutorial_mobile_mechanics_race(ch)]);
 	// if( IS_PC(ch) ) debug( "SpellCastTime: beats with racial pulse: %d", dura );
 	// Global racial multiplier: 1.0 is neutral, not a one-beat surcharge.
 	dura = (int)(dura * get_property("spellcast.pulse.racial.All", 1.000));
@@ -1269,6 +1269,12 @@ void do_abort(P_char ch, char * /*argument*/, int /*cmd*/)
 {
 	if (!IS_ALIVE(ch))
 		return;
+	if (get_scheduled(ch, event_water_crossing))
+	{
+		disarm_char_nevents(ch, event_water_crossing);
+		send_to_char("You stop preparing to cross the shoreline.\n", ch);
+		return;
+	}
 	if (abort_item_action(ch))
 	{
 		send_to_char("You stop using the item.\r\n", ch);
@@ -2344,7 +2350,7 @@ void do_cast(P_char ch, char *argument, int cmd)
 		return;
 	}
 	if (affected_by_spell(ch, SKILL_BERSERK) && !IS_TRUSTED(ch) &&
-	    GET_RACE(ch) != RACE_MINOTAUR)
+	    tutorial_mobile_mechanics_race(ch) != RACE_MINOTAUR)
 	{
 		send_to_char("You are too filled with &+RRAGE&N to cast!\n", ch);
 		return;
@@ -2784,10 +2790,14 @@ void event_spellcast(P_char ch, P_char victim, P_obj /*obj*/, void *data)
 		args[0] = '\0';
 	}
 
-	/* Reject elemental-aura no-ops before use_spell consumes mana or a slot. */
-	if (!weaving && arg->spell == SPELL_ELEMENTAL_AURA)
+	/* Reject conflicting auras/forms before use_spell consumes mana or a slot. */
+	if (!weaving)
 	{
-		const char *failure = elemental_aura_failure_message(ch);
+		const char *failure = elemental_form_failure_message(ch, tar_char, arg->spell);
+		if (!failure)
+			failure = elemental_summon_failure_message(ch, args, arg->spell);
+		if (!failure && arg->spell == SPELL_ELEMENTAL_AURA)
+			failure = elemental_aura_failure_message(ch);
 		if (failure)
 		{
 			send_to_char(failure, ch);

@@ -16,24 +16,37 @@ from pathlib import Path
 import subprocess
 import tempfile
 
-from _paths import ROOT, source
+from _paths import ROOT, HARNESS_STUBS, source
 
 SQL_PLAYER = source("sql_player.c").read_text(encoding="utf-8")
 START = SQL_PLAYER.index("static int ship_next_db_id = -1;")
 SAVE_SHIP = SQL_PLAYER[START:SQL_PLAYER.index("/* The stored rows of one ship", START)]
 
-HARNESS = r'''
+HARNESS = r'''#include "economy/divine_trade_runtime.h"
+bool divine_trade_runtime_busy(const ShipData *) {return false;}
+std::vector<divine_trade_book> divine_trade_runtime_ship_books(uint32_t) {return {};}
+uint64_t divine_trade_runtime_ship_revision(uint32_t) {return 0;}
+void divine_trade_runtime_ship_saved(uint32_t) {}
+
+bool divine_trade_runtime_invalidate(ShipData *,int) {return true;}
+void divine_trade_runtime_restore_books(std::vector<divine_trade_book>,uint32_t) {}
+bool divine_trade_book_encode(const divine_trade_book &,std::vector<uint8_t> *) {return false;}
+
 #include "core/structs.h"
 #include "ships/ships.h"
+P_ship find_ship_by_runtime_ref(ShipRuntimeRef) {return nullptr;}
+void queue_ship_save(P_ship,const char *) {}
 #include "sql/sql.h"
 #include "sql/sql_async.h"
 #include "sql/sql_player.h"
 
 #include <cassert>
+#include <cmath>
 #include <cstdarg>
 #include <cstdio>
 #include <cstring>
 #include <string>
+#include <map>
 #include <vector>
 
 static int handle = 0;
@@ -53,6 +66,8 @@ bool sql_queue_statements_at(struct persistence_query_site, std::vector<std::str
 	queued.push_back(std::move(statements));
 	return true;
 }
+bool sql_queue_statements_at(struct persistence_query_site site,std::vector<std::string> statements,std::shared_ptr<sql_write_receipt> receipt)
+{const bool ok=sql_queue_statements_at(site,std::move(statements));receipt->ok=ok;receipt->finished.store(true);return ok;}
 std::string sql_format(const char *format, ...)
 {
 	char text[4096];
@@ -82,6 +97,7 @@ int main()
 
 	// Before the boot has read the highest id, a new ship is not saved.
 	assert(!sql_save_ship(&ship) && ship.db_id == -1 && queued.empty());
+ sql_reserve_ship_ids(99);assert(ship_next_db_id==-1);
 
 	// A new ship takes the next id, and its save is one job: its row by id, then
 	// four armour sides, its crew and every slot.
@@ -90,7 +106,9 @@ int main()
 	const std::vector<std::string> &first = queued[0];
 	assert((int)first.size() == 1 + 4 + 1 + MAXSLOTS);
 	assert(starts(first[0], "insert into ships (id, owner_name,"));
-	assert(first[0].find("values (8, 'Owner', 'Brine',") != std::string::npos);
+	assert(first[0].find("select 8, 'Owner', 'Brine',") != std::string::npos);
+	assert(first[0].find("where exists (select 1 from player_data where name='Owner')") !=
+	       std::string::npos);
 	assert(first[0].find("on duplicate key update owner_name=values(owner_name)") !=
 	       std::string::npos);
 	assert(starts(first[1], "insert into ship_armor") && starts(first[5], "insert into ship_crew") &&
@@ -107,6 +125,9 @@ int main()
 	in_transaction = true;
 	assert(sql_save_ship(&ship) && queued.size() == 4 && joined.empty());
 
+ sql_reserve_ship_ids(9000);
+ ShipData replacement=ship;replacement.db_id=-1;
+ assert(sql_save_ship(&replacement) && replacement.db_id==9001);
 	puts("ship saves take their id from memory and queue one job");
 	return 0;
 }
@@ -118,6 +139,6 @@ with tempfile.TemporaryDirectory(prefix="duris-ship-save-") as directory:
     subprocess.run(
         ["g++", "-std=c++20", "-g", "-fsanitize=address,undefined", "-fno-omit-frame-pointer",
          "-Isrc", "-Itests/async", "-I/usr/include/mysql",
-         str(path / "test.cpp"), "-o", str(path / "test")],
+         str(path / "test.cpp"), str(HARNESS_STUBS), "-o", str(path / "test")],
         cwd=ROOT, check=True)
     subprocess.run([str(path / "test")], check=True)

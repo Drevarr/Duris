@@ -1163,6 +1163,8 @@ static const char *critical_command_label(critical_command_type type)
 		return "shop trade";
 	case critical_command_type::collector:
 		return "collector transaction";
+	case critical_command_type::divine_trade:
+		return "Divine cargo transaction";
 	}
 	return "unknown operation";
 }
@@ -1670,7 +1672,7 @@ int exist_in_equipment(P_char ch, int bitflag)
  * This function is called about a billion times a minute (ok, so I exaggerated a little), don't even
  * THINK about doing anything to it that would make it slower, even a LITTLE bit.  JAB
  */
-bool ac_can_see(P_char sub, P_char obj, bool /*check_z*/)
+bool ac_can_see_from(P_char sub, P_char obj, int viewer_room)
 {
 	bool globe, flame, dayblind;
 	int sroom, oroom, race;
@@ -1682,8 +1684,9 @@ bool ac_can_see(P_char sub, P_char obj, bool /*check_z*/)
 		return FALSE;
 	}
 
-	// No idea what happened, but let's hack this until we figure it out.
-	if (sub->in_room == NOWHERE)
+	// Departure cleanup can render messages after either character has left the world.
+	if (!obj || viewer_room < 0 || viewer_room > top_of_world || obj->in_room < 0 ||
+	    obj->in_room > top_of_world)
 		return FALSE;
 
 	/* minor detail, sleeping chars can't see squat! */
@@ -1779,8 +1782,11 @@ bool ac_can_see(P_char sub, P_char obj, bool /*check_z*/)
 	}
 
 	// First, we need to see if the subject can see anything or is dayblind / nightblind in the room their in.
-	dayblind = IS_DAYBLIND(sub);
-	sroom = sub->in_room;
+	// room_light adds positive actor light on arrival. Project that contribution
+	// only into the requested room; ordinary same-room calls already include it.
+	const bool projected_light = viewer_room != sub->in_room && sub->light > 0;
+	dayblind = IS_DAYBLIND_AT(sub, viewer_room);
+	sroom = viewer_room;
 	if (!IS_MAP_ROOM(sroom))
 	{
 		// Check for dayblind: Light room with dayblind subject.
@@ -1824,9 +1830,10 @@ bool ac_can_see(P_char sub, P_char obj, bool /*check_z*/)
 			}
 		}
 		// Else check for nightblind: Dark room with no ultra subject.
-		else if (!IS_AFFECTED2(sub, AFF2_ULTRAVISION) && !CAN_DAYPEOPLE_SEE(sroom))
+		else if (!IS_AFFECTED2(sub, AFF2_ULTRAVISION) && !projected_light &&
+			 !CAN_DAYPEOPLE_SEE(sroom))
 		{
-			flame = FALSE;
+			flame = viewer_room != sub->in_room && IS_AFFECTED4(sub, AFF4_MAGE_FLAME);
 			// Anyone with mage flame overrides room to twilight.
 			for (tmp_char = world[sroom].people; tmp_char;
 			     tmp_char = tmp_char->next_in_room)
@@ -1911,9 +1918,10 @@ bool ac_can_see(P_char sub, P_char obj, bool /*check_z*/)
 		// Else check for nightblind: Dark room with no infra/ultra subject.
 		else if (!has_innate(sub, INNATE_OPHIDIAN_EYES) &&
 			 !IS_AFFECTED(sub, AFF_INFRAVISION) &&
-			 !IS_AFFECTED2(sub, AFF2_ULTRAVISION) && !CAN_DAYPEOPLE_SEE(oroom))
+			 !IS_AFFECTED2(sub, AFF2_ULTRAVISION) &&
+			 !(projected_light && oroom == viewer_room) && !CAN_DAYPEOPLE_SEE(oroom))
 		{
-			flame = FALSE;
+			flame = viewer_room != sub->in_room && IS_AFFECTED4(sub, AFF4_MAGE_FLAME);
 			// Anyone with mage flame overrides room to twilight.
 			for (tmp_char = world[sroom].people; tmp_char;
 			     tmp_char = tmp_char->next_in_room)
@@ -1952,6 +1960,11 @@ bool ac_can_see(P_char sub, P_char obj, bool /*check_z*/)
 	}
 
 	return TRUE;
+}
+
+bool ac_can_see(P_char sub, P_char obj, bool /*check_z*/)
+{
+	return ac_can_see_from(sub, obj, sub ? sub->in_room : NOWHERE);
 }
 
 /*
@@ -2571,6 +2584,12 @@ int get_multicast_chars(P_char leader, int m_class, int min_level)
  * 'dir', returns -1 on error, else 0+ for moves needed.  -JAB
  */
 
+bool has_water_form_travel(P_char ch)
+{
+	return ch && IS_PC(ch) && GET_SPEC(ch, CLASS_CONJURER, SPEC_WATER) &&
+	       affected_by_spell(ch, SPELL_WATER_FORM);
+}
+
 int move_cost(P_char ch, int dir)
 {
 	int moves, a, b;
@@ -2630,7 +2649,10 @@ int move_cost(P_char ch, int dir)
 		moves /= 2;
 	}
 
-	return MAX(1, moves);
+	moves = MAX(1, moves);
+	if (has_water_form_travel(ch) && (sector_idx_a == SECT_OCEAN || sector_idx_b == SECT_OCEAN))
+		moves = MAX(1, moves * 3 / 4);
+	return moves;
 }
 
 /*
@@ -2864,7 +2886,24 @@ bool aggressive_to_class(P_char ch, P_char target)
 	return FALSE;
 }
 
-bool aggressive_to(P_char ch, P_char target)
+bool has_native_planar_affinity_at(P_char ch, int room)
+{
+	if (!ch || IS_NPC(ch) || room < 0 || room > top_of_world)
+		return false;
+
+	return (IS_AIR(room) && has_innate(ch, INNATE_AIR_AFFINITY)) ||
+	       (IS_WATER(room) && has_innate(ch, INNATE_WATER_AFFINITY)) ||
+	       (IS_FIRE(room) && has_innate(ch, INNATE_FIRE_AFFINITY)) ||
+	       (IS_EARTH(room) && has_innate(ch, INNATE_EARTH_AFFINITY)) ||
+	       (IS_ASTRAL(room) && has_innate(ch, INNATE_ASTRAL_NATIVE));
+}
+
+bool has_native_planar_affinity(P_char ch)
+{
+	return has_native_planar_affinity_at(ch, ch ? ch->in_room : NOWHERE);
+}
+
+bool aggressive_to_at(P_char ch, P_char target, int target_room)
 {
 	int chance;
 	struct affected_type *af;
@@ -2943,10 +2982,8 @@ bool aggressive_to(P_char ch, P_char target)
 		if (IS_AGGROFLAG(ch, AGGR_DAY_ONLY) && !IS_DAY)
 			return FALSE;
 
-		if (has_innate(target, INNATE_ASTRAL_NATIVE) &&
-		    GET_LEVEL(target) >= GET_LEVEL(ch) &&
-		    world[target->in_room].number >= ASTRAL_VNUM_BEGIN &&
-		    world[target->in_room].number <= ASTRAL_VNUM_END)
+		if (has_native_planar_affinity_at(target, target_room) &&
+		    !CheckFor_remember(ch, target))
 			return FALSE;
 
 		/* aggro to all?  how nice! */
@@ -3029,7 +3066,8 @@ bool aggressive_to(P_char ch, P_char target)
 
 		/* try to kill invaders on sight  */
 
-		if (IS_AGGROFLAG(ch, AGGR_OUTCASTS) && IS_PC(target) && IS_INVADER(target))
+		if (IS_AGGROFLAG(ch, AGGR_OUTCASTS) && IS_PC(target) &&
+		    IS_INVADER_AT(target, target_room))
 			return TRUE;
 
 		/* now, race-specific flags */
@@ -3081,6 +3119,11 @@ bool aggressive_to(P_char ch, P_char target)
 	}
 
 	return FALSE;
+}
+
+bool aggressive_to(P_char ch, P_char target)
+{
+	return aggressive_to_at(ch, target, target ? target->in_room : NOWHERE);
 }
 
 /*
@@ -5375,6 +5418,7 @@ void cast_as_area(P_char ch, int spl, int level, char *arg)
 {
 	P_char tch, nch;
 	void (*spell_func)(int, P_char, char *, int, P_char, P_obj);
+	const int spell_type = spl == SPELL_SOLAR_FLARE ? SPELL_TYPE_STAFF : SPELL_TYPE_SPELL;
 
 	if (!ch)
 	{
@@ -5391,7 +5435,7 @@ void cast_as_area(P_char ch, int spl, int level, char *arg)
 		appear(ch);
 		if (IS_SET(skills[spl].targets, TAR_AREA) ||
 		    IS_SET(skills[spl].targets, TAR_IGNORE))
-			((*spell_func)(level, ch, arg, SPELL_TYPE_SPELL, 0, 0));
+			((*spell_func)(level, ch, arg, spell_type, 0, 0));
 		else if (IS_SET(skills[spl].targets, TAR_CHAR_ROOM))
 		{
 			for (tch = world[ch->in_room].people; tch; tch = nch)
@@ -5399,14 +5443,14 @@ void cast_as_area(P_char ch, int spl, int level, char *arg)
 				nch = tch->next_in_room;
 				if (ch != tch && (!ch->group || (ch->group != tch->group)))
 				{
-					((*spell_func)(level, ch, arg, SPELL_TYPE_SPELL, tch, 0));
+					((*spell_func)(level, ch, arg, spell_type, tch, 0));
 				}
 			}
 		}
 	}
 	else if (IS_SET(skills[spl].targets, TAR_AREA) || IS_SET(skills[spl].targets, TAR_IGNORE))
 	{
-		((*spell_func)(level, ch, arg, SPELL_TYPE_SPELL, 0, 0));
+		((*spell_func)(level, ch, arg, spell_type, 0, 0));
 	}
 	else
 	{
@@ -5419,11 +5463,11 @@ void cast_as_area(P_char ch, int spl, int level, char *arg)
 			}
 			if (IS_SET(skills[spl].targets, TAR_CHAR_ROOM))
 			{
-				((*spell_func)(level, ch, arg, SPELL_TYPE_SPELL, tch, 0));
+				((*spell_func)(level, ch, arg, spell_type, tch, 0));
 			}
 			else if (IS_SET(skills[spl].targets, TAR_SELF_ONLY))
 			{
-				((*spell_func)(level, tch, arg, SPELL_TYPE_SPELL, tch, 0));
+				((*spell_func)(level, tch, arg, spell_type, tch, 0));
 			}
 		}
 	}
@@ -5905,6 +5949,9 @@ bool IS_TWILIGHT_ROOM(int r)
 //   it's not outdoors, ok?
 bool IS_OUTDOORS(int r)
 {
+	if (r < 0 || r > top_of_world)
+		return FALSE;
+
 	int sect = world[r].sector_type;
 	int flags = world[r].room_flags;
 

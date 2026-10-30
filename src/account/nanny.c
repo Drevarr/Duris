@@ -26,6 +26,7 @@
 #include "account/newbie_kit_plan.h"
 #include "world/object_template.h"
 #include "account/creation_availability_config.h"
+#include "account/pwipe_launch.h"
 #include "combat/chaos_config.h"
 #include "combat/training_dummy.h"
 #include "account/chaos_eq_data.h"
@@ -38,6 +39,7 @@
 #include "core/utils.h"
 #include <arpa/telnet.h>
 #include <ctype.h>
+#include <limits.h>
 #include <stdio.h>
 #include <string.h>
 #include <sys/stat.h>
@@ -51,6 +53,7 @@
 #include "economy/currency_transaction.h"
 #include "economy/crafting.h"
 #include <array>
+#include <map>
 #include "item/item_movement_transaction.h"
 #include "item/item_ownership_runtime.h"
 #include "economy/shop_trade_transaction.h"
@@ -69,6 +72,7 @@
 #include "account/multiplay_whitelist.h"
 #include "classes/paladins.h"
 #include "player/player_load_materialize.h"
+#include "economy/divine_boon_delivery.h"
 #include "player/player_load_items.h"
 #include "player/player_load_pets.h"
 #include "player/player_load_pipeline.h"
@@ -262,7 +266,13 @@ int getNewPCidNumb(void)
 #else
 	// Every character's pid is in memory (sql_player_names_load()). init_char() records
 	// the new one there at once, so the next allocation is past it.
-	highestPCidNumb = sql_highest_player_pid() + 1;
+	const int highest = sql_highest_player_pid();
+	if (highest == INT_MAX)
+	{
+		logit(LOG_FILE, "could not allocate player id: native identity range exhausted");
+		return -1;
+	}
+	highestPCidNumb = highest + 1;
 	return highestPCidNumb;
 #endif
 }
@@ -600,6 +610,15 @@ static const char *chaos_kit_skip_reason(P_char ch, int slot)
 	return NULL;
 }
 
+static chaos_kit_item chaos_kit_item_for_character(P_char ch, const chaos_kit_item &item)
+{
+	// Centaurs have a foot slot, but wear() admits only horseshoes there.
+	// Golden horseshoes are portable and accepted by the enhance pool too.
+	if (IS_CENTAUR(ch) && item.slot == WEAR_FEET)
+		return { WEAR_FEET, 99061 };
+	return item;
+}
+
 static bool append_chaos_kit_item(P_char ch, P_obj bag, const chaos_kit_item *item,
 				  chaos_kit_objects &kit)
 {
@@ -609,6 +628,8 @@ static bool append_chaos_kit_item(P_char ch, P_obj bag, const chaos_kit_item *it
 		return false;
 	if (chaos_kit_skip_reason(ch, item->slot))
 		return true;
+	const chaos_kit_item compatible = chaos_kit_item_for_character(ch, *item);
+	item = &compatible;
 
 	P_obj obj = read_object(item->vnum, VIRTUAL);
 	if (!obj)
@@ -712,6 +733,143 @@ static bool build_chaos_kit(P_char ch, chaos_kit_objects &kit)
 			item_failure = true;
 	}
 	return !item_failure;
+}
+
+// Place each catalog item in its intended native wear category. Greedy "wear all"
+// can spend a cloak/wrist slot on another kit item with multiple wear flags.
+// Use wear(), including its binding, anatomy and hand-budget checks; never equip_char().
+void equip_chaos_kit(P_char ch)
+{
+	if (!ch || IS_NPC(ch) || GET_LEVEL(ch) != MAXLVLMORTAL)
+		return;
+	const int class_id = flag2idx(ch->player.m_class);
+	if (class_id < 1 || class_id > CLASS_COUNT)
+		return;
+	const int profile_id = chaos_eq_use_enhanceable_profile() ? 1 : 0;
+	const chaos_kit_item *optional = profile_id ? chaos_eq_enhanceable_optional_slots :
+						      chaos_eq_standard_optional_slots;
+	for (int pass = 0; pass < 3; ++pass)
+		for (const chaos_kit_item *list :
+		     { chaos_eq_profiles[class_id][profile_id].items, optional })
+			for (const chaos_kit_item *item = list; item && item->vnum; ++item)
+			{
+				if (item->slot < 0 || item->slot == HOLD ||
+				    chaos_kit_skip_reason(ch, item->slot))
+					continue;
+				const bool weapon = chaos_kit_weapon_slot(item->slot);
+				const bool shield = item->slot == WEAR_SHIELD;
+				const int vnum = chaos_kit_item_for_character(ch, *item).vnum;
+				if ((pass == 0 && (weapon || shield)) || (pass == 1 && !weapon) ||
+				    (pass == 2 && (!shield || GET_CLASS(ch, CLASS_MONK))))
+					continue;
+				for (P_obj object = ch->carrying; object;
+				     object = object->next_content)
+				{
+					if (OBJ_VNUM(object) != vnum)
+						continue;
+					if ((weapon || shield) &&
+					    get_numb_free_hands(ch) < wield_item_size(ch, object))
+						break;
+					for (const auto &position : equipment_pos_table)
+						if (position[2] == item->slot)
+						{
+							wear(ch, object, position[1], true);
+							break;
+						}
+					break;
+				}
+			}
+	char_light(ch);
+	room_light(ch->in_room, REAL);
+}
+
+// Read-only verification for the battle runner. Armor must be worn; hand items
+// are alternatives within the native hand budget, and books can stay carried.
+// Keep the same catalog and anatomy exclusions as the grant.
+bool chaos_kit_equipment_ready(P_char ch, P_char report_to)
+{
+	if (!ch || IS_NPC(ch) || GET_LEVEL(ch) != MAXLVLMORTAL)
+		return false;
+	const int class_id = flag2idx(ch->player.m_class);
+	if (class_id < 1 || class_id > CLASS_COUNT)
+		return false;
+	const int profile_id = chaos_eq_use_enhanceable_profile() ? 1 : 0;
+	const chaos_kit_item *optional = profile_id ? chaos_eq_enhanceable_optional_slots :
+						      chaos_eq_standard_optional_slots;
+	std::map<int, int> required, hand_items;
+	for (const chaos_kit_item *list :
+	     { chaos_eq_profiles[class_id][profile_id].items, optional })
+		for (const chaos_kit_item *item = list; item && item->vnum; ++item)
+			if (item->slot >= 0 && !chaos_kit_skip_reason(ch, item->slot))
+			{
+				const int vnum = chaos_kit_item_for_character(ch, *item).vnum;
+				if (chaos_kit_weapon_slot(item->slot) || item->slot == HOLD ||
+				    item->slot == WEAR_SHIELD)
+					++hand_items[vnum];
+				else
+					++required[vnum];
+			}
+	bool ready = !required.empty();
+	for (const auto &[vnum, count] : required)
+	{
+		int worn = 0;
+		for (P_obj object : ch->equipment)
+			if (object && OBJ_VNUM(object) == vnum)
+				++worn;
+		if (worn < count)
+		{
+			ready = false;
+			send_to_char_f(report_to, "Battleprep: %s CHAOS item %d worn %d/%d.\r\n",
+				       GET_NAME(ch), vnum, worn, count);
+		}
+	}
+	const bool monk = GET_CLASS(ch, CLASS_MONK);
+	bool weapon_worn = false;
+	for (int slot :
+	     { PRIMARY_WEAPON, SECONDARY_WEAPON, THIRD_WEAPON, FOURTH_WEAPON, WEAR_SHIELD, HOLD })
+	{
+		P_obj object = ch->equipment[slot];
+		if (object && monk)
+			ready = false; // The baseline monk fights without shield/held item penalties.
+		if (object && object->type == ITEM_WEAPON && hand_items.count(OBJ_VNUM(object)))
+			weapon_worn = true;
+	}
+	if (!monk && !weapon_worn)
+	{
+		send_to_char_f(report_to, "Battleprep: %s has no CHAOS weapon equipped.\r\n",
+			       GET_NAME(ch));
+		ready = false;
+	}
+	for (const auto &[vnum, count] : hand_items)
+	{
+		int owned = 0;
+		for (P_obj object : ch->equipment)
+			if (object && OBJ_VNUM(object) == vnum)
+				++owned;
+		for (P_obj object = ch->carrying; object; object = object->next_content)
+		{
+			if (OBJ_VNUM(object) != vnum)
+				continue;
+			++owned;
+			if (!monk && object->type != ITEM_SPELLBOOK &&
+			    get_numb_free_hands(ch) >= wield_item_size(ch, object))
+			{
+				send_to_char_f(
+					report_to,
+					"Battleprep: %s has room to equip CHAOS hand item %d.\r\n",
+					GET_NAME(ch), vnum);
+				ready = false;
+			}
+		}
+		if (owned < count)
+		{
+			send_to_char_f(report_to,
+				       "Battleprep: %s CHAOS hand item %d owned %d/%d.\r\n",
+				       GET_NAME(ch), vnum, owned, count);
+			ready = false;
+		}
+	}
+	return ready;
 }
 
 static void load_chaos_new_character_kit(P_char ch)
@@ -859,27 +1017,59 @@ void load_chaos_kit_bag(P_char staff, char *argument)
 
 // Main-thread capture adapter. This value-only view is never registered, given
 // an identity or passed to publication/worker code. Reuse the authoritative
-// weapon predicates instead of maintaining a second race/class policy.
+// item predicates instead of maintaining a second race/class policy.
 static newbie_item_facts capture_newbie_item_facts(P_char ch, const newbie_kit_item &item)
 {
 	const auto *prototype = find_object_template(item.vnum);
 	if (!prototype)
 		return {};
 	newbie_item_facts facts{ true, true, prototype->type == ITEM_SPELLBOOK };
-	if (item.regular && prototype->type == ITEM_WEAPON)
+	if (!item.regular)
+		return facts;
+
+	// Validate every ordinary starter object, not only weapons. Item admission
+	// follows the normal race/class rules before a durable UID is allocated.
+	obj_data view{};
+	view.R_num = prototype->R_num;
+	view.type = prototype->type;
+	view.value[0] = prototype->value[0];
+	view.extra_flags = prototype->extra_flags;
+	view.anti_flags = prototype->anti_flags;
+	view.anti2_flags = prototype->anti2_flags;
+	view.short_description = const_cast<char *>(prototype->short_description.c_str());
+	if (!can_char_use_item(ch, &view))
 	{
-		obj_data view{};
-		view.R_num = prototype->R_num;
-		view.type = prototype->type;
-		view.value[0] = prototype->value[0];
-		view.extra_flags = prototype->extra_flags;
-		view.anti_flags = prototype->anti_flags;
-		view.anti2_flags = prototype->anti2_flags;
-		// Only used for diagnostics by required_weapon_skill().
-		view.short_description = const_cast<char *>(prototype->short_description.c_str());
+		facts.available = false;
+		return facts;
+	}
+	if (prototype->type == ITEM_WEAPON)
+	{
 		const int skill_level = GET_LVL_FOR_SKILL(ch, required_weapon_skill(&view));
-		facts.weapon_admitted = skill_level && skill_level <= GET_LEVEL(ch) &&
-					can_char_use_item(ch, &view);
+		facts.weapon_admitted = skill_level && skill_level <= GET_LEVEL(ch);
+	}
+	else if (prototype->type == ITEM_ARMOR || prototype->type == ITEM_WORN ||
+		 prototype->type == ITEM_SHIELD)
+	{
+		// Reuse the equipment table and the character's actual body-slot rules.
+		// A single supported slot is sufficient for items with multiple wear flags.
+		bool has_wear_position = false;
+		bool has_usable_position = false;
+		for (const auto &position : equipment_pos_table)
+		{
+			// Ordinary armour also carries ITEM_HOLD. Holding a helmet or
+			// boots does not make their missing anatomical slot usable.
+			if (position[0] == ITEM_HOLD || position[0] == ITEM_WIELD)
+				continue;
+			if (!(prototype->wear_flags & position[0]))
+				continue;
+			has_wear_position = true;
+			if (has_eq_slot(ch, position[2]))
+			{
+				has_usable_position = true;
+				break;
+			}
+		}
+		facts.available = !has_wear_position || has_usable_position;
 	}
 	return facts;
 }
@@ -895,6 +1085,8 @@ static std::vector<prepared_newbie_item> prepare_legacy_newbie_plan(P_char ch)
 	input.blighter = GET_CLASS(ch, CLASS_BLIGHTER);
 	input.ailvio = ch->in_room > NOWHERE && ch->in_room <= top_of_world &&
 		       world[ch->in_room].number == 29201;
+	input.wutvr = ch->in_room > NOWHERE && ch->in_room <= top_of_world &&
+		      world[ch->in_room].number == VROOM_WUTVR_ENTRY;
 	input.bandages = GET_LVL_FOR_SKILL(ch, SKILL_BANDAGE);
 	input.shield = !GET_CLASS(ch, CLASS_PALADIN) && !GET_CLASS(ch, CLASS_ANTIPALADIN);
 	const auto selection = make_newbie_kit_plan(input);
@@ -907,7 +1099,28 @@ static std::vector<prepared_newbie_item> prepare_legacy_newbie_plan(P_char ch)
 	for (int spell = FIRST_SPELL; spell <= LAST_SPELL; ++spell)
 		if (get_spell_circle(ch, spell) == 1)
 			first_circle.push_back(spell);
-	return prepare_newbie_kit_items(selection, facts, first_circle);
+	auto prepared = prepare_newbie_kit_items(selection, facts, first_circle);
+	// All normal starter kits need one durable container, but existing race
+	// containers (including Blighter's fallback bag) must not be duplicated.
+	bool has_container = false;
+	for (auto item = prepared.begin(); item != prepared.end();)
+	{
+		const auto *prototype = find_object_template(item->item.vnum);
+		if (prototype && prototype->type == ITEM_CONTAINER)
+		{
+			// Racial basics precede class gear, so keep the racial container.
+			if (has_container)
+			{
+				item = prepared.erase(item);
+				continue;
+			}
+			has_container = true;
+		}
+		++item;
+	}
+	if (!has_container)
+		prepared.push_back({ { 390, true }, {} }); // Small leather bag, boot-cached.
+	return prepared;
 }
 
 /** Materialize one detached legacy root; publication belongs to the grant coordinator. */
@@ -929,7 +1142,7 @@ static P_obj materialize_legacy_newbie_item(P_char ch, const prepared_newbie_ite
 		if (obj->type != ITEM_FOOD && obj->type != ITEM_WEAPON &&
 		    obj->type != ITEM_CONTAINER && obj->type != ITEM_QUIVER &&
 		    obj->type != ITEM_SPELLBOOK && obj->type != ITEM_LIGHT &&
-		    obj->type != ITEM_TOTEM && IS_PC(ch))
+		    obj->type != ITEM_TOTEM && obj->type != ITEM_MISSILE && IS_PC(ch))
 			SET_BIT(obj->extra_flags, ITEM_TRANSIENT);
 		if (obj->type == ITEM_SPELLBOOK)
 			for (int spell : prepared.spells)
@@ -1322,6 +1535,8 @@ void enter_game(P_desc d)
 	bool nobonus = FALSE;
 	P_char ch = d->character;
 	const bool new_character = ch && GET_LEVEL(ch) == 0;
+	if (d->msp_group_output)
+		FREE(d->msp_group_output);
 	P_desc i;
 	P_nevent evp;
 	P_Guild guild;
@@ -1681,7 +1896,7 @@ void enter_game(P_desc d)
 
 			if (opposite_racewar(ch, i->character) && !IS_TRUSTED(i->character))
 				continue;
-			if (!IS_SET(i->character->specials.act2, PLR_WHO))
+			if (!IS_SET(i->character->specials.act, PLR_WHO))
 				continue;
 
 			send_to_char(Gbuf1, i->character, LOG_PRIVATE);
@@ -1877,6 +2092,7 @@ void enter_game(P_desc d)
 		schedule_chaos_starting_bank(ch);
 	}
 	zone_touch_transaction_player_ready(ch);
+	divine_boon_delivery_player_ready(ch);
 	locker_identify_replay(ch);
 	item_movement_transaction_player_ready(ch);
 	shop_trade_transaction_player_ready(ch);
@@ -2022,35 +2238,44 @@ void enter_game(P_desc d)
 
 void select_terminal(P_desc d, const char *arg)
 {
-	int term;
+	long term;
 	int temp = 1;
-	char temp_buf[200];
+	char *end;
 
-	if ((term = (int)strtol(arg, NULL, 0)) == 0)
-	{
-		if (*arg == '?')
-			term = TERM_HELP;
-		else if (!*arg) /* carriage return */
-			term = TERM_ANSI;
-		else
-			term = TERM_UNDEFINED;
-	}
+	while (isspace(static_cast<unsigned char>(*arg)))
+		++arg;
+	term = strtol(arg, &end, 10);
+	if (!*arg) /* carriage return */
+		term = TERM_ANSI;
+	else if (*arg == '?')
+		term = TERM_HELP;
+	else if (end == arg || (*end && !isspace(static_cast<unsigned char>(*end))))
+		term = TERM_UNDEFINED;
+	while (isspace(static_cast<unsigned char>(*end)))
+		++end;
 	switch (term)
 	{
 	case TERM_GENERIC:
 		d->term_type = TERM_GENERIC;
-		SEND_TO_Q(greetings, d);
+		SEND_TO_Q(pwipe_launch_closed_at(time(NULL)) ? pwipe_launch_screen(false).c_str() :
+							       greetings,
+			  d);
 		break;
 	case TERM_MSP:
 		d->term_type = TERM_MSP;
-		arg = one_argument(arg, temp_buf);
-		strcpy(d->client_str, arg);
-		SEND_TO_Q(greetinga, d);
+		strlcpy(d->client_str, end, sizeof d->client_str);
+		SEND_TO_Q(pwipe_launch_closed_at(time(NULL)) ? pwipe_launch_screen(true).c_str() :
+							       greetinga,
+			  d);
 		break;
 	case TERM_ANSI:
 		d->term_type = TERM_ANSI;
-		arg = one_argument(arg, temp_buf);
-		strcpy(d->client_str, arg);
+		strlcpy(d->client_str, end, sizeof d->client_str);
+		if (pwipe_launch_closed_at(time(NULL)))
+		{
+			SEND_TO_Q(pwipe_launch_screen(true).c_str(), d);
+			break;
+		}
 
 		temp = number(1, NUM_ANSI_LOGINS);
 		switch (temp)
@@ -2906,7 +3131,7 @@ void select_class(P_desc d, char *arg)
 
 	/* pass through here, they don't get an alignment d->characterchoice. */
 
-	home = find_hometown(GET_RACE(d->character), false);
+	home = find_hometown(GET_RACE(d->character), false, GET_RACEWAR(d->character));
 
 	if (home == HOME_CHOICE)
 	{
@@ -3040,7 +3265,7 @@ void select_alignment(P_desc d, char *arg)
 		return;
 
 	/* does this race get to choose a hometown ? */
-	home = find_hometown(GET_RACE(d->character), false);
+	home = find_hometown(GET_RACE(d->character), false, GET_RACEWAR(d->character));
 	if (home == HOME_CHOICE)
 	{
 		STATE(d) = CON_HOMETOWN;
@@ -3059,6 +3284,18 @@ void select_alignment(P_desc d, char *arg)
 
 /* Krov: HOMETOWN connects now to REROLL */
 
+static char hometown_selection_key(int race, int hometown)
+{
+	if (hometown == HOME_PLANE_OF_CHAOS)
+		return 'C';
+	if (hometown == HOME_WUTVR)
+		return 'W';
+	// Good-side Thri-kreen can choose both Payang and Plane of Life.
+	if (race == RACE_THRIKREEN && hometown == HOME_PLANE_OF_LIFE)
+		return 'L';
+	return town_name_list[hometown][0];
+}
+
 void select_hometown(P_desc d, char *arg)
 {
 	int home;
@@ -3070,15 +3307,9 @@ void select_hometown(P_desc d, char *arg)
 	home = -1;
 	for (int i = 0; i <= LAST_HOME; i++)
 	{
-		// if (i == HOME_SHADY)
-		// town_letter = 'a';
-		// else if (i == HOME_GOBLIN)
-		// town_letter = 'g';
-		// else if (i == HOME_SYLVANDAWN)
-		// town_letter = 's';
-
-		if ((avail_hometowns[i][GET_RACE(d->character)] == 1) &&
-		    (LOWER(*arg) == LOWER(town_name_list[i][0])))
+		if (creation_hometown_available(GET_RACE(d->character), GET_RACEWAR(d->character),
+						i) &&
+		    (LOWER(*arg) == LOWER(hometown_selection_key(GET_RACE(d->character), i))))
 		{
 			home = i;
 			break;
@@ -3091,14 +3322,6 @@ void select_hometown(P_desc d, char *arg)
 		return;
 	}
 
-	/* did they select one that is allowed for their race */
-	if (avail_hometowns[home][(int)GET_RACE(d->character)] != 1)
-	{
-		SEND_TO_Q("\r\nThat is not a hometown for your race.\r\n ", d);
-		SEND_TO_Q("Please select again.\r\n\r\nHometown: ", d);
-		STATE(d) = CON_HOMETOWN;
-		return;
-	}
 	/* record it, move onto the next step */
 	GET_HOME(d->character) = home;
 	GET_BIRTHPLACE(d->character) = home;
@@ -3302,6 +3525,17 @@ void add_stat_bonus(P_char ch, int which, int what)
 
 /* Krov: char_quals_for_class - gone for good */
 
+bool creation_hometown_available(int race, int racewar, int hometown)
+{
+	if (race < 1 || race > LAST_RACE || hometown < 1 || hometown > LAST_HOME)
+		return false;
+	if (hometown == HOME_NEWBIE || hometown == HOME_PLANE_OF_LIFE)
+		return racewar == RACEWAR_GOOD && avail_hometowns[hometown][race] == 1;
+	if (hometown == HOME_WUTVR || hometown == HOME_PLANE_OF_CHAOS)
+		return racewar == RACEWAR_EVIL && avail_hometowns[hometown][race] == 1;
+	return avail_hometowns[hometown][race] == 1;
+}
+
 void show_avail_hometowns(P_desc d)
 {
 	int i, race;
@@ -3311,24 +3545,11 @@ void show_avail_hometowns(P_desc d)
 
 	for (i = 0; i <= LAST_HOME; i++)
 	{
-		if (avail_hometowns[i][race] == 1)
+		if (creation_hometown_available(race, GET_RACEWAR(d->character), i))
 		{
-			// if (i == HOME_SHADY)
-			// {
-			// strcpy(Gbuf1, "S) Shady\r\n");
-			// SEND_TO_Q(Gbuf1, d);
-			// }
-			// else if (i == HOME_GOBLIN)
-			// {
-			// strcpy(Gbuf1, "G) Moregeeth\r\n");
-			// SEND_TO_Q(Gbuf1, d);
-			// }
-			// else
-			// {
-			snprintf(Gbuf1, MAX_STRING_LENGTH, "%c)%s\r\n", town_name_list[i][0],
-				 &town_name_list[i][1]);
+			snprintf(Gbuf1, MAX_STRING_LENGTH, "%c) %s\r\n",
+				 hometown_selection_key(race, i), town_name_list[i]);
 			SEND_TO_Q(Gbuf1, d);
-			// }
 		}
 	}
 }
@@ -3336,7 +3557,7 @@ void show_avail_hometowns(P_desc d)
 /* this function returns the NUMBER OF THE HOMETOWN, not the virtual number of
    the room they start at [that's done later] */
 
-int find_hometown(int race, bool force)
+int find_hometown(int race, bool force, int racewar)
 {
 	int i, count = 0, home = 0;
 	char Gbuf1[MAX_STRING_LENGTH];
@@ -3349,7 +3570,7 @@ int find_hometown(int race, bool force)
 	}
 	for (i = 0; i <= LAST_HOME; i++)
 	{
-		if (avail_hometowns[i][race] == 1)
+		if (creation_hometown_available(race, force ? RACEWAR_NONE : racewar, i))
 		{
 			if (home == 0)
 				home = i;
@@ -3377,7 +3598,8 @@ void find_starting_location(P_char ch, int hometown)
 
 	// I think this is kind've hacky, but it will work!
 	// -- Eikel
-	if (GET_RACE(ch) == RACE_TIEFLING)
+	if (GET_RACE(ch) == RACE_TIEFLING && hometown != HOME_WUTVR &&
+	    hometown != HOME_PLANE_OF_CHAOS)
 	{
 		if (GET_ALIGNMENT(ch) < 0)
 		{
@@ -3421,7 +3643,7 @@ void find_starting_location(P_char ch, int hometown)
 		GET_HOME(ch) = guild_locations[hometown][0];
 		return;
 	}
-	if (guild_num == 22800)
+	if (guild_num == 22800 || guild_num == VROOM_CHAOS_ENTRY)
 	{
 		apply_achievement(ch, TAG_LIFESTREAMNEWBIE);
 	}
@@ -3871,6 +4093,11 @@ void wimps_in_approve_queue(void)
 
 void nanny(P_desc d, char *arg)
 {
+	if (STATE(d) == CON_FLUSH)
+		return;
+	// Recheck every chargen continuation before it can reserve, save or enter a body.
+	if (d->character && d->character->in_room == NOWHERE && !pwipe_launch_admit(d))
+		return;
 	switch (STATE(d))
 	{
 		/* Character deleted by a Forger */
@@ -4146,10 +4373,21 @@ void nanny(P_desc d, char *arg)
 		select_keepchar(d, arg);
 		if (STATE(d) == CON_RMOTD)
 		{
+			init_char(d->character);
+			if (GET_PID(d->character) <= 0)
+			{
+				SEND_TO_Q(
+					"Character creation is unavailable. Please contact staff.\r\n",
+					d);
+				free_char(d->character);
+				d->character = NULL;
+				STATE(d) = CON_DISPLAY_ACCT_MENU;
+				display_account_menu(d, NULL);
+				break;
+			}
 			logit(LOG_NEW, "%s [%s] new player.", GET_NAME(d->character), d->host);
 			statuslog(d->character->player.level, "%s [%s] new player.",
 				  GET_NAME(d->character), d->host);
-			init_char(d->character);
 			add_char_to_account(d);
 			SEND_TO_Q(motd.c_str(), d);
 			/*
@@ -4214,6 +4452,8 @@ void nanny(P_desc d, char *arg)
 		break;
 
 	case CON_RMOTD:
+		if (!pwipe_launch_admit(d))
+			break;
 		// For new character creation, enter the game directly
 		if (d->character)
 		{

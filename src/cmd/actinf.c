@@ -36,8 +36,10 @@ using namespace std;
 #include "cmd/interp.h"
 #include "core/utility.h"
 #include "core/utils.h"
+#include "item/storage_lockers.h"
 #include "combat/ctf.h"
 #include "world/epic.h"
+#include "economy/divine_boon_selection.h"
 #include "world/epic_bonus.h"
 #include "world/epic_transaction.h"
 #include "guild/artifact_guild_transaction.h"
@@ -50,6 +52,7 @@ using namespace std;
 #include "world/zone_story_quest_runtime.h"
 #include "economy/nexus_stones.h"
 #include "economy/currency_transaction.h"
+#include "economy/boon_reward_transaction.h"
 #include "item/objmisc.h"
 #include "classes/paladins.h"
 #include "persistence/persistence_checkpoint.h"
@@ -2846,6 +2849,12 @@ void new_look(P_char ch, const char *argument, int cmd, int room_no)
 			// Found something
 			if (bits != 0)
 			{
+				if (!locker_container_access_allowed(ch, tmp_object))
+				{
+					send_to_char("You must open that private chest first.\n",
+						     ch);
+					return;
+				}
 				short_desc =
 					show_obj_to_char(tmp_object, ch, LISTOBJ_SHORTDESC, FALSE);
 				CAP(short_desc);
@@ -3727,6 +3736,12 @@ void do_examine(P_char ch, char *argument, int /*cmd*/)
 			     ch, &tmp_char, &tmp_object);
 	}
 
+	if (tmp_object && !locker_container_access_allowed(ch, tmp_object))
+	{
+		send_to_char("You must open that private chest first.\n", ch);
+		return;
+	}
+
 	if (tmp_object && chaos_material_pouch_is_active(tmp_object))
 	{
 		send_to_char(chaos_material_pouch_contents_description(tmp_object), ch);
@@ -4272,6 +4287,7 @@ static void show_world_persistence(P_char ch)
 		 epic_task_catalog_ready(), epic_task_catalog_size(),
 		 epic_task_catalog_last_refresh(), pending_tasks, pending_reads_unavailable);
 	send_to_char(line, ch);
+	divine_boon_selection_status(ch);
 
 	snprintf(line, sizeof(line),
 		 "maintenance state=%s queued=%llu inflight=%llu completions=%llu "
@@ -4395,19 +4411,24 @@ static void show_world_persistence(P_char ch)
 	snprintf(
 		line, sizeof(line),
 		"critical_outbox state=%s pending=%llu dead_letter=%llu oldest_age_ms=%llu "
-		"incomplete_inbox=%llu committed_without_outbox=%llu fetched=%llu delivered=%llu "
+		"incomplete_inbox=%llu reconciliation_candidates=%llu outbox_mismatches=%llu "
+		"unknown_expectations=%llu fetched=%llu delivered=%llu "
 		"duplicates=%llu retries=%llu terminal=%llu db_failures=%llu high_water=%llu/%llu\n",
-		!critical_outbox.initialized ? "stopped" :
+		!critical_outbox.initialized				    ? "stopped" :
+		critical_outbox.counts_stale || critical_outbox.audit_stale ? "unknown" :
 		critical_outbox.dead_letter || critical_outbox.incomplete_inbox ||
-				critical_outbox.committed_without_outbox ?
-					       "degraded" :
-		critical_outbox.pending ? "pending" :
-					  "ready",
+				critical_outbox.outbox_expectation_mismatches ?
+									      "degraded" :
+		critical_outbox.unknown_outbox_expectations ? "reconciliation" :
+		critical_outbox.pending			    ? "pending" :
+							      "ready",
 		(unsigned long long)critical_outbox.pending,
 		(unsigned long long)critical_outbox.dead_letter,
 		(unsigned long long)critical_outbox.oldest_age_msec,
 		(unsigned long long)critical_outbox.incomplete_inbox,
 		(unsigned long long)critical_outbox.committed_without_outbox,
+		(unsigned long long)critical_outbox.outbox_expectation_mismatches,
+		(unsigned long long)critical_outbox.unknown_outbox_expectations,
 		(unsigned long long)critical_outbox.fetched,
 		(unsigned long long)critical_outbox.delivered,
 		(unsigned long long)critical_outbox.duplicates,
@@ -4417,6 +4438,17 @@ static void show_world_persistence(P_char ch)
 		(unsigned long long)critical_outbox.high_water_records,
 		(unsigned long long)critical_outbox.high_water_bytes);
 	send_to_char(line, ch);
+	snprintf(line, sizeof(line),
+		 "critical_outbox_health counts=%s counts_age_ms=%llu audit=%s audit_age_ms=%llu\n",
+		 !critical_outbox.counts_available ? "unavailable" :
+		 critical_outbox.counts_stale	   ? "stale" :
+						     "fresh",
+		 (unsigned long long)critical_outbox.counts_age_msec,
+		 !critical_outbox.audit_available ? "unavailable" :
+		 critical_outbox.audit_stale	  ? "stale" :
+						    "fresh",
+		 (unsigned long long)critical_outbox.audit_age_msec);
+	send_to_char(line, ch);
 
 	snprintf(line, sizeof(line),
 		 "currency_transactions state=ready submitted=%llu committed=%llu rejected=%llu "
@@ -4425,6 +4457,17 @@ static void show_world_persistence(P_char ch)
 		 (unsigned long long)currency_transactions.committed,
 		 (unsigned long long)currency_transactions.rejected,
 		 (unsigned long long)currency_transactions.bank_deltas);
+	send_to_char(line, ch);
+
+	const boon_reward_health boons = boon_reward_transaction_health_copy();
+	snprintf(line, sizeof(line),
+		 "boon_rewards checked=%llu filtered=%llu submitted=%llu committed=%llu "
+		 "rejected=%llu pending=%llu definition_refreshes=%llu definition_failures=%llu\n",
+		 (unsigned long long)boons.checked, (unsigned long long)boons.filtered,
+		 (unsigned long long)boons.submitted, (unsigned long long)boons.committed,
+		 (unsigned long long)boons.rejected, (unsigned long long)boons.pending,
+		 (unsigned long long)boons.definition_refreshes,
+		 (unsigned long long)boons.definition_failures);
 	send_to_char(line, ch);
 
 	snprintf(line, sizeof(line),
@@ -7721,7 +7764,7 @@ void do_who(P_char ch, char *argument, int /*cmd*/)
 				 MAX_STRING_LENGTH - strlen(who_output),
 				 "\nThere are %d visible &+rgod(s)&n on.\n", who_gods_size);
 		strcpy(buf, "");
-		if (who_list_size > 0)
+		if (who_list_size > 0 || IS_TRUSTED(ch))
 		{
 			strcat(who_output, "\n Listing of the Mortals!\n"
 					   "-=-=-=-=-=-=-=-=-=-=-=-=-\n");
@@ -7847,11 +7890,28 @@ void do_who(P_char ch, char *argument, int /*cmd*/)
 				}
 			}
 
-			checked_snprintf(
-				who_output + strlen(who_output),
-				MAX_STRING_LENGTH - strlen(who_output),
-				"\nThere are %d &+gmortal(s)&n on.\n\n&+cTotal visible players: %d.&N\n",
-				who_list_size, who_list_size + who_gods_size);
+			checked_snprintf(who_output + strlen(who_output),
+					 MAX_STRING_LENGTH - strlen(who_output),
+					 "\nThere are %d &+gmortal(s)&n on.", who_list_size);
+			if (IS_TRUSTED(ch))
+			{
+				int good_count = 0, evil_count = 0;
+				for (j = 0; j < who_list_size; j++)
+				{
+					if (IS_RACEWAR_EVIL(who_list[j]))
+						evil_count++;
+					else if (IS_RACEWAR_GOOD(who_list[j]))
+						good_count++;
+				}
+				checked_snprintf(who_output + strlen(who_output),
+						 MAX_STRING_LENGTH - strlen(who_output),
+						 "  %d &+Revil(s)&n, %d &+Ygood(s)&n.", evil_count,
+						 good_count);
+			}
+			checked_snprintf(who_output + strlen(who_output),
+					 MAX_STRING_LENGTH - strlen(who_output),
+					 "\n\n&+cTotal visible players: %d.&N\n",
+					 who_list_size + who_gods_size);
 			if (IS_TRUSTED(ch))
 			{
 				checked_snprintf(who_output + strlen(who_output),
@@ -10249,7 +10309,7 @@ void do_zlist(P_char ch, char * /*argument*/, int /*cmd*/)
 	snprintf(
 		buf, MAX_STRING_LENGTH,
 		"|&-c&+l Number of Zones Loaded: %-7d                                                         &n|\r\n",
-		top_of_zone_table);
+		top_of_zone_table + 1);
 	send_to_char(buf, ch);
 	send_to_char(
 		"\\-----------------------------------------------------------------------------------------/\r\n",

@@ -8,7 +8,7 @@ from test_falling_world_exits import read_rooms
 
 ROOT = Path(__file__).resolve().parents[2]
 FILES = ('surface', 'otower', 'underworld3', 'arcium', 'elvish', 'willem', 'turolzoo',
-         'mist_chasm', 'underdark', 'asylum')
+         'thechasmofthemistyvale', 'underdark', 'asylum')
 REVERSE = (2, 3, 0, 1, 5, 4)
 SURFACE_ROUTES = ((517246, 3, 85700, 1), (517645, 0, 85700, 2),
                   (548452, 0, 35800, 2), (548053, 3, 35800, 1),
@@ -17,9 +17,9 @@ SURFACE_ROUTES = ((517246, 3, 85700, 1), (517645, 0, 85700, 2),
 MARKERS = {517245: 'Arcium', 548052: 'Abandoned Elven Homestead',
            584445: 'Turopolis', 551267: 'Outcast Tower', 615849: 'Temple of Lizizania'}
 # Independent acceptance path from the retained surface approach to the cliff trail.
-MISTY_TRAIL = ((3, 15000), (3, 15001), (2, 15006), (2, 15007),
-               (3, 15008), (3, 15009), (3, 15010), (0, 15011),
-               (3, 15012), (0, 15013), (0, 15014), (3, 15015))
+MISTY_TRAIL = ((3, 300000), (3, 300001), (2, 300003), (2, 300007),
+               (3, 300008), (2, 300009), (2, 300010), (3, 300012),
+               (2, 300013), (3, 300015), (3, 300019))
 
 
 def load_rooms(areas, generated=False):
@@ -63,13 +63,19 @@ def check_routes(rooms):
         pair(*route)
     pair(11348, 0, 30172, 2)
     pair(7123, 3, 53000, 1)
-    pair(15015, 5, 834025, 4)
+    pair(300149, 0, 766414, 2)
+    pair(300149, 1, 766815, 3)
+    assert 5 not in rooms[300019][2], 'retired Misty Chasm stairs'
+    assert 4 not in rooms[834025][2], 'retired Underdark stairs'
+    assert rooms[766814][:2] == (0, 0), 'new marker is not inert'
+    assert rooms[834024][:2] == (27, 0), 'old marker was not restored to mountain'
+    assert 1 not in rooms[766813][2] and 0 not in rooms[767214][2], 'new marker is walkable'
     current = 638825
     for direction, target in MISTY_TRAIL:
         pair(current, direction, target, REVERSE[direction])
         assert rooms[target][0] in (2, 3, 4) and rooms[target][1] == 0, target
         current = target
-    pair(15015, 2, 15016, 0)
+    pair(300019, 2, 300020, 0)
     for start, direction, target, reverse in ((834025, 0, 833625, 2),
                                              (834025, 1, 834026, 3)):
         pair(start, direction, target, reverse)
@@ -97,7 +103,7 @@ if __name__ == '__main__':
     rooms = load_rooms(args.areas, args.generated)
     check_routes(rooms)
     # Disposable in-memory fixture proves the return edge is an independent gate.
-    for room, direction in [(target, reverse) for _, _, target, reverse in SURFACE_ROUTES] + [(834025, 4)]:
+    for room, direction in [(target, reverse) for _, _, target, reverse in SURFACE_ROUTES] + [(766414, 2), (766815, 3)]:
         original = rooms[room]
         sector, fall, exits = original
         rooms[room] = (sector, fall, {d: v for d, v in exits.items() if d != direction})

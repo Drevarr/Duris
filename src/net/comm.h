@@ -27,6 +27,9 @@
 
 #define SEND_TO_Q(messg, desc) write_to_q((messg), &(desc)->output, 1)
 
+// Discard queued gameplay and an unfinished input line, preserving output.
+void flush_input_queue(P_desc descriptor);
+
 /* following was io.h, for asych I/O operations, not used currently.  If we
    ever use it, makes more sense for it to be here.  JAB */
 
@@ -233,5 +236,9 @@ int io_processFDS(fd_set * rfds, fd_set * wfds, fd_set * efds);
  * $O, etc.).  Prevents type-confusion crashes where a player types e.g.
  * "say $O" and act() casts the vict_obj character pointer to P_obj. */
 void escape_act_dollars(char *dst, size_t dst_size, const char *src);
+
+// Game thread: settle accepted work, then fence every shared-writer producer.
+bool pwipe_quiesce_writers(void);
+void pwipe_resume_writers(void);
 
 #endif /* _SOJ_COMM_H_ */

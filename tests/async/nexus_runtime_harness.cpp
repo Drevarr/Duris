@@ -1,3 +1,8 @@
+#include "economy/divine_trade_runtime.h"
+bool divine_trade_runtime_sale(char_data *, ShipData *, int, int, divine_trade_goods)
+{
+	return false;
+}
 #include "core/prototypes.h"
 #include "core/defines.h"
 #include "core/utils.h"
@@ -13,6 +18,7 @@
 #include "persistence/persistence_checkpoint.h"
 
 #include <cassert>
+#include <cmath>
 #include <cstring>
 #include <cstdarg>
 #include <filesystem>
@@ -83,14 +89,15 @@ int write_cargo()
 {
 	return true;
 }
-int sell_cargo_slot(P_char, P_ship ship, int slot, int)
+int sell_cargo_slot(P_char, P_ship ship, int slot, int, int)
 {
 	ship->slot[slot].type = SLOT_EMPTY;
+	queue_ship_save(ship, "cargo sale");
 	return 250;
 }
-int sell_contra_slot(P_char ch, P_ship ship, int slot, int room)
+int sell_contra_slot(P_char ch, P_ship ship, int slot, int room, int paid)
 {
-	return sell_cargo_slot(ch, ship, slot, room);
+	return sell_cargo_slot(ch, ship, slot, room, paid);
 }
 void send_to_char_f(P_char, const char *format, ...)
 {
@@ -113,6 +120,7 @@ const char *persistence_mode_flatfile_root()
 {
 	return state_root.c_str();
 }
+static float cargo_bonus = .110f;
 float get_property(const char *name, double fallback)
 {
 	if (!strcmp(name, "nexusStones.touchTimerSecs"))
@@ -125,7 +133,9 @@ float get_property(const char *name, double fallback)
 		return 15;
 	if (!strcmp(name, "nexusStones.epicsMax"))
 		return 25;
-	if (!strcmp(name, "nexusStones.bonus.epics") || !strcmp(name, "nexusStones.bonus.cargo"))
+	if (!strcmp(name, "nexusStones.bonus.cargo"))
+		return cargo_bonus;
+	if (!strcmp(name, "nexusStones.bonus.epics"))
 		return .110;
 	return fallback;
 }
@@ -394,8 +404,14 @@ int main(int argc, char **argv)
 	}
 	for (int align : { -3, -2, -1, 0, 1, 2, 3 })
 	{
-		assert(update_nexus_stone_align(1, align));
+		// Change durable state independently of the in-memory reward cache.
+		std::string error;
+		const auto updated = flatfile_nexus_update_state(state_root, 1, align, 0, &error);
+		assert(updated == flatfile_nexus_result::ok ||
+		       updated == flatfile_nexus_result::unchanged);
 		reload_nexus_stone(&staff, 1);
+		NexusStoneInfo cached;
+		assert(nexus_stone_info(1, &cached) && cached.align == align);
 		assert(stone_count(1) == 1 && STONE_ALIGN(get_nexus_stone(1)) == align);
 		const int expected = align == -3 ? 66 : align == 3 ? 65 : align == 0 ? 74 : 0;
 		assert(guardian_count(1) == (expected ? 1 : 0));
@@ -518,10 +534,15 @@ int main(int argc, char **argv)
 	assert(capture_awards == 1 && boon_completions == 1 && task_removals == 1);
 	assert(random_low == 15 && random_high == 50 && pc.epics == 1016);
 	assert(check_nexus_bonus(&player, 250, NEXUS_BONUS_EPICS) == 277);
+	assert(std::abs(check_nexus_bonus_precise(&player, 250, NEXUS_BONUS_EPICS) - 277.5) <
+	       0.0001);
+	assert(std::abs(check_nexus_bonus_precise(&player, 100.5, NEXUS_BONUS_EPICS) - 111.555) <
+	       0.0001);
 	assert(check_nexus_bonus(&player, 1, NEXUS_BONUS_EPICS) == 2);
 	assert(STONE_ALIGN(get_random_enemy_nexus(&player)) == 0);
 	player.player.racewar = RACEWAR_EVIL;
 	assert(check_nexus_bonus(&player, 250, NEXUS_BONUS_EPICS) == 250);
+	assert(check_nexus_bonus_precise(&player, 100.5, NEXUS_BONUS_EPICS) == 100.5);
 	player.in_room = 1;
 	stone = get_nexus_stone(3);
 	extract_char(get_nexus_guardian(3));
@@ -533,6 +554,15 @@ int main(int argc, char **argv)
 	assert(capture_awards == 2 && boon_completions == 2);
 	assert(random_low == 30 && random_high == 50 && pc.epics == 1046);
 	assert(check_nexus_bonus(&player, 250, NEXUS_BONUS_CARGO) == 277);
+	cargo_bonus = .100f;
+	int preview = 0;
+	assert(!check_nexus_bonus_preview(&player, 1952257860, NEXUS_BONUS_CARGO, &preview));
+	assert(check_nexus_bonus_preview(&player, 1952257859, NEXUS_BONUS_CARGO, &preview) &&
+	       preview == INT_MAX);
+	assert(check_nexus_bonus(&player, 1952257859, NEXUS_BONUS_CARGO) == preview);
+	assert(check_nexus_bonus(&player, 1952257860, NEXUS_BONUS_CARGO) == 1952257860);
+	cargo_bonus = .110f;
+
 	assert(check_nexus_bonus(&player, 1, NEXUS_BONUS_CARGO) == 11);
 	assert(STONE_ID(get_random_enemy_nexus(&player)) == 1);
 	player.player.racewar = RACEWAR_GOOD;

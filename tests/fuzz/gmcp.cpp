@@ -75,9 +75,13 @@ char *json_build_comm_channel_ex(const char *, const char *, const char *, const
 {
 	return nullptr;
 }
-char *json_build_quest_status(struct char_data *)
+char *json_build_quest_status(struct char_data *, world_quest_target_status)
 {
 	return nullptr;
+}
+world_quest_target_status world_quest_refresh(P_char, int)
+{
+	return world_quest_target_status::unproven;
 }
 char *json_build_room_info(struct room_data *, struct char_data *)
 {
@@ -90,6 +94,10 @@ char *json_build_ship_info(struct ShipData *, struct char_data *)
 int write_to_descriptor_binary(P_desc, const unsigned char *, size_t)
 {
 	return 0;
+}
+const char *input_command_label(const char *)
+{
+	return "";
 }
 void display_map_room(struct char_data *, int, int, int, int) {}
 int flag2idx(int)

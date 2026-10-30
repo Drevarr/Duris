@@ -764,11 +764,14 @@ int race_size(int race);
 #define IS_DEMON(ch) (GET_RACE(ch) == RACE_DEMON)
 #define IS_DEVIL(ch) (GET_RACE(ch) == RACE_DEVIL)
 
-#define IS_GIANT(ch)                                                           \
-	((GET_RACE(ch) == RACE_GIANT) || (GET_RACE(ch) == RACE_OGRE) ||        \
-	 (GET_RACE(ch) == RACE_SGIANT) || (GET_RACE(ch) == RACE_MINOTAUR) ||   \
-	 (GET_RACE(ch) == RACE_SNOW_OGRE) || (GET_RACE(ch) == RACE_FIRBOLG) || \
-	 (GET_RACE(ch) == RACE_FIREGIANT) || (GET_RACE(ch) == RACE_FROSTGIANT))
+int tutorial_mobile_mechanics_race(P_char);
+inline bool is_giant_race(int race)
+{
+	return race == RACE_GIANT || race == RACE_OGRE || race == RACE_SGIANT ||
+	       race == RACE_MINOTAUR || race == RACE_SNOW_OGRE || race == RACE_FIRBOLG ||
+	       race == RACE_FIREGIANT || race == RACE_FROSTGIANT;
+}
+#define IS_GIANT(ch) is_giant_race(tutorial_mobile_mechanics_race(ch))
 
 #define IS_INSECT(ch) ((GET_RACE(ch) == RACE_INSECT))
 
@@ -1211,9 +1214,10 @@ char *CRYPT2(char *passwd, char *name);
 
 #define IS_BLIND(ch) (IS_AFFECTED(ch, AFF_BLIND)) // || IS_DAYBLIND(ch))
 
-#define IS_DAYBLIND(ch)                                                                          \
-	(!has_innate(ch, INNATE_EYELESS) && !IS_TRUSTED(ch) && !IS_TWILIGHT_ROOM(ch->in_room) && \
+#define IS_DAYBLIND_AT(ch, room)                                                          \
+	(!has_innate(ch, INNATE_EYELESS) && !IS_TRUSTED(ch) && !IS_TWILIGHT_ROOM(room) && \
 	 !IS_AFFECTED4(ch, AFF4_GLOBE_OF_DARKNESS) && has_innate(ch, INNATE_DAYBLIND))
+#define IS_DAYBLIND(ch) IS_DAYBLIND_AT(ch, (ch)->in_room)
 
 #define DISALLOW_GROUPED 1
 #define DISALLOW_SELF 2

@@ -75,6 +75,8 @@ int singleton_shop_id(P_char mob) { return mob && mob->only.npc ? mob->only.npc-
 
 // The fixture's logit() writes nothing, so there is no log thread to flush before the exec.
 void flush_log_writer(void) {}
+bool pwipe_launch_allows_at(const char *, time_t) { std::abort(); }
+void pwipe_launch_deny(descriptor_data *) { std::abort(); }
 
 // This no-player custody fixture must never enter gameplay telemetry adapters.
 // Its clock is unavailable, so the telemetry durability barrier is not entered.
@@ -451,7 +453,7 @@ with tempfile.TemporaryDirectory(prefix="duris-copyover-custody-") as temp:
                             "-o", str(temp / "copyover.o")], cwd=ROOT, check=True)
     subprocess.run(common + [str(source), str(temp / "copyover.o"),
                    "src/world/world_recovery_pipeline.c", "src/world/world_recovery_codec.c", "src/world/generated_npc_state.c", "src/world/generated_npc_runtime.c",
-                   "src/player/pet_restore_state.c",
+                   "src/player/pet_restore_state.c", "src/combat/trap_legacy.c",
                             "src/item/item_ownership_runtime.c", "src/item/item_transfer_command.c",
                             "src/redis/redis_command_observability.c", str(HARNESS_STUBS), "-Wl,--gc-sections",
                             "-lz", "-pthread", "-lgnutls", "-lbsd", "-o", str(temp / "fixture")],

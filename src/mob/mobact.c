@@ -6817,17 +6817,10 @@ void MobStartFight(P_char ch, P_char vict)
 		return;
 	}
 
-	if (mob_index[GET_RNUM(ch)].virtual_number == 19870)
+	if (mob_index[GET_RNUM(ch)].virtual_number == 19870 ||
+	    mob_index[GET_RNUM(ch)].virtual_number == 19840)
 	{
-		if (has_innate(vict, INNATE_ASTRAL_NATIVE) && (GET_LEVEL(vict) > 50))
-		{
-			return;
-		}
-	}
-
-	if (mob_index[GET_RNUM(ch)].virtual_number == 19840)
-	{
-		if (has_innate(vict, INNATE_ASTRAL_NATIVE) && (GET_LEVEL(vict) > 40))
+		if (has_native_planar_affinity(vict) && !CheckFor_remember(ch, vict))
 		{
 			return;
 		}
@@ -7128,7 +7121,12 @@ void CheckEqWorthUsing(P_char ch, P_obj obj)
 		{
 			ob2 = ob->next_content;
 			if (!IS_CONTAINER(ob))
-				put(ch, ob, obj, 1);
+			{
+				bool trap_rejected = false;
+				put(ch, ob, obj, 1, &trap_rejected);
+				if (trap_rejected)
+					return; // Trap effects may have extracted any participant or sibling.
+			}
 		}
 		return;
 	}
@@ -7153,10 +7151,11 @@ void CheckEqWorthUsing(P_char ch, P_obj obj)
 	{
 		ob2 = ob->next_content;
 		if (ob->type == ITEM_CONTAINER)
-			if (put(ch, obj, ob, 1))
-				return; /*
-				         * problem solved, item in bag.
-				         */
+		{
+			bool trap_rejected = false;
+			if (put(ch, obj, ob, 1, &trap_rejected) || trap_rejected)
+				return;
+		}
 	}
 }
 
@@ -7761,23 +7760,38 @@ void event_mob_mundane(P_char ch, P_char /*victim*/, P_obj /*object*/, void * /*
 			}
 		}
 
-		if (GET_MEMORY(ch) !=
-		    NULL) // guardcheck (no real action will happen in either function if mob has no memory) -Odorf
+		if (GET_MEMORY(ch) || ch->only.npc->trap_gate_target_runtime_id)
 		{
+			const uint64_t actor_id = ch->runtime_id;
+			auto removal_before = character_removal_generation;
 			PROFILE_START(mundane_track_3);
-			if (CheckForRemember(ch))
-				PROFILE_END(mundane_track_3);
-			//      if(/*!ch - no need -Odorf ||*/ !CAN_ACT(ch)) //  do we really need to check CAN_ACT here? -Odorf
+			const bool acted = CheckForRemember(ch);
+			PROFILE_END(mundane_track_3);
+			if (removal_before != character_removal_generation)
+				ch = find_character_by_runtime_id(actor_id);
+			if (!ch)
+			{
+				PROFILE_END(mundane_track);
+				return;
+			}
+			if (acted)
 			{
 				PROFILE_END(mundane_track);
 				goto normal;
 			}
 
 			PROFILE_START(mundane_track_4);
+			removal_before = character_removal_generation;
 			mobact_memoryHandle(ch);
 			PROFILE_END(mundane_track_4);
-			if (/*!ch - no need -Odorf ||*/ !CAN_ACT(
-				ch)) //  do we really need to check CAN_ACT here? -Odorf
+			if (removal_before != character_removal_generation)
+				ch = find_character_by_runtime_id(actor_id);
+			if (!ch)
+			{
+				PROFILE_END(mundane_track);
+				return;
+			}
+			if (!CAN_ACT(ch) || IS_FIGHTING(ch))
 			{
 				PROFILE_END(mundane_track);
 				goto normal;
@@ -8075,6 +8089,14 @@ void event_mob_mundane(P_char ch, P_char /*victim*/, P_obj /*object*/, void * /*
 
 		if (best_obj)
 		{
+			const uint64_t actor_id = ch->runtime_id;
+			const int pickup_room = ch->in_room;
+			const uint64_t container_uid = best_obj->obj_uid;
+			const auto pickup_can_continue = [&]()
+			{
+				ch = find_character_by_runtime_id(actor_id);
+				return ch && IS_ALIVE(ch);
+			};
 			if (IS_CONTAINER(best_obj) && (max < 0))
 			{
 				if (best_obj->type == ITEM_CORPSE)
@@ -8089,33 +8111,45 @@ void event_mob_mundane(P_char ch, P_char /*victim*/, P_obj /*object*/, void * /*
 				     obj && (CAN_CARRY_N(ch) > IS_CARRYING_N(ch)); obj = obj2)
 				{
 					obj2 = obj->next_content;
+					const uint64_t next_uid = obj2 ? obj2->obj_uid : 0;
 					if (IS_SET(obj->extra_flags, ITEM_SECRET) ||
 					    IS_SET(obj->extra_flags, ITEM_NOSHOW) ||
 					    IS_SET(obj->extra_flags, ITEM_BURIED) ||
 					    !CAN_WEAR(obj, ITEM_TAKE))
 						continue;
-					if (obj->type == ITEM_MONEY)
-					{
-						get(ch, obj, best_obj, FALSE);
-						act("$n gets some stuff from $p.", FALSE, ch,
-						    best_obj, 0, TO_ROOM);
+					P_obj expected = obj;
+					const uint64_t expected_uid = obj->obj_uid;
+					const bool money = obj->type == ITEM_MONEY;
+					get(ch, obj, best_obj, FALSE);
+					if (!pickup_can_continue())
+						return;
+					if (ch->in_room != pickup_room || !IS_AWAKE(ch) ||
+					    IS_IMMOBILE(ch) ||
+					    find_scavenged_object(best_obj, container_uid) !=
+						    best_obj ||
+					    !OBJ_ROOM(best_obj) ||
+					    best_obj->loc.room != pickup_room)
+						goto normal;
+					obj2 = find_scavenged_object(obj2, next_uid);
+					P_obj received =
+						find_scavenged_object(expected, expected_uid);
+					if (!money && (!received || !OBJ_CARRIED_BY(received, ch)))
 						continue;
-					}
-					else
-					{
-						P_obj expected = obj;
-						const uint64_t expected_uid = obj->obj_uid;
-						get(ch, obj, best_obj, FALSE);
-						P_obj received = find_scavenged_object(
-							expected, expected_uid);
-						if (!received || !OBJ_CARRIED_BY(received, ch))
-							continue; // obj is notake, or too heavy
-						act("$n gets some stuff from $p.", FALSE, ch,
-						    best_obj, 0, TO_ROOM);
-						if (!IS_ANIMAL(ch) && !IS_DRAGON(ch) &&
-						    !IS_UNDEAD(ch))
-							CheckEqWorthUsing(ch, received);
-					}
+					act("$n gets some stuff from $p.", FALSE, ch, best_obj, 0,
+					    TO_ROOM);
+					if (!money && !IS_ANIMAL(ch) && !IS_DRAGON(ch) &&
+					    !IS_UNDEAD(ch))
+						CheckEqWorthUsing(ch, received);
+					if (!pickup_can_continue())
+						return;
+					if (ch->in_room != pickup_room || !IS_AWAKE(ch) ||
+					    IS_IMMOBILE(ch) ||
+					    find_scavenged_object(best_obj, container_uid) !=
+						    best_obj ||
+					    !OBJ_ROOM(best_obj) ||
+					    best_obj->loc.room != pickup_room)
+						goto normal;
+					obj2 = find_scavenged_object(obj2, next_uid);
 				}
 				goto normal;
 			}
@@ -8131,12 +8165,16 @@ void event_mob_mundane(P_char ch, P_char /*victim*/, P_obj /*object*/, void * /*
 				}
 				P_obj expected = best_obj;
 				const uint64_t expected_uid = best_obj->obj_uid;
-				get(ch, best_obj, NULL, FALSE);
-				// Unowned transient objects still publish synchronously. Authoritative
-				// objects are evaluated by item_get_completion after their claim commits.
+				get(ch, best_obj, NULL, TRUE);
+				if (!pickup_can_continue())
+					return;
+				if (ch->in_room != pickup_room || !IS_AWAKE(ch) || IS_IMMOBILE(ch))
+					goto normal;
 				P_obj received = find_scavenged_object(expected, expected_uid);
 				if (received && OBJ_CARRIED_BY(received, ch))
 					CheckEqWorthUsing(ch, received);
+				if (!pickup_can_continue())
+					return;
 				goto normal;
 			}
 		}
@@ -9217,33 +9255,39 @@ void mobact_memoryHandle(P_char mob)
 	/*  found = FALSE;*/
 	for (vict = world[mob->in_room].people; vict /*&& !found */; vict = vict->next_in_room)
 	{
-		if (IS_NPC(vict) || !CAN_SEE(mob, vict))
+		const bool gate_target = mob->only.npc->trap_gate_target_runtime_id &&
+					 mob->only.npc->trap_gate_target_runtime_id ==
+						 vict->runtime_id;
+		if ((IS_NPC(vict) && !(gate_target && IS_PC_PET(vict))) || !CAN_SEE(mob, vict))
 			continue;
 		if (vict == GET_MASTER(mob))
 			continue;
-		for (mem = mob->only.npc->memory; mem; mem = mem->next)
+		bool remembered = gate_target;
+		for (mem = mob->only.npc->memory; mem && !remembered; mem = mem->next)
 		{
-			if (mem->pcID == static_cast<unsigned int>(GET_PID(vict)))
+			if (IS_PC(vict) && mem->pcID == static_cast<unsigned int>(GET_PID(vict)))
+				remembered = true;
+		}
+		if (remembered)
+		{
+			if ((IS_ROOM(mob->in_room, ROOM_SINGLE_FILE) &&
+			     !AdjacentInRoom(mob, vict)) ||
+			    !is_aggr_to(mob, vict))
+				continue;
+			if (GET_HIT(mob) >= (GET_MAX_HIT(mob)) >> 2)
 			{
-				if ((IS_ROOM(mob->in_room, ROOM_SINGLE_FILE) &&
-				     !AdjacentInRoom(mob, vict)) ||
-				    !is_aggr_to(mob, vict))
-					continue;
-				if (GET_HIT(mob) >= (GET_MAX_HIT(mob)) >> 2)
-				{
-					act("$n recognizes $N, and charges to attack!", FALSE, mob,
-					    0, vict, TO_NOTVICT);
-					act("$n recognizes you, and charges to attack!", FALSE, mob,
-					    0, vict, TO_VICT);
+				act("$n recognizes $N, and charges to attack!", FALSE, mob, 0, vict,
+				    TO_NOTVICT);
+				act("$n recognizes you, and charges to attack!", FALSE, mob, 0,
+				    vict, TO_VICT);
 
-					MobStartFight(mob, vict);
-					return;
-				}
-				else if (!fear_check(mob))
-				{
-					do_flee(mob, 0, 0);
-					return;
-				}
+				MobStartFight(mob, vict);
+				return;
+			}
+			else if (!fear_check(mob))
+			{
+				do_flee(mob, 0, 0);
+				return;
 			}
 		}
 	}

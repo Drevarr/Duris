@@ -11,7 +11,7 @@ import os
 import subprocess
 import tempfile
 
-from _paths import ROOT, HARNESS_STUBS, extract_function
+from _paths import ROOT, HARNESS_STUBS, extract_function, source
 
 
 PRELUDE = r'''
@@ -23,6 +23,7 @@ PRELUDE = r'''
 #include "world/db.h"
 #include "cmd/interp.h"
 #include "combat/grapple.h"
+#include "combat/forced_movement.h"
 #include "telemetry/telemetry_runtime.h"
 #include <cassert>
 #include <cstdio>
@@ -37,13 +38,16 @@ static room_data rooms[NUM_EXITS + 2]{};
 static room_direction_data exits[NUM_EXITS]{};
 static index_data indices[1]{};
 P_room world = rooms;
+extern const int top_of_world = NUM_EXITS + 1;
 P_index obj_index = indices, mob_index = indices;
 static zone_data zones[1]{};
 zone_data *zone_table = zones;
 P_char character_list;
 uint64_t character_removal_generation;
+P_nevent current_nevent;
+static bool completing_water_crossing(P_char, int) { return false; }
 static int skill, roll, escape_roll, random_exit, training, moves, special_calls, special_mode;
-static bool notch, random_rolls, trapped, woods, flying_mount;
+static bool notch, random_rolls, trapped, woods, flying_mount, entrapment;
 static std::mt19937 generator(187);
 static std::string output;
 const char *dirs[] = {"north", "east", "south", "west", "up", "down", "northwest", "southwest", "northeast", "southeast"};
@@ -73,7 +77,7 @@ bool check_castle_walls(int, int) { return false; }
 int is_ice(P_char, int) { return false; }
 bool has_innate(P_char, int) { return false; }
 int grapple_flee_check(P_char) { return trapped; }
-int grapple_check_entrapment(P_char) { return false; }
+int grapple_check_entrapment(P_char) { return entrapment; }
 bool check_crippling_strike(P_char) { return false; }
 void send_to_char(const char *message, P_char) { output += message; }
 void act(const char *, int, P_char, P_obj, void *, int) {}
@@ -120,6 +124,7 @@ def production():
             ("interp.c", "int fill_word("),
             ("interp.c", "char *one_argument("),
             ("utility.c", "int dir_from_keyword("),
+            ("actmove.c", "static int can_enter_room_internal("),
             ("actmove.c", "int can_enter_room("),
             ("actmove.c", "static P_char movement_special_actor("),
             ("actmove.c", "int do_simple_move("),
@@ -145,7 +150,7 @@ static void reset(int count = 2) {
     SET_POS(&runner, POS_STANDING + STAT_NORMAL); GET_VITALITY(&runner) = 100;
     character_list = &runner;
     skill = 100; roll = 1; escape_roll = random_exit = training = moves = special_calls = special_mode = 0;
-    notch = random_rolls = trapped = woods = flying_mount = false;
+    notch = random_rolls = trapped = woods = flying_mount = entrapment = false;
     output.clear();
 }
 static void flee(const char *argument = "east", P_char ch = &runner) {
@@ -223,6 +228,12 @@ static void escape_and_specials() {
         }
     }
     reset(); trapped = true; flee(); assert(!moves);
+    reset(); flying_mount = entrapment = true;
+    runner.specials.fighting = &opponent;
+    mount.specials.fighting = &opponent;
+    flee();
+    assert(!moves && runner.in_room == 0);
+    assert(runner.specials.fighting == &opponent && mount.specials.fighting == &opponent);
     reset(); woods = true; flee(); assert(!moves);
     reset(); special_mode = 1; flee(); assert(!moves && special_calls == 1);
     assert(output.find("couldn't escape") != std::string::npos);
@@ -245,7 +256,7 @@ int main() {
 
 
 def main():
-    build = ROOT / "bin/tests"
+    build = Path(os.environ.get("BIN_ROOT", ROOT / "bin")) / "tests"
     build.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix="control-flee-", dir=build) as directory:
         cpp, binary = Path(directory) / "harness.cpp", Path(directory) / "harness"
@@ -255,7 +266,7 @@ def main():
             "-Wno-unused-parameter", "-fsanitize=address,undefined",
             "-fno-omit-frame-pointer", "-fno-pie", "-no-pie",
             "-ffunction-sections", "-fdata-sections", "-Wl,--gc-sections",
-            "-I" + str(ROOT / "src"), str(cpp), str(HARNESS_STUBS), "-o", str(binary),
+            "-I" + str(ROOT / "src"), str(cpp), str(source("combat/forced_movement.c")), str(HARNESS_STUBS), "-o", str(binary),
         ], check=True)
         subprocess.run([str(binary)], check=True, env={**os.environ,
             "ASAN_OPTIONS": "detect_leaks=1:halt_on_error=1",

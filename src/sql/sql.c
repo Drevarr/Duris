@@ -49,6 +49,10 @@
 #include <ctype.h>
 #include <fcntl.h>
 #include <sys/stat.h>
+#include <sys/time.h>
+#include <new>
+#include <sys/wait.h>
+#include <spawn.h>
 #include <time.h>
 #include <unistd.h>
 #include <pthread.h>
@@ -63,8 +67,15 @@
 #include "net/poll.h"
 #include "account/multiplay_whitelist.h"
 #include "guild/assocs.h"
+#include "guild/artifact_identity.h"
 #include "economy/boon.h"
+#include "economy/collector_repository.h"
+#include "economy/collector_purchase_preparation.h"
+#include "persistence/critical_command_repository.h"
+#include "economy/divine_boon_repository.h"
 #include "world/epic.h"
+#include "world/epic_zone_defaults.h"
+#include "flatfile/flatfile_player_domain_repository.h"
 #include "world/graph.h"
 #include "core/mm.h"
 #include "item/objmisc.h"
@@ -578,18 +589,68 @@ void sql_log(P_char ch, const char *kind, const char *format, ...)
 	      safe_ip, GET_PID(ch), safe_name, zone_number, room_vnum, message);
 }
 
-void sql_load_zones(void) {}
-void sql_zones_refresh(void) {}
+static std::vector<zone_info> flat_zones;
+void sql_zones_refresh(void)
+{
+	for (auto &zone : flat_zones)
+	{
+		flatfile_zone_touch_state state;
+		std::string error;
+		const auto loaded = flatfile_zone_touch_load(persistence_mode_flatfile_root(),
+							     zone.number, &state, &error);
+		if (loaded == flatfile_player_domain_result::ok)
+		{
+			zone.alignment = state.alignment;
+			zone.last_touch = state.last_touch;
+		}
+		else if (loaded != flatfile_player_domain_result::not_found)
+			fatal_boot_error("epic_zones", "flat-file zone authority is unavailable");
+	}
+}
+void sql_load_zones(void)
+{
+	flat_zones.clear();
+	for (const auto &entry : epic_zone_defaults)
+	{
+		zone_info zone = {};
+		zone.number = entry.number;
+		const int index = real_zone0(entry.number);
+		zone.name = index >= 0 && zone_table[index].name ? zone_table[index].name :
+								   std::to_string(entry.number);
+		zone.epic_type = entry.type;
+		zone.frequency_mod = 1;
+		zone.zone_freq_mod = 1;
+		zone.epic_payout = entry.payout;
+		zone.suggested_group_size = entry.payout_group;
+		zone.stonecount = entry.stone_count;
+		flat_zones.push_back(zone);
+	}
+	sql_zones_refresh();
+}
 const std::vector<zone_info> &sql_zones(void)
 {
-	static const std::vector<zone_info> none;
-	return none;
+	return flat_zones;
 }
-bool get_zone_info(int /*zone_number*/, struct zone_info * /*info*/)
+bool get_zone_info(int zone_number, struct zone_info *info)
 {
-	return FALSE;
+	if (info)
+		for (const auto &zone : flat_zones)
+			if (zone.number == zone_number)
+			{
+				*info = zone;
+				return true;
+			}
+	return false;
 }
-void sql_set_zone_reset_perc(int /*zone_number*/, int /*reset_perc*/) {}
+void sql_set_zone_reset_perc(int zone_number, int reset_perc)
+{
+	for (auto &zone : flat_zones)
+		if (zone.number == zone_number)
+		{
+			zone.reset_perc = reset_perc;
+			return;
+		}
+}
 
 string escape_str(const char *str)
 {
@@ -623,6 +684,11 @@ void sql_mud_info_reload(P_char ch, std::function<void(P_char)> done)
 
 void sql_mud_info_refresh(void) {}
 
+bool sql_resume_pwipe(uint64_t /*expected_epoch*/)
+{
+	return false;
+}
+
 bool sql_pwipe(int code_verify)
 {
 	if (code_verify == 1723699)
@@ -638,6 +704,10 @@ bool sql_pwipe(int code_verify)
 	return FALSE;
 }
 bool sql_pwipe_crossed_boundary(void)
+{
+	return false;
+}
+bool sql_pwipe_filesystem_ready(void)
 {
 	return false;
 }
@@ -668,6 +738,7 @@ static bool sql_verify_boot_database(void);
 MYSQL *DB;
 
 static bool pwipe_crossed_boundary = false;
+static bool pwipe_filesystem_ready = false;
 static uint64_t current_season_epoch = 0;
 
 static bool sql_env_true(const char *name)
@@ -829,6 +900,20 @@ static bool sql_connection_execute_affected(MYSQL *conn, const char *statement,
 	return *affected != (my_ulonglong)-1 && mysql_next_result(conn) == -1;
 }
 
+static bool sql_use_live_table_statistics(MYSQL *connection)
+{
+	if (!connection)
+		return false;
+	const char *server = mysql_get_server_info(connection);
+	// MySQL's cached AUTO_INCREMENT can predate rows that have since been deleted.
+	return server && (strstr(server, "MariaDB") ||
+			  sql_connection_execute(connection,
+						 "SET SESSION information_schema_stats_expiry=0"));
+}
+
+static uint64_t pwipe_recovery_epoch = 0;
+static bool pwipe_roster_already_recreated = false;
+
 static bool sql_load_active_season_state(void)
 {
 	MYSQL_RES *result = db_query(
@@ -851,19 +936,36 @@ static bool sql_load_active_season_state(void)
 static bool sql_begin_pwipe_epoch(void)
 {
 	pwipe_crossed_boundary = false;
+	pwipe_roster_already_recreated = false;
 	if (!DB || !sql_connection_execute(DB, "START TRANSACTION"))
 		return false;
 	MYSQL_RES *result = db_query(
-		"SELECT season_epoch,reset_status FROM season_reset_state WHERE state_id=1 FOR UPDATE");
+		"SELECT season_epoch,reset_status,roster_recreated,reset_completed_at,reset_started_at "
+		"FROM season_reset_state WHERE state_id=1 FOR UPDATE");
 	MYSQL_ROW row = result ? mysql_fetch_row(result) : NULL;
 	char *end = NULL;
 	errno = 0;
 	unsigned long long epoch = row && row[0] ? strtoull(row[0], &end, 10) : 0;
-	const bool active = row && row[0] && end && !*end && !errno && epoch > 0 &&
-			    epoch < ULLONG_MAX && row[1] && !strcmp(row[1], "active") &&
-			    mysql_fetch_row(result) == NULL;
+	const bool valid = row && row[0] && end && !*end && !errno && epoch > 0 && row[1] &&
+			   mysql_fetch_row(result) == NULL;
+	const bool active = valid && epoch < ULLONG_MAX && !strcmp(row[1], "active");
+	const bool checkpoint = valid && row[2] && (!strcmp(row[2], "0") || !strcmp(row[2], "1"));
+	const bool sql_ready = valid && row[3] && (!row[2] || !strcmp(row[2], "1"));
+	const bool recovering = valid && pwipe_recovery_epoch > 1 &&
+				epoch == pwipe_recovery_epoch && !strcmp(row[1], "resetting") &&
+				row[4] && (sql_ready || (!row[3] && checkpoint));
+	pwipe_roster_already_recreated = recovering && row[2] && !strcmp(row[2], "1");
 	if (result)
 		mysql_free_result(result);
+	if (pwipe_recovery_epoch)
+	{
+		if (!sql_connection_execute(DB, "ROLLBACK") || !recovering)
+			return false;
+		pwipe_crossed_boundary = true;
+		pwipe_filesystem_ready = sql_ready;
+		current_season_epoch = epoch;
+		return true;
+	}
 	if (!active)
 	{
 		sql_connection_execute(DB, "ROLLBACK");
@@ -872,7 +974,7 @@ static bool sql_begin_pwipe_epoch(void)
 	char update[384];
 	snprintf(update, sizeof update,
 		 "UPDATE season_reset_state SET season_epoch=%llu,reset_status='resetting',"
-		 "reset_started_at=UTC_TIMESTAMP(6),reset_completed_at=NULL "
+		 "reset_started_at=UTC_TIMESTAMP(6),reset_completed_at=NULL,roster_recreated=0 "
 		 "WHERE state_id=1 AND season_epoch=%llu AND reset_status='active'",
 		 epoch + 1, epoch);
 	my_ulonglong affected = 0;
@@ -889,15 +991,15 @@ static bool sql_begin_pwipe_epoch(void)
 	return true;
 }
 
-static bool sql_complete_pwipe_epoch(void)
+static bool sql_prepare_pwipe_filesystem(void)
 {
 	if (!DB || !current_season_epoch)
 		return false;
 	char update[320];
 	snprintf(update, sizeof update,
-		 "UPDATE season_reset_state SET reset_status='active',"
-		 "reset_completed_at=UTC_TIMESTAMP(6) WHERE state_id=1 AND season_epoch=%llu "
-		 "AND reset_status='resetting'",
+		 "UPDATE season_reset_state SET reset_completed_at=UTC_TIMESTAMP(6) "
+		 "WHERE state_id=1 AND season_epoch=%llu AND reset_status='resetting' "
+		 "AND reset_completed_at IS NULL AND roster_recreated=1",
 		 (unsigned long long)current_season_epoch);
 	my_ulonglong affected = 0;
 	return sql_connection_execute_affected(DB, update, &affected) && affected == 1;
@@ -906,6 +1008,11 @@ static bool sql_complete_pwipe_epoch(void)
 bool sql_pwipe_crossed_boundary(void)
 {
 	return pwipe_crossed_boundary;
+}
+
+bool sql_pwipe_filesystem_ready(void)
+{
+	return pwipe_filesystem_ready;
 }
 
 uint64_t sql_season_epoch(void)
@@ -1395,13 +1502,13 @@ const char *sql_persistence_db_name(void)
 
 /* Open a connection to the database. The connection will remain open
  * throughout the mud session. */
-int initialize_mysql()
+static bool sql_open_main_connection()
 {
 	logit(LOG_STATUS, "Initializing validated MySQL connection.");
 	DB = sql_open_configured_connection(CLIENT_MULTI_STATEMENTS);
 	if (!DB)
 	{
-		return -1;
+		return false;
 	}
 	// This connection holds the runtime lock and the game thread issues no query on it
 	// after boot. MariaDB closes a connection idle past wait_timeout (8 hours by
@@ -1413,7 +1520,7 @@ int initialize_mysql()
 		      "FATAL: could not keep the main database connection open; aborting boot");
 		mysql_close(DB);
 		DB = NULL;
-		return -1;
+		return false;
 	}
 	if (!duris_sql_exclusion_guard_acquire(DB))
 	{
@@ -1421,10 +1528,18 @@ int initialize_mysql()
 		      "FATAL: database runtime exclusion guard is held by another session; aborting boot");
 		mysql_close(DB);
 		DB = NULL;
-		return -1;
+		return false;
 	}
 
 	logit(LOG_STATUS, "Connection established.");
+
+	return true;
+}
+
+int initialize_mysql()
+{
+	if (!sql_open_main_connection())
+		return -1;
 
 	sql_resetConnectTimes();
 	sql_load_ip_activity();
@@ -1508,6 +1623,32 @@ void shutdown_mysql(void)
 	}
 }
 
+bool sql_resume_pwipe(uint64_t expected_epoch)
+{
+	if (expected_epoch < 2 || DB || !sql_open_main_connection())
+		return false;
+	bool ready = false;
+	try
+	{
+		if (sql_verify_boot_database())
+		{
+			pwipe_recovery_epoch = expected_epoch;
+			current_season_epoch = expected_epoch;
+			if (sql_begin_pwipe_epoch())
+				ready = pwipe_filesystem_ready || sql_pwipe(1723699);
+		}
+	}
+	catch (const std::bad_alloc &)
+	{
+		logit(LOG_STATUS, "SQL pwipe recovery allocation failed; reset remains fenced.");
+	}
+	pwipe_recovery_epoch = 0;
+	duris_sql_exclusion_guard_release();
+	mysql_close(DB);
+	DB = nullptr;
+	return ready;
+}
+
 /* Handle a query, log possible errors and return results (if available) */
 MYSQL_RES *db_query_at(struct persistence_query_site site, const char *format, ...)
 {
@@ -1555,11 +1696,22 @@ MYSQL_RES *db_query_at(struct persistence_query_site site, const char *format, .
  * it never gives a deleted row's id out again. */
 unsigned long long sql_next_auto_increment(const char *table)
 {
-	MYSQL_RES *result = db_query("SELECT AUTO_INCREMENT FROM information_schema.TABLES "
-				     "WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='%s'",
-				     table);
+	if (!sql_use_live_table_statistics(DB))
+		return 0;
+	// A fresh MySQL AUTO_INCREMENT table reports NULL until its first allocation.
+	MYSQL_RES *result =
+		db_query("SELECT COALESCE(t.AUTO_INCREMENT,1) FROM information_schema.TABLES t "
+			 "JOIN information_schema.COLUMNS c ON c.TABLE_SCHEMA=t.TABLE_SCHEMA "
+			 "AND c.TABLE_NAME=t.TABLE_NAME AND c.EXTRA LIKE '%%auto_increment%%' "
+			 "WHERE t.TABLE_SCHEMA=DATABASE() AND t.TABLE_NAME='%s'",
+			 table);
 	if (!result)
 		return 0;
+	if (mysql_warning_count(DB))
+	{
+		mysql_free_result(result);
+		return 0;
+	}
 	MYSQL_ROW row = mysql_fetch_row(result);
 	const unsigned long long next = row && row[0] ? strtoull(row[0], NULL, 10) : 0;
 	mysql_free_result(result);
@@ -1736,7 +1888,7 @@ static bool sql_verify_boot_database(void)
 		"AND ((table_name='critical_operation_inbox' AND column_name IN "
 		"('operation_id','command_hash','keys_hash','command_type','schema_version',"
 		"'payload_version','status','result_code','durable_revision','result_payload',"
-		"'created_at','committed_at')) OR (table_name='critical_test_state' AND "
+		"'created_at','committed_at','expected_outbox_events')) OR (table_name='critical_test_state' AND "
 		"column_name IN ('entity_type','entity_id','value','revision','updated_at')) OR "
 		"(table_name='critical_outbox' AND column_name IN "
 		"('outbox_id','operation_id','event_index','destination','event_type',"
@@ -1752,12 +1904,12 @@ static bool sql_verify_boot_database(void)
 	}
 	row = mysql_fetch_row(result);
 	lengths = row ? mysql_fetch_lengths(result) : NULL;
-	const bool critical_columns_ok = row && lengths && row[0] && atoi(row[0]) == 34;
+	const bool critical_columns_ok = row && lengths && row[0] && atoi(row[0]) == 35;
 	mysql_free_result(result);
 	if (!critical_columns_ok)
 	{
 		logit(LOG_STATUS,
-		      "FATAL: critical command schema is incomplete at boot (expected 34 required columns).");
+		      "FATAL: critical command schema is incomplete at boot (expected 35 required columns).");
 		return false;
 	}
 	const char *critical_index_probe =
@@ -3817,12 +3969,133 @@ bool sql_clear_zone_trophy()
 	return TRUE;
 }
 
+// One preparation path serves the read-only preflight and the fenced reset.
+// Use normal collector commands so custody, serialized records and receipts agree.
+static bool sql_reset_collector_state(bool apply)
+try
+{
+	collector_bootstrap_snapshot snapshot;
+	if (!collector_repository_read_bootstrap(DB, &snapshot, true))
+	{
+		logit(LOG_STATUS, "Collector reset: invalid bootstrap (error %d).", errno);
+		return false;
+	}
+	std::sort(snapshot.held_items.begin(), snapshot.held_items.end(),
+		  [](const auto &left, const auto &right)
+		  { return left.item_uid < right.item_uid; });
+	if (snapshot.catalog.records.size() > UINT64_MAX - snapshot.catalog.revision)
+		return false;
+	critical_operation_id parent = {};
+	std::copy_n("pwipe-co", 8, parent.bytes.begin());
+	for (size_t byte = 0; byte < sizeof(current_season_epoch); ++byte)
+		parent.bytes[8 + byte] = static_cast<uint8_t>(current_season_epoch >> (byte * 8));
+	for (const auto &entry : snapshot.catalog.records)
+	{
+		auto payload = std::make_unique<collector_command_payload>();
+		payload->action = collector_action::cancel;
+		payload->cancel_reason = collector::reason::season_reset;
+		payload->listing = entry.listing;
+		payload->expected_listing_revision = entry.revision;
+		payload->observed_at = static_cast<uint64_t>(time(nullptr));
+		if (entry.status != collector::state::candidate)
+		{
+			collector_listing_detail detail;
+			bool found = false;
+			player_item_snapshot item;
+			if (!collector_repository_read_listing(DB, entry.listing, &detail,
+							       &found) ||
+			    !found ||
+			    collector_listing_decode_item(entry, detail, &item) !=
+				    collector_listing_decode_outcome::decoded)
+			{
+				logit(LOG_STATUS,
+				      "Collector reset: invalid held item payload (error %d).",
+				      errno);
+				return false;
+			}
+			const auto held = std::lower_bound(snapshot.held_items.begin(),
+							   snapshot.held_items.end(), entry.uid,
+							   [](const auto &owner, uint64_t uid)
+							   { return owner.item_uid < uid; });
+			if (held == snapshot.held_items.end() || held->item_uid != entry.uid ||
+			    held->vnum != item.vnum)
+				return false;
+			MYSQL_RES *rows = db_query(
+				"SELECT COALESCE(MAX(revision),0) FROM item_owner_revision "
+				"WHERE owner_type=%u AND owner_id=0 AND owner_context_id=0",
+				static_cast<unsigned>(item_owner_type::destruction));
+			MYSQL_ROW row = rows ? mysql_fetch_row(rows) : nullptr;
+			char *end = nullptr;
+			errno = 0;
+			const uint64_t destruction_revision =
+				row && row[0] ? strtoull(row[0], &end, 10) : 0;
+			const bool valid = row && row[0] && end && !*end && !errno &&
+					   (apply ? 1 : snapshot.held_items.size()) <=
+						   UINT64_MAX - destruction_revision;
+			if (rows)
+				mysql_free_result(rows);
+			if (!valid)
+				return false;
+			payload->from_owner = held->owner;
+			payload->to_owner = { item_owner_type::destruction, 0, 0 };
+			payload->expected_from_owner_revision = held->owner_revision;
+			payload->expected_to_owner_revision = destruction_revision;
+			payload->selected_item_uid = entry.uid;
+			payload->target_state = item_custody_state::destroyed;
+			payload->item_count = 1;
+			payload->items[0] = {
+				held->item_uid,	     held->root_item_uid, held->parent_item_uid,
+				held->item_revision, held->vnum,	  held->state
+			};
+			payload->item_blob_size = static_cast<uint32_t>(detail.item_blob.size());
+			std::copy(detail.item_blob.begin(), detail.item_blob.end(),
+				  payload->item_blob.begin());
+		}
+		critical_operation_id operation;
+		critical_command command;
+		if (!critical_operation_id_derive(
+			    parent, static_cast<uint32_t>(critical_command_type::collector),
+			    entry.listing, &operation) ||
+		    !collector_command_build(&command, operation, *payload,
+					     critical_source_site::operator_repair,
+					     critical_deadline_class::recovery))
+			return false;
+		if (!apply)
+			continue;
+		struct timeval accepted;
+		if (gettimeofday(&accepted, nullptr) != 0)
+			return false;
+		command.accepted_at_usec = static_cast<uint64_t>(accepted.tv_sec) * 1000000 +
+					   static_cast<uint64_t>(accepted.tv_usec);
+		const auto result = critical_command_repository_apply(DB, command);
+		if ((result.outcome != critical_apply_outcome::applied &&
+		     result.outcome != critical_apply_outcome::already_applied) ||
+		    result.error_code)
+		{
+			logit(LOG_STATUS,
+			      "Collector reset: cancellation failed at listing %llu (outcome %u, error %u).",
+			      static_cast<unsigned long long>(entry.listing),
+			      static_cast<unsigned>(result.outcome), result.error_code);
+			return false;
+		}
+	}
+	return true;
+}
+catch (const std::bad_alloc &)
+{
+	return false;
+}
+
 /* Verify every runtime table and column referenced by sql_pwipe() before the
  * first destructive statement.  This must describe final runtime schema, not
  * migration-only helper tables. */
 bool sql_verify_pwipe_manifest(void)
 {
-	static const char *const tables[] = { "account_bound_rewards",
+	static const char *const tables[] = { "combat_frag_baseline",
+					      "currency_wallet_baseline",
+					      "epic_balance_baseline",
+					      "account_banks",
+					      "account_bound_rewards",
 					      "account_bound_reward_summons",
 					      "account_bound_reward_pwipe_state",
 					      "account_characters",
@@ -3833,20 +4106,29 @@ bool sql_verify_pwipe_manifest(void)
 					      "account_lockers",
 					      "alliances",
 					      "artifact_bind",
+					      "artifact_domain_state",
 					      "artifacts",
 					      "artifacts_mortal",
 					      "associations",
 					      "auction_bid_history",
 					      "auction_item_pickups",
+					      "auction_item_custody",
 					      "auction_money_pickups",
 					      "auctions",
 					      "boons",
+					      "divine_boon_state",
 					      "boons_progress",
 					      "boons_shop",
 					      "corpse_item_affects",
 					      "corpse_item_extra_descr",
 					      "corpse_items",
 					      "corpses",
+					      "collector_catalog_state",
+					      "collector_deaths",
+					      "collector_listings",
+					      "collector_ledger",
+					      "item_current_owner",
+					      "item_owner_revision",
 					      "ctf_data",
 					      "epic_bonus",
 					      "epic_gain",
@@ -3858,6 +4140,9 @@ bool sql_verify_pwipe_manifest(void)
 					      "guildhall_rooms",
 					      "guildhalls",
 					      "guilds",
+					      "kingdom_garrison",
+					      "kingdom_land",
+					      "kingdom_realms",
 					      "ip_info",
 					      "level_cap",
 					      "locker_access",
@@ -3916,6 +4201,9 @@ bool sql_verify_pwipe_manifest(void)
 					      "ship_slots",
 					      "ships",
 					      "shop_trophy",
+					      "siege_item_affects",
+					      "siege_item_extra_descr",
+					      "siege_items",
 					      "shopkeeper_affects",
 					      "shopkeeper_item_affects",
 					      "shopkeeper_item_extra_descr",
@@ -3928,7 +4216,73 @@ bool sql_verify_pwipe_manifest(void)
 					      "zone_trophy",
 					      NULL };
 	static const char *const columns[][2] = {
+		{ "player_data", "name" },
+		{ "player_data", "pid" },
+		{ "player_data", "level" },
+		{ "player_data", "highest_level" },
+		{ "player_data", "account_name" },
+		{ "player_data", "m_class" },
+		{ "player_data", "race" },
+		{ "player_data", "sex" },
+		{ "player_data", "hometown" },
+		{ "player_data", "last_room" },
+		{ "player_data", "prompt" },
+		{ "player_data", "birthplace" },
+		{ "player_data", "orig_birthplace" },
+		{ "player_data", "height" },
+		{ "player_data", "weight" },
+		{ "player_data", "birth_time" },
+		{ "player_data", "base_str" },
+		{ "player_data", "base_dex" },
+		{ "player_data", "base_agi" },
+		{ "player_data", "base_con" },
+		{ "player_data", "base_pow" },
+		{ "player_data", "base_int" },
+		{ "player_data", "base_wis" },
+		{ "player_data", "base_cha" },
+		{ "player_data", "base_kar" },
+		{ "player_data", "base_luk" },
+		{ "player_data", "mana" },
+		{ "player_data", "base_mana" },
+		{ "player_data", "base_hit" },
+		{ "player_data", "vitality" },
+		{ "player_data", "copper" },
+		{ "player_data", "silver" },
+		{ "player_data", "gold" },
+		{ "player_data", "platinum" },
+		{ "player_data", "bank_copper" },
+		{ "player_data", "bank_silver" },
+		{ "player_data", "bank_gold" },
+		{ "player_data", "bank_platinum" },
+		{ "player_data", "exp" },
+		{ "player_data", "epics" },
+		{ "player_data", "frags" },
+		{ "player_data", "assoc_id" },
+		{ "account_characters", "login_count" },
+		{ "account_characters", "last_login" },
+		{ "account_characters", "created_at" },
+		{ "account_characters", "last_ip" },
+		{ "account_characters", "pid" },
+		{ "account_characters", "char_name" },
+		{ "account_characters", "account_name" },
+		{ "account_characters", "racewar" },
+		{ "accounts", "account_name" },
+		{ "currency_wallet_baseline", "pid" },
+		{ "currency_wallet_baseline", "opening_copper" },
+		{ "currency_wallet_baseline", "opening_silver" },
+		{ "currency_wallet_baseline", "opening_gold" },
+		{ "currency_wallet_baseline", "opening_platinum" },
+		{ "currency_wallet_baseline", "opening_revision" },
+		{ "epic_balance_baseline", "pid" },
+		{ "epic_balance_baseline", "opening_balance" },
+		{ "epic_balance_baseline", "opening_revision" },
+		{ "combat_frag_baseline", "pid" },
+		{ "combat_frag_baseline", "opening_frags" },
+		{ "combat_frag_baseline", "opening_revision" },
 		{ "player_data", "learned_flight_stops" },
+		{ "divine_boon_state", "state_id" },
+		{ "divine_boon_state", "revision" },
+		{ "divine_boon_state", "snapshot" },
 		{ "account_bound_rewards", "id" },
 		{ "account_bound_rewards", "expires_at" },
 		{ "account_bound_rewards", "remaining_pwipes" },
@@ -3965,9 +4319,10 @@ bool sql_verify_pwipe_manifest(void)
 		{ "season_reset_state", "reset_status" },
 		{ "season_reset_state", "reset_started_at" },
 		{ "season_reset_state", "reset_completed_at" },
+		{ "season_reset_state", "roster_recreated" },
 		{ NULL, NULL }
 	};
-	char query[8192];
+	char query[16384];
 	int pos = snprintf(
 		query, sizeof(query),
 		"SELECT COUNT(*) FROM information_schema.tables WHERE table_schema=DATABASE() AND table_name IN (");
@@ -4020,7 +4375,20 @@ bool sql_verify_pwipe_manifest(void)
 	row = mysql_fetch_row(result);
 	bool columns_ok = row && row[0] && atoi(row[0]) == expected_columns;
 	mysql_free_result(result);
-	return columns_ok;
+	if (!columns_ok)
+		return false;
+	divine_boon_state boons;
+	const auto loaded = divine_boon_sql_load(DB, &boons);
+	if (loaded == divine_boon_store_result::not_found)
+		return true;
+	if (loaded != divine_boon_store_result::ok ||
+	    !divine_boon_reset_season(&boons, time(nullptr)))
+	{
+		logit(LOG_STATUS,
+		      "sql_pwipe: Divine Boon state cannot be safely retired; preflight aborted.");
+		return false;
+	}
+	return true;
 }
 
 /* Season-reset preflight: verify persistence event schema and auction engines.
@@ -4084,16 +4452,41 @@ bool sql_verify_auction_engines(void)
 	return auction_engines_ok;
 }
 
+static bool sql_pwipe_pid_capacity_valid(bool reserve_roster)
+{
+	// SQL permits unsigned PIDs, but native account/player identities are signed ints.
+	// Reserve staff allocations only before recreation; completed rosters need only
+	// one usable next identity, including same-epoch recovery before sql_begin_pwipe_epoch.
+	if (!sql_use_live_table_statistics(DB))
+		return false;
+	MYSQL_RES *result = db_query(
+		"SELECT AUTO_INCREMENT > 0 AND AUTO_INCREMENT + "
+		"IF(%d AND NOT EXISTS (SELECT 1 FROM season_reset_state WHERE state_id=1 "
+		"AND season_epoch=%llu AND reset_status='resetting' AND roster_recreated=1), "
+		"(SELECT COUNT(*) FROM player_data WHERE active=1 AND level=%d), 0) * "
+		"@@auto_increment_increment <= %d FROM information_schema.TABLES "
+		"WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='player_data'",
+		reserve_roster ? 1 : 0, static_cast<unsigned long long>(pwipe_recovery_epoch),
+		OVERLORD, INT_MAX);
+	if (!result)
+		return false;
+	MYSQL_ROW row = mysql_fetch_row(result);
+	const bool valid = row && row[0] && !strcmp(row[0], "1");
+	mysql_free_result(result);
+	return valid;
+}
+
 bool sql_pwipe(int code_verify)
 {
 	pwipe_crossed_boundary = false;
+	pwipe_filesystem_ready = false;
 	logit(LOG_DEBUG, "sql_pwipe: STARTED!");
 	if (code_verify == 1723699)
 	{
 		/* -- Preflight: verify critical tables exist and have correct engines -- */
 		logit(LOG_DEBUG, "sql_pwipe: Preflight schema check... .. .");
 		send_to_all("Preflight schema check... .. .");
-		if (!sql_verify_persistence_schema())
+		if (!sql_verify_metadata_fingerprint() || !sql_verify_persistence_schema())
 		{
 			logit(LOG_DEBUG,
 			      "sql_pwipe: Preflight failed: persistence schema incomplete.");
@@ -4103,8 +4496,8 @@ bool sql_pwipe(int code_verify)
 		if (!sql_verify_pwipe_manifest())
 		{
 			logit(LOG_DEBUG,
-			      "sql_pwipe: Preflight failed: reset manifest schema incomplete.");
-			send_to_all("Preflight FAILED: reset manifest schema incomplete!\n");
+			      "sql_pwipe: Preflight failed: reset manifest schema or state incomplete.");
+			send_to_all("Preflight FAILED: reset manifest prerequisites incomplete!\n");
 			return FALSE;
 		}
 		/* Verify auction tables are InnoDB (transactional) before reset. */
@@ -4114,26 +4507,90 @@ bool sql_pwipe(int code_verify)
 			send_to_all("Preflight FAILED: auction tables must be InnoDB!\n");
 			return FALSE;
 		}
-		if (!redis_validate_pwipe_state())
+		if (!(pwipe_recovery_epoch ?
+			      redis_recover_pwipe_state(pwipe_recovery_epoch - 1, false) :
+			      redis_validate_pwipe_state()))
 		{
 			logit(LOG_DEBUG,
 			      "sql_pwipe: Preflight failed: fresh Redis administrative connection unavailable.");
 			send_to_all("Preflight FAILED: Redis invalidation target unavailable!\n");
 			return FALSE;
 		}
+		char wipe_program[] = "./Players/wipers/wipe_it_all";
+		char wipe_check[] = "--check";
+		char *wipe_arguments[] = { wipe_program, wipe_check, nullptr };
+		pid_t wipe_child = 0;
+		bool filesystem_ready = posix_spawn(&wipe_child, wipe_program, nullptr, nullptr,
+						    wipe_arguments, environ) == 0;
+		if (filesystem_ready)
+		{
+			int status = 0;
+			pid_t waited;
+			do
+			{
+				waited = waitpid(wipe_child, &status, 0);
+			} while (waited < 0 && errno == EINTR);
+			filesystem_ready = (waited == wipe_child ||
+					    (waited < 0 && errno == ECHILD &&
+					     take_reaped_child_status(wipe_child, &status))) &&
+					   WIFEXITED(status) && WEXITSTATUS(status) == 0;
+		}
+		if (!filesystem_ready)
+		{
+			logit(LOG_STATUS,
+			      "sql_pwipe: Filesystem preflight failed; reset work refused.");
+			return FALSE;
+		}
+
+		if (!pwipe_recovery_epoch && !pwipe_quiesce_writers())
+		{
+			logit(LOG_STATUS,
+			      "sql_pwipe: Writer drain failed; old season remains active.");
+			return FALSE;
+		}
+
+		if (!sql_pwipe_pid_capacity_valid(true))
+		{
+			logit(LOG_STATUS,
+			      "sql_pwipe: Player PID capacity is outside the native range; reset work refused.");
+			send_to_all(
+				"Preflight FAILED: player PID allocator cannot create a playable new season.\n");
+			if (!pwipe_recovery_epoch)
+				pwipe_resume_writers();
+			return FALSE;
+		}
+
+		if (!sql_reset_collector_state(false))
+		{
+			logit(LOG_STATUS,
+			      "sql_pwipe: Collector retirement preflight failed; reset work refused.");
+			if (!pwipe_recovery_epoch)
+				pwipe_resume_writers();
+			return FALSE;
+		}
+
 		if (!sql_begin_pwipe_epoch())
 		{
 			logit(LOG_DEBUG,
 			      "sql_pwipe: Failed to establish durable season reset boundary.");
 			send_to_all("Preflight FAILED: season reset boundary unavailable!\n");
+			if (!pwipe_crossed_boundary && !pwipe_recovery_epoch)
+				pwipe_resume_writers();
 			return FALSE;
 		}
 		logit(LOG_DEBUG, "  success!");
 		send_to_all("  success!\n");
+		if (!sql_reset_collector_state(true))
+		{
+			logit(LOG_STATUS,
+			      "sql_pwipe: Collector retirement failed; reset remains fenced.");
+			return FALSE;
+		}
 		logit(LOG_DEBUG, "sql_pwipe: Clearing zone alignments, trophy and touches... .. .");
 		send_to_all("Clearing zone alignments, trophy and touches... .. .");
-		if (sql_clear_zone_trophy() && qry("DELETE FROM zone_trophy") &&
-		    qry("DELETE FROM zone_touches"))
+		// The shared writer is fenced: reset through the owning SQL connection.
+		if (qry("UPDATE zones SET alignment=0 WHERE epic_type > 0") &&
+		    qry("DELETE FROM zone_trophy") && qry("DELETE FROM zone_touches"))
 		{
 			logit(LOG_DEBUG, "  success!");
 			send_to_all("  success!\n");
@@ -4173,7 +4630,9 @@ bool sql_pwipe(int code_verify)
 		}
 		logit(LOG_DEBUG, "sql_pwipe: Clearing prestige lists... .. .");
 		send_to_all("Clearing prestige lists... .. .");
-		if (qry("DELETE FROM associations"))
+		// Association IDs are reused; retire their world state before the owner.
+		if (qry("DELETE FROM kingdom_garrison") && qry("DELETE FROM kingdom_land") &&
+		    qry("DELETE FROM kingdom_realms") && qry("DELETE FROM associations"))
 		{
 			logit(LOG_DEBUG, "  success!");
 			send_to_all("  success!\n");
@@ -4199,7 +4658,14 @@ bool sql_pwipe(int code_verify)
 		}
 		logit(LOG_DEBUG, "sql_pwipe: Clearing artifact bind data... .. .");
 		send_to_all("Clearing artifact bind data... .. .");
-		if (qry("DELETE FROM artifact_bind"))
+		// Match physical retirement: old canonical UIDs remain rejected by recovery,
+		// while ownership, timers and souls belong to the new season.
+		if (qry("UPDATE artifact_domain_state SET owned=0,loc_type=1,location=0,"
+			"timer_epoch=0,bind_owner_pid=0,bind_timer_epoch=0,item_uid=NULL,"
+			"item_revision=NULL,identity_state=IF(canonical_item_uid IS NULL,%u,%u)",
+			static_cast<unsigned>(artifact_identity_state::absent),
+			static_cast<unsigned>(artifact_identity_state::retired)) &&
+		    qry("DELETE FROM artifact_bind"))
 		{
 			logit(LOG_DEBUG, "  success!");
 			send_to_all("  success!\n");
@@ -4212,7 +4678,8 @@ bool sql_pwipe(int code_verify)
 		}
 		logit(LOG_DEBUG, "sql_pwipe: Clearing auction data... .. .");
 		send_to_all("Clearing auction data... .. .");
-		if (qry("DELETE FROM auction_bid_history") &&
+		if (qry("DELETE FROM auction_item_custody") &&
+		    qry("DELETE FROM auction_bid_history") &&
 		    qry("DELETE FROM auction_item_pickups") &&
 		    qry("DELETE FROM auction_money_pickups") && qry("DELETE FROM auctions"))
 		{
@@ -4236,6 +4703,14 @@ bool sql_pwipe(int code_verify)
 		{
 			logit(LOG_DEBUG, "        failure!");
 			send_to_all("        failure!\n");
+			return FALSE;
+		}
+		const auto retired_boons = divine_boon_sql_reset_season(DB, time(nullptr));
+		if (retired_boons != divine_boon_store_result::ok &&
+		    retired_boons != divine_boon_store_result::already_applied)
+		{
+			logit(LOG_STATUS,
+			      "sql_pwipe: Divine Boon retirement failed; reset remains fenced.");
 			return FALSE;
 		}
 		logit(LOG_DEBUG, "sql_pwipe: Clearing ctf data... .. .");
@@ -4356,6 +4831,14 @@ bool sql_pwipe(int code_verify)
 		{
 			logit(LOG_DEBUG, "        failure!");
 			send_to_all("        failure!\n");
+			return FALSE;
+		}
+		logit(LOG_DEBUG, "sql_pwipe: Clearing siege item data... .. .");
+		send_to_all("Clearing siege item data... .. .");
+		if (!qry("DELETE FROM siege_item_affects") ||
+		    !qry("DELETE FROM siege_item_extra_descr") || !qry("DELETE FROM siege_items"))
+		{
+			logit(LOG_STATUS, "sql_pwipe: Siege cleanup failed; reset remains fenced.");
 			return FALSE;
 		}
 		logit(LOG_DEBUG, "sql_pwipe: Clearing completed quest data... .. .");
@@ -4671,33 +5154,82 @@ bool sql_pwipe(int code_verify)
 			send_to_all("        failure!\n");
 			return FALSE;
 		}
-		/* -- Season-reset manifest: soft-delete account characters -- */
-		logit(LOG_DEBUG, "sql_pwipe: Soft-deleting account characters... .. .");
-		send_to_all("Soft-deleting account characters... .. .");
-		if (qry("UPDATE account_characters SET deleted_at = COALESCE(deleted_at, NOW()) WHERE deleted_at IS NULL"))
+		if (!qry("DELETE FROM account_bound_reward_summons"))
+			return FALSE;
+		// Bank balances are seasonal. DELETE preserves the monotonic bank allocator,
+		// so a new season cannot inherit an old bank's ledger/baseline identity.
+		if (!qry("DELETE FROM account_banks"))
 		{
-			logit(LOG_DEBUG, "  success!");
-			send_to_all("  success!\n");
-		}
-		else
-		{
-			logit(LOG_DEBUG, "        failure!");
-			send_to_all("        failure!\n");
+			logit(LOG_STATUS, "sql_pwipe: Failed to reset account banks.");
 			return FALSE;
 		}
-		logit(LOG_DEBUG, "sql_pwipe: Deactivating player_data... .. .");
-		send_to_all("Deactivating player_data... .. .");
-		if (qry("UPDATE player_data SET active = 0, learned_flight_stops = 0"))
+		// Recreate only exact Overlords on new PIDs. Keep retired rows as history,
+		// but release their unique names; never attach a new body to an old ledger.
+		if (!pwipe_roster_already_recreated)
 		{
-			logit(LOG_DEBUG, "  success!");
-			send_to_all("  success!\n");
+			// Explicit identities avoid InnoDB's extra INSERT ... SELECT reservations.
+			// Writers are quiesced, so the live watermark stays owned by this reset.
+			const auto roster_next_pid = sql_next_auto_increment("player_data");
+			if (!roster_next_pid || roster_next_pid > INT_MAX)
+				return FALSE;
+			if (!qry("START TRANSACTION"))
+				return FALSE;
+			char roster_checkpoint[384];
+			snprintf(
+				roster_checkpoint, sizeof roster_checkpoint,
+				"UPDATE season_reset_state SET roster_recreated=1 WHERE state_id=1 "
+				"AND season_epoch=%llu AND reset_status='resetting' AND roster_recreated=0",
+				static_cast<unsigned long long>(current_season_epoch));
+			my_ulonglong checkpoint_rows = 0;
+			const bool roster_ok =
+				qry("CREATE TEMPORARY TABLE pwipe_overlords AS "
+				    "SELECT p.name,account.account_name,p.m_class,p.race,p.sex,p.hometown,p.height,p.weight "
+				    "FROM player_data p JOIN accounts account ON account.account_name=p.account_name "
+				    "WHERE p.active=1 AND p.level=%d AND NOT EXISTS ("
+				    "SELECT 1 FROM account_characters tombstone WHERE (tombstone.deleted_at IS NOT NULL OR tombstone.blocked<>0) "
+				    "AND (tombstone.pid=p.pid OR LOWER(tombstone.char_name)=LOWER(p.name)))",
+				    OVERLORD) &&
+				qry("UPDATE account_characters SET deleted_at = COALESCE(deleted_at, NOW()) WHERE deleted_at IS NULL") &&
+				qry("UPDATE player_data SET active = 0, learned_flight_stops = 0, name=CONCAT('~pwipe-',pid)") &&
+				qry("INSERT INTO player_data(pid,name,account_name,m_class,race,sex,hometown,last_room,birthplace,orig_birthplace,"
+				    "height,weight,level,highest_level,birth_time,last_save,prompt,base_str,base_dex,base_agi,base_con,base_pow,"
+				    "base_int,base_wis,base_cha,base_kar,base_luk,mana,base_mana,base_hit,vitality) "
+				    "SELECT %llu+(ROW_NUMBER() OVER (ORDER BY name)-1)*@@auto_increment_increment,"
+				    "name,account_name,m_class,race,sex,hometown,hometown,hometown,hometown,height,weight,"
+				    "%d,%d,UTC_TIMESTAMP(),UTC_TIMESTAMP(),%u,100,100,100,100,100,100,100,100,100,100,100,100,100,100 "
+				    "FROM pwipe_overlords",
+				    roster_next_pid, OVERLORD, OVERLORD,
+				    static_cast<unsigned>(PROMPT_HIT | PROMPT_MAX_HIT |
+							  PROMPT_MOVE | PROMPT_MAX_MOVE |
+							  PROMPT_TANK_NAME | PROMPT_TANK_COND |
+							  PROMPT_ENEMY | PROMPT_ENEMY_COND |
+							  PROMPT_TWOLINE | PROMPT_STATUS)) &&
+				qry("INSERT INTO currency_wallet_baseline(pid,opening_copper,opening_silver,opening_gold,opening_platinum,opening_revision) "
+				    "SELECT p.pid,0,0,0,0,0 FROM player_data p JOIN pwipe_overlords o ON o.name=p.name WHERE p.active=1") &&
+				qry("INSERT INTO epic_balance_baseline(pid,opening_balance,opening_revision) "
+				    "SELECT p.pid,0,0 FROM player_data p JOIN pwipe_overlords o ON o.name=p.name WHERE p.active=1") &&
+				qry("INSERT INTO combat_frag_baseline(pid,opening_frags,opening_revision) "
+				    "SELECT p.pid,0,0 FROM player_data p JOIN pwipe_overlords o ON o.name=p.name WHERE p.active=1") &&
+				qry("INSERT INTO account_characters(account_name,pid,char_name,racewar,login_count,last_login,created_at,last_ip,deleted_at) "
+				    "SELECT o.account_name,p.pid,p.name,%d,0,NULL,UTC_TIMESTAMP(),NULL,NULL "
+				    "FROM player_data p JOIN pwipe_overlords o ON o.name=p.name WHERE p.active=1 AND p.level=%d "
+				    "ON DUPLICATE KEY UPDATE account_name=VALUES(account_name),pid=VALUES(pid),deleted_at=NULL,"
+				    "racewar=VALUES(racewar),login_count=0,last_login=NULL,created_at=VALUES(created_at),last_ip=NULL",
+				    ACCT_IMMORTAL, OVERLORD) &&
+				sql_connection_execute_affected(DB, roster_checkpoint,
+								&checkpoint_rows) &&
+				checkpoint_rows == 1 && qry("COMMIT");
+			if (!roster_ok)
+			{
+				qry("ROLLBACK");
+				logit(LOG_STATUS,
+				      "sql_pwipe: Overlord recreation failed; reset remains fenced.");
+				return FALSE;
+			}
+			if (!qry("DROP TEMPORARY TABLE pwipe_overlords"))
+				return FALSE;
 		}
-		else
-		{
-			logit(LOG_DEBUG, "        failure!");
-			send_to_all("        failure!\n");
-			return FALSE;
-		}
+
 		logit(LOG_DEBUG, "sql_pwipe: Clearing persistence event data... .. .");
 		send_to_all("Clearing persistence event data... .. .");
 		if (qry("DELETE FROM persistence_item_events") &&
@@ -4727,7 +5259,9 @@ bool sql_pwipe(int code_verify)
 			send_to_all("        failure!\n");
 			return FALSE;
 		}
-		if (!redis_clear_pwipe_state())
+		if (!(pwipe_recovery_epoch ?
+			      redis_recover_pwipe_state(pwipe_recovery_epoch - 1, true) :
+			      redis_clear_pwipe_state()))
 		{
 			logit(LOG_DEBUG, "sql_pwipe: Redis pwipe invalidation failed.");
 			return FALSE;
@@ -4738,33 +5272,109 @@ bool sql_pwipe(int code_verify)
 		{
 			/* Verify that player_items, player_pets, lockers, ships, guilds, and
 			 * persistence event tables are all empty after reset. */
-			const char *postflight_tables[] = { "player_items",
-							    "player_pets",
-							    "player_affects",
-							    "player_skills",
-							    "player_spellbooks",
-							    "player_languages",
-							    "player_timers",
-							    "lockers",
-							    "locker_items",
-							    "private_chests",
-							    "corpses",
+			const char *postflight_tables[] = { "account_banks",
+							    "account_bound_reward_summons",
+							    "account_locker_access",
+							    "account_locker_item_affects",
+							    "account_locker_item_extra_descr",
+							    "account_locker_items",
+							    "account_lockers",
+							    "alliances",
+							    "artifact_bind",
+							    "artifacts",
+							    "artifacts_mortal",
+							    "associations",
+							    "auction_bid_history",
+							    "auction_item_custody",
+							    "auction_item_pickups",
+							    "auction_money_pickups",
+							    "auctions",
+							    "boons",
+							    "boons_progress",
+							    "boons_shop",
+							    "corpse_item_affects",
+							    "corpse_item_extra_descr",
 							    "corpse_items",
-							    "saved_items",
-							    "ships",
-							    "ship_slots",
-							    "ship_crew",
-							    "ship_armor",
-							    "guilds",
+							    "corpses",
+							    "ctf_data",
+							    "epic_bonus",
+							    "epic_gain",
+							    "eq_drop",
+							    "frag_leaderboard",
 							    "guild_members",
 							    "guild_ranks",
-							    "artifacts",
-							    "frag_leaderboard",
-							    "statistics",
+							    "guild_transactions",
+							    "guildhall_rooms",
+							    "guildhalls",
+							    "guilds",
+							    "ip_info",
+							    "kingdom_garrison",
+							    "kingdom_land",
+							    "kingdom_realms",
+							    "locker_access",
+							    "locker_activity_log",
+							    "locker_chests",
+							    "locker_item_affects",
+							    "locker_item_extra_descr",
+							    "locker_items",
+							    "locker_kickouts",
+							    "locker_session_state",
+							    "lockers",
+							    "log_entries",
+							    "offline_messages",
 							    "persistence_item_events",
 							    "persistence_scalar_events",
+							    "pkill_event",
+							    "pkill_info",
+							    "player_affects",
+							    "player_forged_items",
+							    "player_granted_cmds",
+							    "player_intros",
+							    "player_item_affects",
+							    "player_item_extra_descr",
+							    "player_items",
+							    "player_languages",
+							    "player_pet_item_affects",
+							    "player_pet_item_extra_descr",
+							    "player_pet_items",
+							    "player_pets",
+							    "player_recipes",
+							    "player_shapechanges",
+							    "player_skills",
+							    "player_spellbooks",
+							    "player_timers",
+							    "player_undead_slots",
+							    "player_witnesses",
+							    "poll_options",
+							    "poll_votes",
 							    "polls",
+							    "private_chest_log",
+							    "private_chests",
+							    "progress",
+							    "racewar_stat_mods",
+							    "saved_item_affects",
+							    "saved_item_extra_descr",
+							    "saved_item_recovery_handoff",
+							    "saved_items",
+							    "ship_armor",
+							    "ship_cargo_market_mods",
+							    "ship_cargo_prices",
+							    "ship_crew",
+							    "ship_slots",
+							    "ships",
+							    "shop_trophy",
+							    "shopkeeper_affects",
+							    "shopkeeper_item_affects",
+							    "shopkeeper_item_extra_descr",
+							    "shopkeeper_items",
 							    "shopkeepers",
+							    "siege_item_affects",
+							    "siege_item_extra_descr",
+							    "siege_items",
+							    "statistics",
+							    "world_quest_accomplished",
+							    "zone_touches",
+							    "zone_trophy",
 							    NULL };
 			bool postflight_ok = TRUE;
 			for (int i = 0; postflight_tables[i] != NULL; i++)
@@ -4791,16 +5401,22 @@ bool sql_pwipe(int code_verify)
 					postflight_ok = FALSE;
 				}
 			}
-			/* Retained player rows must be inactive and have no seasonal discoveries. */
+			/* Only clean, recreated Overlords may be active. */
 			MYSQL_RES *res = db_query(
-				"SELECT COUNT(*) FROM player_data WHERE active = 1 OR learned_flight_stops <> 0");
+				"SELECT COUNT(*) FROM player_data WHERE learned_flight_stops <> 0 OR "
+				"(active=1 AND (pid=0 OR pid>%d OR level<>%d OR copper<>0 OR silver<>0 OR gold<>0 OR platinum<>0 "
+				"OR bank_copper<>0 OR bank_silver<>0 OR bank_gold<>0 OR bank_platinum<>0 "
+				"OR exp<>0 OR epics<>0 OR frags<>0 OR assoc_id<>0 OR last_room<>hometown "
+				"OR NOT EXISTS(SELECT 1 FROM account_characters a WHERE a.pid=player_data.pid "
+				"AND a.deleted_at IS NULL AND a.account_name=player_data.account_name)))",
+				INT_MAX, OVERLORD);
 			if (res)
 			{
 				MYSQL_ROW row = mysql_fetch_row(res);
 				if (row && row[0] && atoi(row[0]) > 0)
 				{
 					logit(LOG_DEBUG,
-					      "sql_pwipe: Postflight FAILED: %d player_data rows retain active state or flight discoveries.",
+					      "sql_pwipe: Postflight FAILED: %d player_data rows have invalid identities, active state or flight discoveries.",
 					      atoi(row[0]));
 					postflight_ok = FALSE;
 				}
@@ -4812,9 +5428,11 @@ bool sql_pwipe(int code_verify)
 				      "sql_pwipe: Postflight FAILED: cannot query player_data reset state.");
 				postflight_ok = FALSE;
 			}
-			/* Verify account_characters are all soft-deleted. */
+			/* Active mappings must point to the recreated Overlords only. */
 			res = db_query(
-				"SELECT COUNT(*) FROM account_characters WHERE deleted_at IS NULL");
+				"SELECT COUNT(*) FROM account_characters a LEFT JOIN player_data p ON p.pid=a.pid "
+				"WHERE a.deleted_at IS NULL AND (p.pid IS NULL OR p.active<>1 OR p.level<>%d)",
+				OVERLORD);
 			if (res)
 			{
 				MYSQL_ROW row = mysql_fetch_row(res);
@@ -4833,6 +5451,12 @@ bool sql_pwipe(int code_verify)
 				      "sql_pwipe: Postflight FAILED: cannot query account_characters.");
 				postflight_ok = FALSE;
 			}
+			if (!sql_pwipe_pid_capacity_valid(false))
+			{
+				logit(LOG_STATUS,
+				      "sql_pwipe: Postflight FAILED: player PID capacity is outside the native range.");
+				postflight_ok = FALSE;
+			}
 			if (!postflight_ok)
 			{
 				logit(LOG_DEBUG, "sql_pwipe: Postflight invariants failed.");
@@ -4847,8 +5471,9 @@ bool sql_pwipe(int code_verify)
 			      "sql_pwipe: account reward pwipe policy failed; preserving rewards for manual review.");
 			send_to_all(
 				"Account reward pwipe policy FAILED; rewards are being preserved for manual review.\n");
+			return FALSE;
 		}
-		if (!sql_complete_pwipe_epoch())
+		if (!sql_prepare_pwipe_filesystem())
 		{
 			logit(LOG_DEBUG,
 			      "sql_pwipe: Reset data cleared but season state completion failed; shutdown remains fenced.");
@@ -4858,8 +5483,10 @@ bool sql_pwipe(int code_verify)
 		}
 		logit(LOG_DEBUG, "  success!");
 		send_to_all("  success!\n");
-		logit(LOG_DEBUG, "sql_pwipe: COMPLETED!");
-		send_to_all("WIPE COMPLETED!");
+		pwipe_filesystem_ready = true;
+		logit(LOG_STATUS,
+		      "sql_pwipe: SQL reset ready for filesystem cleanup; startup remains fenced.");
+		send_to_all("SQL reset ready; filesystem cleanup and season activation remain.\n");
 		sleep(1);
 		return TRUE;
 	}

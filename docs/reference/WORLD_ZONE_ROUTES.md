@@ -104,50 +104,55 @@ resets and interior exits, and Lizizania's internal routes, resets, and quests.
 
 ## Misty Chasm and the Underdark
 
-Provide ordinary two-way travel between Misty Chasm and the Underdark while
-preserving its surface entrance and existing area progression.
+Issue #403 installed the expanded zone 3000 and retained its surface approach
+`638825 W <-> 300000 E`. The October 28 follow-up relocates the Underdark
+route from `300019 D <-> 834025 U` to **two reciprocal walking routes**:
+`300149 N <-> 766414 S` and `300149 E <-> 766815 W`.
+The retired stair exits and descriptions are removed.
 
-### Ordinary two-way Underdark passage
+From the surface, the ordinary route continues through Misty Chasm to room
+300039, then `enter waterfall` reaches 300144; interior tunnels lead to
+300149. Both new exits work without flight, keys, doors or staff teleport.
+Unlike the old stair, this is deliberately deeper in the zone.
+Both UD destinations remain connected by ordinary east/south travel through
+766415. The restored 834024 footprint is a nontraversable mountain, while
+766814 is the inert named map marker: no ordinary incoming exits reach it.
+The routes survive resets of zones 3000 and 7000 and a clean server restart.
 
-Misty Chasm must connect `15015 D -> 834025` and `834025 U -> 15015` through
-an open stair passage requiring no key, flight, swim, or staff movement bypass.
-The existing low-ceiling tunnel's ordinary terrain constraints must remain.
+The authored-zone fixes from issue #403 remain intact, including quest hand-ins,
+reset population caps, portal destinations, boating and fishing. The new
+teak fishing rod (object 300039) is sold at 100% condition. Existing saved
+damaged items are not silently repaired. Legacy zone 150 remains retired.
 
-#### Verification: Surface to tunnel and back
+## Underdark entrance markers
 
-- When a human on foot enters from 638825, follows the forest trail to 15015,
-  descends to 834025, walks the adjoining UD tunnel network, and returns
-- Verify each intended room is reached, and the player can return to 638825
-- Also verify the route needs no fall, secret door, locked door, or staff-only movement
+The October 26 missing-marker report, amended for the October 28 relocation, is covered by eight labeled footprints:
 
-### Preserve existing entrances and progression
+- Mushroom Caverns: marker `819888` north of `820288 U <-> 24101 D`,
+  and marker `824682` north of `825082 U <-> 24237 D`.
+- Pragtog's Domain: reported footprint `822268` north of
+  `822668 D <-> 10649 U`.
+- The Tunnels of Cyric the Destroyer: marker `746083` north of
+  `746483 D <-> 54554 U`.
+- Caves of Mt. Skelenak: marker `709264` north of `709664 U <-> 4093 D`.
+- The Stone Tomb of Kelek: marker `856819` north of `857219 D <-> 87950 U`.
+- The Underworld Shafts: marker `844448` north of `844848 U <-> 10021 D`.
+- The Chasm of the Misty Vale: marker `766814` south of `766414 S <-> 300149 N`
+  and west of `766815 W <-> 300149 E`. Former marker 834024 is restored mountain.
 
-The change must retain `638825 W <-> 15000 E`, both existing exits of 15015,
-all room identities, bridge and shaft falls, pyramid locks, resets, and quests.
-
-#### Verification: Existing area remains intact
-
-- When the authored and generated world are checked
-- Verify only the new reciprocal passage and its descriptions differ in the two endpoint records
-- Also verify no existing exit is replaced or removed
-
-### Durable loaded routes
-
-The new passage must remain loaded and traversable after zone reset and clean
-restart, without new zcheck findings or one-way traps.
-
-#### Verification: Reset and restart
-
-- When zones 150 and 7000 reset and the world restarts
-- Verify ordinary surface-to-UD and return journeys still pass
-- Also verify diagnostics differ from baseline only by the intended new entrances
+These footprints use the existing zone glyph and marker flags, with no incoming
+exits. Cyric's footprint fills an unused grid square; the other seven replace
+mountain squares. All seven unrelated markers retain their original routes. The travel rooms keep their terrain and reciprocal zone exits,
+including the Mushroom Caverns pool and the falling Underworld Shafts passage.
 
 ## Verification commands and boundaries
 
 ```sh
 python3 tests/async/test_issue37_zone_routes.py
+python3 tests/async/test_ud_zone_markers.py
 make world
 python3 tests/async/test_issue37_zone_routes.py --generated
+python3 tests/async/test_ud_zone_markers.py --generated
 python3 tests/async/test_falling_world_exits.py
 python3 tests/async/test_documentation_contract.py
 ```

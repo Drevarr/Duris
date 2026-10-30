@@ -25,10 +25,14 @@
 #include "guild/alliances.h"
 #include "guild/assocs.h"
 #include "economy/boon.h"
+#include "economy/divine_boon_runtime.h"
+#include "economy/divine_boon_math.h"
+#include "economy/divine_boon_selection.h"
 #include "combat/ctf.h"
 #include "core/defines.h"
 #include "world/epic_bonus.h"
 #include "world/epic.h"
+#include "world/experience_share.h"
 #include "combat/frag_cap_config.h"
 #include "world/hardcore_config.h"
 #include "core/files.h"
@@ -43,6 +47,11 @@
 #include "item/trophy.h"
 #include "world/weather.h"
 #include "net/ws_handlers.h"
+
+#include <algorithm>
+#include <cmath>
+#include <limits>
+#include <type_traits>
 
 /*
  * external variables
@@ -117,7 +126,7 @@ int vitality_limit(P_char ch)
 
 int mana_regen(P_char ch, bool display_only)
 {
-	if (GET_STAT(ch) <= STAT_INCAP || IS_FIGHTING(ch))
+	if (GET_STAT(ch) <= STAT_INCAP)
 		return 0;
 
 	if (has_innate(ch, INNATE_VULN_SUN) && IS_SUNLIT(ch->in_room) &&
@@ -611,6 +620,12 @@ static void lose_level_impl(P_char ch, std::uint64_t threshold_xp,
 			    telemetry_progression_source source,
 			    telemetry_progression_reason reason);
 
+int death_exp_loss_level_threshold(void)
+{
+	// Retain the legacy property name for existing configurations; the cutoff is universal.
+	return get_property("exp.goodieDeathExpLossLevelThreshold", 30);
+}
+
 static void notify_level_advancement(P_char ch, int previous_level)
 {
 	P_char recipient = IS_SET(ch->specials.act, PLR_MORPH) ? ch->only.pc->switched : ch;
@@ -621,24 +636,36 @@ static void notify_level_advancement(P_char ch, int previous_level)
 	if (levels_gained == 1)
 	{
 		send_to_char("&+WYou raise a level!&N\r\n", recipient);
-		return;
+	}
+	else
+	{
+		char message[128];
+		snprintf(message, sizeof(message), "&+WYou advance to level %d.&N\r\n",
+			 GET_LEVEL(ch));
+		send_to_char(message, recipient);
 	}
 
-	char message[128];
-	snprintf(message, sizeof(message), "&+WYou advance to level %d.&N\r\n", GET_LEVEL(ch));
-	send_to_char(message, recipient);
+	const int cutoff = death_exp_loss_level_threshold();
+	if (previous_level < cutoff && GET_LEVEL(ch) >= cutoff)
+	{
+		send_to_char_f(recipient,
+			       "\r\n&+WWARNING: YOU HAVE REACHED LEVEL %d. DEATH CAN NOW COST YOU "
+			       "EXPERIENCE AND CAUSE YOU TO LOSE LEVELS!&N\r\n\r\n",
+			       cutoff);
+	}
 }
 
 void illithid_advance_level(P_char ch)
 {
-	int minlvl = get_property("exp.maxExpLevel", 46);
-	int i;
+	const int minlvl = get_property("exp.maxExpLevel", 46);
 	const int previous_level = GET_LEVEL(ch);
 
-	if (GET_LEVEL(ch) >= 56)
+	if (GET_LEVEL(ch) >= MAXLVLMORTAL)
 		return;
 
-	for (i = GET_LEVEL(ch) + 1; i > minlvl && (new_exp_table[i] <= GET_EXP(ch)); i++)
+	// Illithids gain these levels on frags, but must remain mortals.
+	for (int i = GET_LEVEL(ch) + 1;
+	     i > minlvl && i <= MAXLVLMORTAL && new_exp_table[i] <= GET_EXP(ch); ++i)
 	{
 		GET_EXP(ch) -= new_exp_table[i];
 		advance_level_impl(ch, false, true, static_cast<std::uint64_t>(new_exp_table[i]));
@@ -875,7 +902,7 @@ void display_gain(P_char ch, int gain, int type)
 		logexp("%s gained %d (%d) experience. points.curr_exp = %d, needed for level = %ld\n",
 		       GET_NAME(ch), gain, type, GET_EXP(ch), new_exp_table[GET_LEVEL(ch) + 1]);
 	}
-	if (IS_SET(ch->specials.act2, PLR2_EXP) && type == EXP_KILL)
+	if (IS_SET(ch->specials.act2, PLR2_EXP) && type == EXP_KILL && gain != 0)
 	{
 		snprintf(buffer, MAX_STRING_LENGTH, "&+CEXP:&+G %d \r\n", gain);
 		send_to_char(buffer, ch);
@@ -921,25 +948,39 @@ void update_exp_table()
 	}
 }
 
-float gain_exp_modifiers_race_only(P_char ch, P_char victim, float XP)
+template <typename Amount, typename Modifier>
+static void apply_exp_modifier(Amount &amount, Amount *eligible_base, Modifier factor)
 {
+	double multiplier = factor;
+	if constexpr (std::is_same_v<Amount, double> && std::is_same_v<Modifier, float>)
+		multiplier = divine_boon_modifier(factor);
+	amount *= multiplier;
+	if (eligible_base)
+		*eligible_base *= std::min(1.0, multiplier);
+}
+
+template <typename Amount> Amount gain_exp_modifiers_race_only(P_char ch, P_char victim, Amount XP,
+							       Amount *eligible_base = nullptr)
+{
+	const int victim_race = victim ? tutorial_mobile_mechanics_race(victim) : RACE_NONE;
 	// debug("Gain exp race (%d) Start.", (int)XP);
 
 	if (ch && GET_RACE(ch) >= 1 && GET_RACE(ch) <= LAST_RACE)
 	{
-		XP *= racial_exp_mods[GET_RACE(ch)];
+		apply_exp_modifier(XP, eligible_base, racial_exp_mods[GET_RACE(ch)]);
 	}
 	// debug("Gain exp ch (%d) Start.", (int)XP);
-	if (victim && GET_RACE(victim) >= 1 && GET_RACE(victim) <= LAST_RACE)
+	if (victim && victim_race >= 1 && victim_race <= LAST_RACE)
 	{
-		XP *= racial_exp_mod_victims[GET_RACE(victim)];
+		apply_exp_modifier(XP, eligible_base, racial_exp_mod_victims[victim_race]);
 	}
 	// debug("Gain exp victim (%d) Start.", (int)XP);
 	// debug("Gain exp race End (%d).", (int)XP);
 	return XP;
 }
 
-float gain_exp_modifiers(P_char ch, P_char victim, float XP)
+template <typename Amount>
+Amount gain_exp_modifiers(P_char ch, P_char victim, Amount XP, Amount *eligible_base = nullptr)
 {
 	// debug("Gain exp modifiers (%d).", (int)XP);
 
@@ -948,7 +989,7 @@ float gain_exp_modifiers(P_char ch, P_char victim, float XP)
 		if (CHAR_IN_TOWN(ch) && (GET_LEVEL(victim) > HOMETOWN_EXP_LEVEL_LIMIT) &&
 		    !IS_PC(victim))
 		{
-			XP *= exp_mods[EXPMOD_VICT_HOMETOWN];
+			apply_exp_modifier(XP, eligible_base, exp_mods[EXPMOD_VICT_HOMETOWN]);
 			if (!number(0, 49)) // Limit the spam
 				send_to_char(
 					"&+gThis being a hometown, you receive fewer exps...&n\r\n",
@@ -959,7 +1000,8 @@ float gain_exp_modifiers(P_char ch, P_char victim, float XP)
 		{
 			if (!IS_MULTICLASS_NPC(victim))
 			{
-				XP *= exp_mods[flag2idx(victim->player.m_class)];
+				apply_exp_modifier(XP, eligible_base,
+						   exp_mods[flag2idx(victim->player.m_class)]);
 			}
 			// Apply all mods for NPCs.
 			else
@@ -972,7 +1014,8 @@ float gain_exp_modifiers(P_char ch, P_char victim, float XP)
 					{
 						// We use cls+1 here, because 1 << 0 == 1 == BIT_1 == CLASS_WARRIOR -> EXPMOD_CLS_WARRIOR == 1
 						//   1 << 1 == 2 == CLASS_RANGER -> EXPMOD_CLS_RANGER == 2, 1 << 3 == 4 == CLASS_PSIONICIST ...
-						XP *= exp_mods[cls + 1];
+						apply_exp_modifier(XP, eligible_base,
+								   exp_mods[cls + 1]);
 					}
 				}
 			}
@@ -981,40 +1024,42 @@ float gain_exp_modifiers(P_char ch, P_char victim, float XP)
 		// Aggro mobs yield more exp
 		if (aggressive_to_basic(victim, ch))
 		{
-			XP *= exp_mods[EXPMOD_VICT_ACT_AGGRO];
+			apply_exp_modifier(XP, eligible_base, exp_mods[EXPMOD_VICT_ACT_AGGRO]);
 		}
 
 		// Careful with the breath modifier since many greater race mobs have a breathe weapon.
 		if (CAN_BREATHE(victim))
 		{
-			XP *= exp_mods[EXPMOD_VICT_BREATHES];
+			apply_exp_modifier(XP, eligible_base, exp_mods[EXPMOD_VICT_BREATHES]);
 		}
 
 		if (IS_ELITE(victim))
 		{
-			XP *= exp_mods[EXPMOD_VICT_ELITE];
+			apply_exp_modifier(XP, eligible_base, exp_mods[EXPMOD_VICT_ELITE]);
 		}
 
 		if (IS_SET(victim->specials.act, ACT_HUNTER))
 		{
-			XP *= exp_mods[EXPMOD_VICT_ACT_HUNTER];
+			apply_exp_modifier(XP, eligible_base, exp_mods[EXPMOD_VICT_ACT_HUNTER]);
 		}
 
 		if (!IS_PC(victim) && !IS_SET(victim->specials.act, ACT_MEMORY))
 		{
-			XP *= exp_mods[EXPMOD_VICT_NOMEMORY];
+			apply_exp_modifier(XP, eligible_base, exp_mods[EXPMOD_VICT_NOMEMORY]);
 		}
 
 		if (GET_CLASS(ch, CLASS_PALADIN))
 		{
 			if (IS_GOOD(victim))
-				XP *= exp_mods[EXPMOD_PALADIN_VS_GOOD];
+				apply_exp_modifier(XP, eligible_base,
+						   exp_mods[EXPMOD_PALADIN_VS_GOOD]);
 			else if (IS_EVIL(victim))
-				XP *= exp_mods[EXPMOD_PALADIN_VS_EVIL];
+				apply_exp_modifier(XP, eligible_base,
+						   exp_mods[EXPMOD_PALADIN_VS_EVIL]);
 		}
 		else if (GET_CLASS(ch, CLASS_ANTIPALADIN) && IS_GOOD(victim))
 		{
-			XP *= exp_mods[EXPMOD_ANTIPALADIN_VS_GOOD];
+			apply_exp_modifier(XP, eligible_base, exp_mods[EXPMOD_ANTIPALADIN_VS_GOOD]);
 		}
 	}
 
@@ -1039,30 +1084,31 @@ float gain_exp_modifiers(P_char ch, P_char victim, float XP)
 	*/
 
 	if (GET_LEVEL(ch) >= 31)
-		XP *= exp_mods[EXPMOD_LVL_31_UP];
+		apply_exp_modifier(XP, eligible_base, exp_mods[EXPMOD_LVL_31_UP]);
 	if (GET_LEVEL(ch) >= 41)
-		XP *= exp_mods[EXPMOD_LVL_41_UP];
+		apply_exp_modifier(XP, eligible_base, exp_mods[EXPMOD_LVL_41_UP]);
 	if (GET_LEVEL(ch) >= 51)
-		XP *= exp_mods[EXPMOD_LVL_51_UP];
+		apply_exp_modifier(XP, eligible_base, exp_mods[EXPMOD_LVL_51_UP]);
 	if (GET_LEVEL(ch) >= 55)
-		XP *= exp_mods[EXPMOD_LVL_55_UP];
+		apply_exp_modifier(XP, eligible_base, exp_mods[EXPMOD_LVL_55_UP]);
 
 	// debug("Gain exps mofidiers (%d).", (int)XP);
 
 	return XP;
 }
 
-float gain_global_exp_modifiers(P_char ch, float XP)
+template <typename Amount>
+Amount gain_global_exp_modifiers(P_char ch, Amount XP, Amount *eligible_base = nullptr)
 {
 	if (IS_RACEWAR_GOOD(ch))
-		XP *= exp_mods[EXPMOD_GOOD];
+		apply_exp_modifier(XP, eligible_base, exp_mods[EXPMOD_GOOD]);
 	else if (IS_RACEWAR_EVIL(ch))
-		XP *= exp_mods[EXPMOD_EVIL];
+		apply_exp_modifier(XP, eligible_base, exp_mods[EXPMOD_EVIL]);
 	else if (IS_RACEWAR_UNDEAD(ch))
-		XP *= exp_mods[EXPMOD_UNDEAD];
+		apply_exp_modifier(XP, eligible_base, exp_mods[EXPMOD_UNDEAD]);
 	else if (IS_RACEWAR_NEUTRAL(ch))
-		XP *= exp_mods[EXPMOD_NEUTRAL];
-	XP *= exp_mods[EXPMOD_GLOBAL];
+		apply_exp_modifier(XP, eligible_base, exp_mods[EXPMOD_NEUTRAL]);
+	apply_exp_modifier(XP, eligible_base, exp_mods[EXPMOD_GLOBAL]);
 
 	return XP;
 }
@@ -1122,7 +1168,35 @@ int exp_level_percent_modifier(P_char killer, P_char victim)
 	return mod;
 }
 
-int gain_exp(P_char ch, P_char victim, const int value, int type)
+static bool divine_experience_active(P_char ch, P_char encounter)
+{
+	if (!ch || !IS_PC(ch) || !encounter || !IS_NPC(encounter) || IS_PC_PET(encounter) ||
+	    IS_SHOPKEEPER(encounter))
+		return false;
+	ch = GET_PLYR(ch);
+	if (GET_LEVEL(ch) < 1 || GET_LEVEL(ch) > MAXLVLMORTAL ||
+	    (!IS_RACEWAR_GOOD(ch) && !IS_RACEWAR_EVIL(ch)) || ch->in_room < 0 ||
+	    ch->in_room > top_of_world || encounter->in_room < 0 ||
+	    encounter->in_room > top_of_world ||
+	    world[ch->in_room].zone != world[encounter->in_room].zone ||
+	    IS_ROOM(ch->in_room, ROOM_SAFE | ROOM_GUILD | ROOM_ARENA) ||
+	    IS_ROOM(encounter->in_room, ROOM_SAFE | ROOM_GUILD | ROOM_ARENA))
+		return false;
+	const auto *state = divine_boon_runtime_state();
+	if (!state || state->mode != divine_boon_mode::divine)
+		return false;
+	if (IS_SET(zone_table[world[ch->in_room].zone].flags,
+		   ZONE_TOWN | ZONE_SAFE | ZONE_MAP | ZONE_CLOSED | ZONE_PRIVATE))
+		return false;
+	const int zone = ROOM_ZONE_NUMBER(ch->in_room);
+	const unsigned side = IS_RACEWAR_GOOD(ch) ? 0 : 1;
+	// The game-thread pulse has already validated and cached each shared
+	// target. Never rewalk the world graph on NPC damage/heal/tank XP hits.
+	return divine_boon_reward_zone_eligible(zone, side);
+}
+
+template <typename Amount>
+static int gain_exp_amount(P_char ch, P_char victim, const Amount value, int type, bool divine)
 {
 	// Bonus XP retains kill modifiers and feedback without counting another victim.
 	const bool kill_bonus = type == EXP_KILL_BONUS;
@@ -1132,7 +1206,10 @@ int gain_exp(P_char ch, P_char victim, const int value, int type)
 	int evilcap = get_property("exp.level.cap.evil", 15);
 	int levelcap = sql_level_cap(GET_RACEWAR(ch));
 	bool pvp = FALSE;
-	float XP = MAX(1, value);
+	Amount XP = MAX(1, value);
+	const double unmodified_share = XP; // Each recipient applies its own reductions and rest.
+	Amount eligible_base = divine ? MAX(0, value) : 0;
+	Amount *base = divine ? &eligible_base : nullptr;
 	std::uint32_t progression_modifier_flags = TELEMETRY_PROGRESSION_MODIFIER_NONE;
 	P_char master;
 
@@ -1166,7 +1243,7 @@ int gain_exp(P_char ch, P_char victim, const int value, int type)
 		    (new_exp_table[GET_LEVEL(ch) + 1] <= GET_EXP(ch)))
 		{
 			progression_modifier_flags |= TELEMETRY_PROGRESSION_MODIFIER_OVER_LEVEL_CAP;
-			XP *= exp_mods[EXPMOD_OVER_LEVEL_CAP];
+			apply_exp_modifier(XP, base, exp_mods[EXPMOD_OVER_LEVEL_CAP]);
 		}
 	}
 
@@ -1226,6 +1303,10 @@ int gain_exp(P_char ch, P_char victim, const int value, int type)
 		// +30 is + 10 to account for incap damage and + 20 for lowbie mobs
 		// with very low hps
 		XP = (XP / (GET_MAX_HIT(victim) + 30)) * GET_EXP(victim);
+		if (base)
+			*base = (*base / (GET_MAX_HIT(victim) + 30)) * GET_EXP(victim);
+		const double tank_share =
+			(unmodified_share / (GET_MAX_HIT(victim) + 30)) * GET_EXP(victim);
 
 		// When someone else is tanking mob you damage, they get tanking exp
 		P_char tank = GET_OPPONENT(victim);
@@ -1235,24 +1316,33 @@ int gain_exp(P_char ch, P_char victim, const int value, int type)
 			if (GET_LEVEL(tank) >=
 			    GET_LEVEL(ch) - (IS_RACEWAR_GOOD(ch) ? goodcap : evilcap))
 			{
-				gain_exp(tank, victim, XP, EXP_TANKING);
+				if (divine_experience_active(tank, victim))
+					gain_exp_amount<double>(tank, victim, tank_share,
+								EXP_TANKING, true);
+				else
+					gain_exp(tank, victim, XP, EXP_TANKING);
 			}
 		}
 
-		XP *= exp_mods[EXPMOD_DAMAGE];
+		apply_exp_modifier(XP, base, exp_mods[EXPMOD_DAMAGE]);
 		// debug("damage 1 exp gain (%d)", (int)XP);
-		XP = gain_global_exp_modifiers(ch, XP);
+		XP = gain_global_exp_modifiers(ch, XP, base);
 		// debug("damage 2 exp gain (%d)", (int)XP);
-		XP *= exp_level_percent_modifier(ch, victim) / 100.;
+		apply_exp_modifier(XP, base, exp_level_percent_modifier(ch, victim) / 100.);
 		// debug("damage 3 exp gain (%d)", (int)XP);
 		// debug("damage 4 exp gain (%d)", (int)XP);
-		XP = gain_exp_modifiers(ch, victim, XP);
+		XP = gain_exp_modifiers(ch, victim, XP, base);
 		// debug("damage 5 exp gain (%d)", (int)XP);
-		XP = gain_exp_modifiers_race_only(ch, victim, XP);
+		XP = gain_exp_modifiers_race_only(ch, victim, XP, base);
 		// debug("damage 6 exp gain (%d)", (int)XP);
-		XP = check_nexus_bonus(ch, (int)XP, NEXUS_BONUS_EXP);
+		XP = divine ? check_nexus_bonus_precise(ch, XP, NEXUS_BONUS_EXP) :
+			      check_nexus_bonus(ch, (int)XP, NEXUS_BONUS_EXP);
 		// debug("damage 7 exp gain (%d)", (int)XP);
-		XP = XP + (int)((float)XP * get_epic_bonus(ch, EPIC_BONUS_EXP));
+		if (divine)
+			apply_exp_modifier(XP, base,
+					   1.0 + get_epic_bonus_precise(ch, EPIC_BONUS_EXP));
+		else
+			XP += (int)((float)XP * get_epic_bonus(ch, EPIC_BONUS_EXP));
 	}
 	else if (type == EXP_HEALING)
 	{
@@ -1273,35 +1363,48 @@ int gain_exp(P_char ch, P_char victim, const int value, int type)
 			return 0;
 		}
 
-		XP = ((XP + 10) / 5) * ((GET_LEVEL(ch) + GET_LEVEL(victim)) / 2);
-		XP *= exp_mods[EXPMOD_HEALING];
+		const Amount healing_level = divine ? (GET_LEVEL(ch) + GET_LEVEL(victim)) / 2.0 :
+						      (GET_LEVEL(ch) + GET_LEVEL(victim)) / 2;
+		XP = ((XP + 10) / 5) * healing_level;
+		if (base)
+			*base = ((*base + 10) / 5) * healing_level;
+		apply_exp_modifier(XP, base, exp_mods[EXPMOD_HEALING]);
 
 		// debug("healing 1 (%d)", (int)XP);
 		if (!GET_CLASS(ch, CLASS_CLERIC) && !GET_SPEC(ch, CLASS_SHAMAN, SPEC_SPIRITUALIST))
 		{
-			XP *= exp_mods[EXPMOD_HEAL_NONHEALER];
+			apply_exp_modifier(XP, base, exp_mods[EXPMOD_HEAL_NONHEALER]);
 		}
 
 		// debug("healing 2 (%d)", (int)XP);
 		if (IS_PC_PET(victim))
 		{
-			XP *= exp_mods[EXPMOD_HEAL_PETS];
+			apply_exp_modifier(XP, base, exp_mods[EXPMOD_HEAL_PETS]);
 		}
 		else if (IS_NPC(victim))
+		{
 			XP /= 2;
+			if (base)
+				*base /= 2;
+		}
 		if (ch == victim)
+		{
 			XP = XP / 2;
+			if (base)
+				*base /= 2;
+		}
 		// debug("healing 3 (%d)", (int)XP);
-		XP = gain_global_exp_modifiers(ch, XP);
+		XP = gain_global_exp_modifiers(ch, XP, base);
 		// debug("healing 4 (%d)", (int)XP);
-		XP *= exp_level_percent_modifier(ch, attacker) / 100.;
+		apply_exp_modifier(XP, base, exp_level_percent_modifier(ch, attacker) / 100.);
 		// debug("healing 5 (%d)", (int)XP);
 		// debug("healing 6 (%d)", (int)XP);
-		XP = gain_exp_modifiers(ch, attacker, XP);
+		XP = gain_exp_modifiers(ch, attacker, XP, base);
 		// debug("healing 7 (%d)", (int)XP);
-		XP = gain_exp_modifiers_race_only(ch, attacker, XP);
+		XP = gain_exp_modifiers_race_only(ch, attacker, XP, base);
 		// debug("healing 8 (%d)", (int)XP);
-		XP = check_nexus_bonus(ch, (int)XP, NEXUS_BONUS_EXP);
+		XP = divine ? check_nexus_bonus_precise(ch, XP, NEXUS_BONUS_EXP) :
+			      check_nexus_bonus(ch, (int)XP, NEXUS_BONUS_EXP);
 		// debug("healing 9 (%d)", (int)XP);
 	}
 	else if (type == EXP_TANKING)
@@ -1319,22 +1422,27 @@ int gain_exp(P_char ch, P_char victim, const int value, int type)
 			}
 		}
 		if (group_size > 1)
+		{
 			XP = XP / (group_size + 1);
+			if (base)
+				*base /= (group_size + 1);
+		}
 		else
 			return 0;
 
-		XP *= exp_mods[EXPMOD_TANK];
+		apply_exp_modifier(XP, base, exp_mods[EXPMOD_TANK]);
 		// debug("tanking 1 (%d)", (int)XP);
-		XP = gain_global_exp_modifiers(ch, XP);
+		XP = gain_global_exp_modifiers(ch, XP, base);
 		// debug("tanking 2 (%d)", (int)XP);
-		XP *= exp_level_percent_modifier(ch, victim) / 100.;
+		apply_exp_modifier(XP, base, exp_level_percent_modifier(ch, victim) / 100.);
 		// debug("tanking 3 (%d)", (int)XP);
 		// debug("tanking 4 (%d)", (int)XP);
-		XP = gain_exp_modifiers(ch, victim, XP);
+		XP = gain_exp_modifiers(ch, victim, XP, base);
 		// debug("tanking 5 (%d)", (int)XP);
-		XP = gain_exp_modifiers_race_only(ch, victim, XP);
+		XP = gain_exp_modifiers_race_only(ch, victim, XP, base);
 		// debug("tanking 6 (%d)", (int)XP);
-		XP = check_nexus_bonus(ch, (int)XP, NEXUS_BONUS_EXP);
+		XP = divine ? check_nexus_bonus_precise(ch, XP, NEXUS_BONUS_EXP) :
+			      check_nexus_bonus(ch, (int)XP, NEXUS_BONUS_EXP);
 		// debug("tanking 7 (%d)", (int)XP);
 	}
 	else if (type == EXP_MELEE)
@@ -1347,37 +1455,38 @@ int gain_exp(P_char ch, P_char victim, const int value, int type)
 			return 0;
 		}
 		// Just a small boost for lowbies, becomes insignificant at higher levels  -Odorf
-		XP *= exp_mods[EXPMOD_MELEE];
+		apply_exp_modifier(XP, base, exp_mods[EXPMOD_MELEE]);
 		// debug("melee 1 exp gain (%d)", (int)XP);
 		// Little exp flow from fighting small mobs
-		if (GET_LEVEL(victim) < GET_LEVEL(ch) - 5)
-			XP *= 2 / (1 + (GET_LEVEL(ch) - GET_LEVEL(victim) + 5));
-		else
-			XP *= (GET_LEVEL(victim) - 1) / 5 + 1;
+		const int melee_share = GET_LEVEL(victim) < GET_LEVEL(ch) - 5 ?
+						2 / (1 + (GET_LEVEL(ch) - GET_LEVEL(victim) + 5)) :
+						(GET_LEVEL(victim) - 1) / 5 + 1;
+		XP *= melee_share;
+		if (base)
+			*base *= melee_share;
 		// debug("melee 2 exp gain (%d)", (int)XP);
-		XP = gain_global_exp_modifiers(ch, XP);
+		XP = gain_global_exp_modifiers(ch, XP, base);
 		// debug("melee 3 exp gain (%d)", (int)XP);
-		XP *= exp_level_percent_modifier(ch, victim) / 100.;
+		apply_exp_modifier(XP, base, exp_level_percent_modifier(ch, victim) / 100.);
 		// debug("melee 4 exp gain (%d)", (int)XP);
 		// debug("melee 5 exp gain (%d)", (int)XP);
-		XP = gain_exp_modifiers(ch, victim, XP);
+		XP = gain_exp_modifiers(ch, victim, XP, base);
 		// debug("melee 6 exp gain (%d)", (int)XP);
-		XP = gain_exp_modifiers_race_only(ch, victim, XP);
+		XP = gain_exp_modifiers_race_only(ch, victim, XP, base);
 		// debug("melee 7 exp gain (%d)", (int)XP);
-		XP = check_nexus_bonus(ch, (int)XP, NEXUS_BONUS_EXP);
+		XP = divine ? check_nexus_bonus_precise(ch, XP, NEXUS_BONUS_EXP) :
+			      check_nexus_bonus(ch, (int)XP, NEXUS_BONUS_EXP);
 		// debug("melee 8 exp gain (%d)", (int)XP);
 	}
 	else if (type == EXP_DEATH)
 	{
-		// Goods don't lose exp on death untill over the threshold.
-		if (IS_RACEWAR_GOOD(ch) &&
-		    GET_LEVEL(ch) < (int)get_property("exp.goodieDeathExpLossLevelThreshold", 20))
+		if (GET_LEVEL(ch) < death_exp_loss_level_threshold())
 		{
 			return 0;
 		}
 
-		XP = -1 * (new_exp_table[GET_LEVEL(ch) + 1] *
-			   get_property("exp.death.level.loss", 0.10));
+		XP = -static_cast<Amount>(new_exp_table[GET_LEVEL(ch) + 1]) *
+		     get_property("exp.death.level.loss", 0.10);
 		// We reduce the exp loss from death by 2x of the global modifier if the global modifier is less than 1/2.
 		// So, .4 -> 80% modifier, .3 -> 60% modifier, .15 -> 30% modifier, etc.
 		if (exp_mods[EXPMOD_GLOBAL] < .5)
@@ -1441,34 +1550,38 @@ int gain_exp(P_char ch, P_char victim, const int value, int type)
 		*/
 		if (IS_NPC(victim))
 		{
-			XP *= exp_mods[EXPMOD_KILL];
+			apply_exp_modifier(XP, base, exp_mods[EXPMOD_KILL]);
 			// debug("kill 1 exp gain (%d)", (int)XP);
-			XP = gain_global_exp_modifiers(ch, XP);
+			XP = gain_global_exp_modifiers(ch, XP, base);
 			// debug("kill 2 exp gain (%d)", (int)XP);
-			XP *= exp_level_percent_modifier(ch, victim) / 100.;
+			apply_exp_modifier(XP, base, exp_level_percent_modifier(ch, victim) / 100.);
 			// debug("kill 3 exp gain (%d)", (int)XP);
 			// debug("kill 4 exp gain (%d)", (int)XP);
-			XP = gain_exp_modifiers(ch, victim, XP);
+			XP = gain_exp_modifiers(ch, victim, XP, base);
 			// debug("kill 5 exp gain (%d)", (int)XP);
-			XP = gain_exp_modifiers_race_only(ch, victim, XP);
+			XP = gain_exp_modifiers_race_only(ch, victim, XP, base);
 			// debug("kill 6 exp gain (%d)", (int)XP);
-			XP = check_nexus_bonus(ch, (int)XP, NEXUS_BONUS_EXP);
+			XP = divine ? check_nexus_bonus_precise(ch, XP, NEXUS_BONUS_EXP) :
+				      check_nexus_bonus(ch, (int)XP, NEXUS_BONUS_EXP);
 			// debug("kill 7 exp gain (%d)", (int)XP);
 		}
+		if (divine &&
+		    (!std::isfinite(XP) || XP < 0 || XP > std::numeric_limits<int>::max()))
+			return 0;
 		// Don't log what an Immortal would've gotten.
 		if (GET_LEVEL(ch) < MINLVLIMMORTAL)
 		{
 			logit(LOG_EXP,
-			      "KILL EXP: %s (%d) killed by %s (%d): old exp: %d, new exp: %d, +exp: %d",
+			      "KILL EXP: %s (%d) killed by %s (%d): old exp: %d, new exp: %lld, +exp: %d",
 			      GET_NAME(victim), GET_LEVEL(victim), GET_NAME(ch), GET_LEVEL(ch),
-			      GET_EXP(ch), GET_EXP(ch) + (int)XP, (int)XP);
+			      GET_EXP(ch), static_cast<long long>(GET_EXP(ch)) + (int)XP, (int)XP);
 		}
 
 		if (pvp)
 		{
-			XP *= exp_mods[EXPMOD_PVP];
+			apply_exp_modifier(XP, base, exp_mods[EXPMOD_PVP]);
 			// Level difference mods.
-			XP *= exp_level_percent_modifier(ch, victim) / 100.;
+			apply_exp_modifier(XP, base, exp_level_percent_modifier(ch, victim) / 100.);
 			// debug("kill 8 exp gain (%d)", (int)XP);
 		}
 		if (!kill_bonus)
@@ -1479,25 +1592,25 @@ int gain_exp(P_char ch, P_char victim, const int value, int type)
 	}
 	else if (type == EXP_WORLD_QUEST)
 	{
-		XP = gain_exp_modifiers_race_only(ch, NULL, XP);
+		XP = gain_exp_modifiers_race_only(ch, NULL, XP, base);
 		if (GET_LEVEL(ch) < MINLVLIMMORTAL)
 		{
 			logit(LOG_EXP,
-			      "W-QUEST EXP: %s - level %d: old exp: %d, new exp: %d, +exp: %d",
-			      GET_NAME(ch), GET_LEVEL(ch), GET_EXP(ch), GET_EXP(ch) + (int)XP,
-			      (int)XP);
+			      "W-QUEST EXP: %s - level %d: old exp: %d, new exp: %lld, +exp: %d",
+			      GET_NAME(ch), GET_LEVEL(ch), GET_EXP(ch),
+			      static_cast<long long>(GET_EXP(ch)) + (int)XP, (int)XP);
 		}
 		// debug("world quest 1 (%d)", (int)XP);
 	}
 	else if (type == EXP_QUEST)
 	{
-		XP = gain_exp_modifiers_race_only(ch, NULL, XP);
+		XP = gain_exp_modifiers_race_only(ch, NULL, XP, base);
 		if (GET_LEVEL(ch) < MINLVLIMMORTAL)
 		{
 			logit(LOG_EXP,
-			      "QUEST EXP: %s - level %d: old exp: %d, new exp: %d, +exp: %d",
-			      GET_NAME(ch), GET_LEVEL(ch), GET_EXP(ch), GET_EXP(ch) + (int)XP,
-			      (int)XP);
+			      "QUEST EXP: %s - level %d: old exp: %d, new exp: %lld, +exp: %d",
+			      GET_NAME(ch), GET_LEVEL(ch), GET_EXP(ch),
+			      static_cast<long long>(GET_EXP(ch)) + (int)XP, (int)XP);
 		}
 		// debug("quest 1 (%d)", (int)XP);
 	}
@@ -1507,8 +1620,15 @@ int gain_exp(P_char ch, P_char victim, const int value, int type)
 	{
 		progression_modifier_flags |= TELEMETRY_PROGRESSION_MODIFIER_DIFFICULTY_EARNED;
 		XP *= difficulty_multiplier(DIFFICULTY_EXP_EARNED);
+		if (base)
+			*base *= std::min(1.0, difficulty_multiplier(DIFFICULTY_EXP_EARNED));
 	}
 
+	if (divine)
+		XP += eligible_base;
+	// Reject non-finite or unrepresentable Divine awards before integer conversion.
+	if (divine && (!std::isfinite(XP) || XP < 0 || XP > std::numeric_limits<int>::max()))
+		return 0;
 	const int computed_xp = (int)XP;
 	int XP_final = computed_xp;
 	// debug("check 3 xp (%d)", XP_final);
@@ -1522,22 +1642,30 @@ int gain_exp(P_char ch, P_char victim, const int value, int type)
 			progression_modifier_flags |= TELEMETRY_PROGRESSION_MODIFIER_FINAL_CAP;
 	}
 
-	// if(XP_final > 0 &&
-	// GET_EXP(ch) > (new_exp_table[GET_LEVEL(ch) + 1]));
-	// {
-	// XP_final = 1;
-	// send_to_char("&+LYour exps are capped and you must gain a level to accumulate more exps.\r\n", ch);
-	// }
-
-	// increase exp only to some limit (cumulative exp for mortals)
+	// XP may be banked while a frag cap prevents levelling. Keep only the global
+	// cumulative ceiling and the signed player-storage limit. A 64-bit intermediate
+	// makes the final award safe even when an existing balance is near INT_MAX.
 	const int before_exp = GET_EXP(ch);
-	if (GET_LEVEL(ch) < MINLVLIMMORTAL &&
-	    (XP_final < 0 || ((GET_EXP(ch) < global_exp_limit) &&
-			      GET_EXP(ch) < (2 * new_exp_table[GET_LEVEL(ch) + 1]))))
+	std::int64_t next_exp = static_cast<std::int64_t>(before_exp) + XP_final;
+	if (XP_final > 0)
 	{
-		GET_EXP(ch) += (int)XP_final;
+		const int storage_limit = std::numeric_limits<int>::max();
+		const std::int64_t ceiling =
+			std::min<std::int64_t>(global_exp_limit, storage_limit);
+		next_exp = std::min(next_exp, std::max<std::int64_t>(before_exp, ceiling));
+	}
+	else
+	{
+		next_exp = std::max<std::int64_t>(next_exp, std::numeric_limits<int>::min());
+	}
+	int credited_xp = 0;
+	if (GET_LEVEL(ch) < MINLVLIMMORTAL)
+		credited_xp = static_cast<int>(next_exp - before_exp);
+	if (credited_xp != 0)
+	{
+		GET_EXP(ch) = static_cast<int>(next_exp);
 		player_component_mask_t components = PLAYER_COMPONENT_STATUS;
-		if (record_zone_trophy_award(ch, victim, XP_final, type))
+		if (record_zone_trophy_award(ch, victim, credited_xp, type))
 			components |= PLAYER_COMPONENT_TROPHIES;
 		mark_player_dirty_components(GET_PID(ch), components);
 	}
@@ -1550,14 +1678,8 @@ int gain_exp(P_char ch, P_char victim, const int value, int type)
 			static_cast<std::int64_t>(before_exp), static_cast<std::int64_t>(after_exp),
 			static_cast<std::uint16_t>(GET_LEVEL(ch)), progression_modifier_flags,
 			TELEMETRY_QUALITY_NONE));
-	// A mortal's quest line shows what was credited; an immortal is credited nothing, so its
-	// "would have gained" log keeps the award.
-	display_gain(ch,
-		     (type == EXP_WORLD_QUEST || type == EXP_QUEST) &&
-				     GET_LEVEL(ch) < MINLVLIMMORTAL ?
-			     after_exp - before_exp :
-			     (int)XP_final,
-		     type);
+	// Mortals see only XP actually credited; staff retain the hypothetical award log.
+	display_gain(ch, GET_LEVEL(ch) >= MINLVLIMMORTAL ? XP_final : credited_xp, type);
 	if (GET_LEVEL(ch) >= MINLVLIMMORTAL)
 	{
 		return 0;
@@ -1625,7 +1747,28 @@ int gain_exp(P_char ch, P_char victim, const int value, int type)
 	gmcp_char_vitals(ch);
 
 	// debug("Gain exps final return (%d).", XP_final);
-	return type == EXP_QUEST ? after_exp - before_exp : XP_final;
+	return credited_xp;
+}
+
+int gain_exp_combat_share(P_char ch, P_char victim, double precise_share, int ordinary_share,
+			  int type)
+{
+	P_char encounter = type == EXP_HEALING && victim ? GET_OPPONENT(victim) : victim;
+	const bool combat = type == EXP_DAMAGE || type == EXP_TANKING || type == EXP_HEALING ||
+			    type == EXP_MELEE || type == EXP_KILL || type == EXP_KILL_BONUS;
+	// Healing names the patient, so check both sides of that encounter.
+	if (combat &&
+	    ((encounter && IS_NPC(encounter) && IS_ACT(encounter, ACT_TEACHER | ACT_SPEC_TEACHER)) ||
+	     (victim && IS_NPC(victim) && IS_ACT(victim, ACT_TEACHER | ACT_SPEC_TEACHER))))
+		return 0;
+	if (combat && divine_experience_active(ch, encounter))
+		return gain_exp_amount<double>(ch, victim, precise_share, type, true);
+	return gain_exp_amount<float>(ch, victim, ordinary_share, type, false);
+}
+
+int gain_exp(P_char ch, P_char victim, const int value, int type)
+{
+	return gain_exp_combat_share(ch, victim, value, value, type);
 }
 
 int gain_condition(P_char ch, int condition, int value)
@@ -1722,7 +1865,9 @@ void point_update(void)
 	for (i = character_list; i; i = i_next)
 	{
 		i_next = i->next;
-		if (IS_NPC(i))
+		// Locker holders are PID-zero PCs owned by the locker writer. They must
+		// survive until its terminal snapshot commits, even while the user idles.
+		if (IS_NPC(i) || GET_PID(i) <= 0)
 			continue;
 		// A failed death save deliberately retains the character in memory until
 		// its durable retry succeeds. It is not an idle/linkdead player and must
@@ -1925,5 +2070,5 @@ void update_exp_mods()
 	exp_mods[EXPMOD_PALADIN_VS_GOOD] = get_property("exp.factor.paladin.vsGood", 0.200);
 	exp_mods[EXPMOD_PALADIN_VS_EVIL] = get_property("exp.factor.paladin.vsEvil", 1.100);
 	exp_mods[EXPMOD_ANTIPALADIN_VS_GOOD] = get_property("exp.factor.antipaladin.vsGood", 1.050);
-	exp_mods[EXPMOD_OVER_LEVEL_CAP] = get_property("exp.factor.overCap", 0.550);
+	exp_mods[EXPMOD_OVER_LEVEL_CAP] = get_property("exp.factor.overCap", 0.700);
 }

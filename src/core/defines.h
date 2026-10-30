@@ -90,6 +90,7 @@ typedef unsigned int uint;
 #define CHAR_RFLAG_COLLECTOR_SAVE_FENCE BIT_6
 /* no in-memory purchase payload survived; only a cold player load can clear it */
 #define CHAR_RFLAG_COLLECTOR_SAVE_RELOAD BIT_7
+#define CHAR_RFLAG_TRAP_CASTER BIT_8 /* synchronous caster; retaliation cannot yield XP/death */
 
 /* object runtime flags (not saved to db) */
 #define OBJ_RFLAG_DIRTY_CONTAINER BIT_1
@@ -1108,8 +1109,10 @@ struct surname_struct
 #define HOME_NEWBIE 22
 #define HOME_PLANE_OF_LIFE 23
 #define HOME_OROGS 24 /* orog */
+#define HOME_WUTVR 25
+#define HOME_PLANE_OF_CHAOS 26
 
-#define LAST_HOME 24 /* number of last hometown */
+#define LAST_HOME 26 /* number of last hometown */
 
 /* initial alignments SAM 7-94 */
 #define ALIGN_EVIL -1

@@ -53,6 +53,7 @@ enum class outbox_publication_state : uint8_t
 	queued,
 	publishing,
 	published,
+	failed,
 };
 
 struct pending_outbox_publication
@@ -167,6 +168,8 @@ bool submit(P_char character, const auction_command_payload &payload,
 	    auction_completion_fn completion, critical_source_site source,
 	    critical_deadline_class deadline)
 {
+	if (character && currency_transaction_chest_busy(character))
+		return false;
 	if (pending.size() >= AUCTION_PENDING_MAX ||
 	    (payload.actor_pid && (!character || IS_NPC(character) ||
 				   static_cast<uint32_t>(GET_PID(character)) != payload.actor_pid)))
@@ -316,7 +319,12 @@ auction_transaction_outbox_delivery(const critical_outbox_record &record, void *
 			outbox_publications.erase(found);
 			return critical_outbox_delivery_result::delivered;
 		}
-		return critical_outbox_delivery_result::retryable_failure;
+		if (found->second.state == outbox_publication_state::failed)
+		{
+			outbox_publications.erase(found);
+			return critical_outbox_delivery_result::retryable_failure;
+		}
+		return critical_outbox_delivery_result::publication_pending;
 	}
 	try
 	{
@@ -330,7 +338,19 @@ auction_transaction_outbox_delivery(const critical_outbox_record &record, void *
 	{
 		return critical_outbox_delivery_result::retryable_failure;
 	}
-	return critical_outbox_delivery_result::retryable_failure;
+	return critical_outbox_delivery_result::publication_pending;
+}
+
+void auction_transaction_outbox_published(unsigned long long outbox_id, bool succeeded)
+{
+	std::lock_guard<std::mutex> lock(outbox_mutex);
+	auto found = outbox_publications.find(outbox_id);
+	if (found == outbox_publications.end())
+		return;
+	found->second.state = succeeded ? outbox_publication_state::published :
+					  outbox_publication_state::failed;
+	if (succeeded)
+		critical_outbox_resume();
 }
 
 void auction_transaction_publish_outbox(void)
@@ -349,19 +369,11 @@ void auction_transaction_publish_outbox(void)
 			}
 		}
 	}
-	bool published = false;
 	for (const auto &[outbox_id, result] : work)
 	{
-		const bool succeeded = auction_publish_committed_event(result, outbox_id);
-		std::lock_guard<std::mutex> lock(outbox_mutex);
-		auto found = outbox_publications.find(outbox_id);
-		if (found != outbox_publications.end())
-			found->second.state = succeeded ? outbox_publication_state::published :
-							  outbox_publication_state::queued;
-		published = published || succeeded;
+		if (!auction_publish_committed_event(result, outbox_id))
+			auction_transaction_outbox_published(outbox_id, false);
 	}
-	if (published)
-		critical_outbox_resume();
 }
 
 void auction_transaction_reset_for_tests(void)

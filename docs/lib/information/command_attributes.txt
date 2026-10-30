@@ -602,6 +602,8 @@ bark
 ~
 bathe
 ~
+battleprep
+~
 battlerager
 ~
 bbl
@@ -831,6 +833,8 @@ dismiss
 dismount
 ~
 display
+~
+divineboon
 ~
 divineclaim
 ~
@@ -1211,6 +1215,8 @@ knock
 ~
 lag
 ~
+last
+~
 laugh
 ~
 layhand
@@ -1510,6 +1516,16 @@ put
 puzzle
 ~
 quest
+~
+qinfo
+~
+qlist
+~
+hlqlist
+~
+qref
+~
+qview
 ~
 questwhere
 ~

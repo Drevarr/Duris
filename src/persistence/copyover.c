@@ -4,6 +4,7 @@
  */
 
 #include "guild/artifact_admission.h"
+#include "account/pwipe_launch.h"
 #include "persistence/persistence_log.h"
 #include "core/prototypes.h"
 #include "world/world_singletons.h"
@@ -1316,6 +1317,17 @@ bool copyover_save(int mother_desc, int mother_desc_ssl, int ws_desc)
 		notify_copyover_failure("\r\n*** Copyover FAILED - server remains live. ***\r\n");
 		return false;
 	}
+#ifndef __NO_MYSQL__
+	// The writer drain finishes receipts; publish their terminal state before exec.
+	if (!sql_ship_write_pulse())
+	{
+		critical_command_coordinator_resume();
+		player_save_pipeline_resume();
+		logit(LOG_STATUS, "copyover: uncommitted ship receipt; aborting copyover");
+		notify_copyover_failure("Copyover cancelled: a ship save needs retry.");
+		return false;
+	}
+#endif
 	/* Terminal player saves can dirty a locker after the initial locker drain,
 	 * and critical movement ACKs can publish a locker transfer during the
 	 * critical drain. Seal that final generation before serializing copyover. */
@@ -1654,6 +1666,13 @@ static P_char copyover_load_player(const char *name, P_desc d, std::string *acco
 		}
 		result = std::move(retry);
 	}
+	// The player repository supplies the authoritative owner, before materialization
+	// can attach items/pets or publish a restored player to the world.
+	if (!pwipe_launch_allows_at(result.account_name.c_str(), time(NULL)))
+	{
+		pwipe_launch_deny(d);
+		return NULL;
+	}
 	player = (P_char)mm_get(dead_mob_pool);
 	if (!player)
 		return NULL;
@@ -1892,7 +1911,7 @@ int copyover_recover(int *mother_desc, int *mother_desc_ssl, int *ws_desc)
 				      desc_entry.player_name, d->descriptor, save_room,
 				      desc_entry.fighting_type);
 			}
-			else
+			else if (d->connected != CON_FLUSH)
 			{
 				logit(LOG_STATUS, "copyover: failed to load %s",
 				      desc_entry.player_name);

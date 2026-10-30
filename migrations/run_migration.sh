@@ -44,7 +44,7 @@ export MYSQL_PWD
 MYSQL=(mysql -h "$DB_HOST" -P "${DB_PORT:-3306}" -u "$DB_USER" "$DB_NAME")
 
 STEP=0
-TOTAL=145
+TOTAL=147
 FAILED=0
 
 run_sql() {
@@ -96,7 +96,9 @@ run_check() {
 
     local output_file
     output_file=$(mktemp)
-    if DB_HOST="$DB_HOST" DB_PORT="${DB_PORT:-3306}" DB_USER="$DB_USER" \
+    if ENVIRONMENT="${ENVIRONMENT:-}" DB_SOCKET="${DB_SOCKET:-}" \
+       DB_TLS="${DB_TLS:-}" DB_SSL_CA="${DB_SSL_CA:-}" \
+       DB_HOST="$DB_HOST" DB_PORT="${DB_PORT:-3306}" DB_USER="$DB_USER" \
        DB_PASSWD="$DB_PASSWD" DB_NAME="$DB_NAME" \
        "$check_script" >"$output_file" 2>&1; then
         cat "$output_file"
@@ -2990,6 +2992,7 @@ run_check "verify account-bound reward schema" "$SCRIPT_DIR/verify_account_bound
 run_sql_file "apply persistence and auction schema contract" "$SCRIPT_DIR/persistence_contract.sql"
 run_sql_file "apply player corpse persistence state" "$SCRIPT_DIR/corpse_persistence_state.sql"
 run_sql_file "apply critical command inbox and outbox" "$SCRIPT_DIR/critical_command_inbox_outbox.sql"
+run_sql_file "record critical outbox expectations" "$SCRIPT_DIR/immutable/0050_critical_outbox_expectations.sql"
 run_check "verify critical command inbox and outbox" "$SCRIPT_DIR/verify_critical_command_schema.sh"
 run_sql_file "apply item ownership ledger schema" "$SCRIPT_DIR/item_ownership_ledger.sql"
 run_sql_file "permit shopkeeper item custody" "$SCRIPT_DIR/shopkeeper_item_owner.sql"
@@ -3001,6 +3004,7 @@ run_check "verify epic ledger and balance schema" "$SCRIPT_DIR/verify_epic_ledge
 run_sql_file "apply currency ledger schema" "$SCRIPT_DIR/currency_ledger.sql"
 run_check "verify currency ledger schema" "$SCRIPT_DIR/verify_currency_ledger_schema.sh"
 run_sql_file "apply combat outcome schema" "$SCRIPT_DIR/combat_outcome.sql"
+run_sql_file "record PvP publication permission" "$SCRIPT_DIR/immutable/0045_pkill_webinfo_at_capture.sql"
 run_check "verify combat outcome schema" "$SCRIPT_DIR/verify_combat_outcome_schema.sh"
 run_sql_file "apply artifact/guild outcome schema" "$SCRIPT_DIR/artifact_guild_outcome.sql"
 run_check "verify artifact/guild outcome schema" "$SCRIPT_DIR/verify_artifact_guild_outcome_schema.sh"

@@ -2,14 +2,87 @@
 
 Duris has two deliberately separate histories:
 
-- `migrations/run_migration.sh` is the legacy additive upgrade path. Its 145 progress
+- `migrations/run_migration.sh` is the legacy additive upgrade path. Its 147 progress
   steps and `mud_schema_migrations` data-copy markers are not complete historical
   execution evidence and are never backfilled as if they were.
 - `migrations/migration_manifest.json` is the authoritative immutable history after
   the baseline. Every post-baseline step receives one ordered ID, apply file,
   verifier, compatibility label, and exact SHA-256 hashes.
 
+## Online bartender recovery (0055)
+
+`run --online-world-quest` accepts only the sealed 56-step manifest ending in
+`0055_world_quest_recovery`, with the first 55 steps already applied. It retains
+production target confirmation, allow-list, fresh backup, advisory lock, sealed
+checksums, ordered history and success-last verification. The October 30 live
+review found MariaDB 11.8.6 and InnoDB/Dynamic `player_data`, with both new columns
+absent. Existing writers name columns; the default-zero tail fields preserve
+legacy behavior. The exact sealed ALTER statements execute as ALTER ONLINE TABLE
+with INSTANT-only DDL and one-second metadata/row-lock waits. Unsupported DDL or
+lock timeout leaves services running. Coordinate schema-aware backups across DDL
+and verify the new runtime contract before installation.
+
 ## Honest baseline adoption
+
+`0054_full_group_combat_results` (sequence 55) widens
+`critical_operation_inbox.result_payload` from `VARBINARY(4096)` to
+`VARBINARY(8192)` for atomic 20/20 PvP outcomes. It changes no table count and
+preserves existing result bytes. The guarded apply only widens the known prior
+shape, uses `ALGORITHM=INPLACE, LOCK=NONE`, and is re-runnable. Unexpected shapes
+are left intact and rejected by the verifier. Apply through the normal migration
+runner before starting the new writer; production execution remains separately
+authorized. The sealed bootstrap and existing immutable migrations are unchanged.
+
+`0053_misty_vale_shop_indexes` (sequence 54) repairs the saved shop indexes
+shifted by the Misty Vale shop inserted at index 534. It covers all 18 following
+shop identities, including the appended secondary and Meadowbrook shops. Rows
+are matched by mobile and room, except the two roaming library keepers whose
+current room is preserved. Missing shops stay missing; the migration does not
+create keepers or stock. Old and already repaired rows may coexist, and a retry
+after the data commit but before history publication performs no further moves.
+
+This is an offline data migration. Stop and drain game writers, retain a fresh
+backup, then use the ordinary `migration_runner.py run` path with its production
+target confirmation and backup arguments. Do not use an online override or start
+the old world catalogue afterward: running processes and copyover images still
+carry positional shop indexes. Rebuild the world and binary, verify runtime
+compatibility, and cold-start the new process after migration. Production
+execution requires separate owner authorization.
+
+The repair requires InnoDB and moves `shopkeepers.shop_id`, shopkeeper
+`item_current_owner.owner_id`, and `item_owner_revision.owner_id` atomically.
+Custody IDs are the shop index plus one. It preserves primary keys, stock and
+affect children, item and owner revisions, and save/update timestamps. Historical
+ownership baselines, ledgers and audits retain their original observations; the
+sealed migration mapping records how their old shop indexes correspond to the
+new catalogue. Conflicting identities, duplicate keepers or occupied custody
+destinations abort and roll back the entire repair. Inspect those records rather
+than deleting stock or merging ownership to force the migration through.
+
+`run --online-pwipe-roster` accepts only the sealed 53-step manifest ending in
+`0052_pwipe_roster_checkpoint`, with all 52 earlier steps applied. It retains
+production target confirmation, allow-list, fresh backup, advisory lock, sealed
+checksums, ordered history and success-last verification. The October 25 live
+review found MariaDB 11.8.6 and an InnoDB/Dynamic `season_reset_state` singleton
+in active epoch 1, without `roster_recreated`. Existing writers name their
+columns; the nullable tail column preserves their behavior. Execution requires
+INSTANT DDL and LOCK=NONE, with one-second metadata and row-lock waits; failure
+leaves writers running. Coordinate schema-aware backup jobs across this DDL and
+verify the new runtime contract before installation. Immutable files are unchanged.
+
+`run --online-divine-trade` accepts only the sealed 52-step manifest ending in
+`0050_divine_trade_state` and `0051_divine_effect_delivery`, with the earlier
+50 steps already applied. It retains production target confirmation, allow-list,
+fresh backup, advisory lock, checksum, ordered-history and success-last verification.
+On MariaDB 11.8, the first step creates an independent InnoDB table and inserts
+its global generation only if absent. The second appends nullable delivery proof
+columns to `artifact_domain_state` and `guilds` using INSTANT-only, LOCK=NONE DDL.
+Metadata and row-lock waits are bounded to one second; failure leaves writers up.
+The October 24 live review found both affected tables InnoDB/Dynamic, with 171
+artifact rows and two guilds, and no new delivery columns or trade table. Running
+writers name their columns, so NULL preserves the old empty delivery state.
+Coordinate schema-aware backup jobs across DDL and verify the new runtime contract
+before installation. Immutable payloads and ledger checksums remain unchanged.
 
 The checked-in baseline identifies the exact 170-table authoritative contract by a
 sealed positive table inventory and sorted-name fingerprint. A fresh bootstrap and a
@@ -22,6 +95,24 @@ The legacy runner creates the ledger and attempts verified adoption only after i
 schema operation. Extra, missing, or renamed tables refuse adoption. This creates one
 honest observation at the current boundary; it does not invent timestamps or checksums
 for historical steps.
+
+Migration `0050_critical_outbox_expectations` adds nullable
+`critical_operation_inbox.expected_outbox_events` after `committed_at`. NULL keeps
+historical intent unknown; new writers record a known zero or exact contiguous
+event count atomically with the canonical result. The guarded INSTANT addition
+does not rewrite existing receipts. Its sealed verifier rejects incompatible
+type/default/nullability/position instead of silently recording success.
+
+The exact `run --online-outbox-expectations` path supports this sealed step only
+on MariaDB 11.8 InnoDB, with the normal production target, allow-list, fresh
+backup, advisory lock, checksum, prefix-history and success-last safeguards.
+It requires an applied 0049 prefix and a manifest ending at 0050; it cannot apply
+earlier pending steps or arbitrary later migrations. INSTANT-only execution and
+one-second metadata/InnoDB lock waits fail rather than rebuilding the history
+table or requiring an outage. Running writers name inbox columns explicitly and
+remain compatible with the default-NULL addition. Apply and verify 0050 before
+starting the metadata writer/audit consumer; the worker-only PR #300 does not
+require it. Production execution still requires the owner's separate authority.
 
 For a fresh isolated database:
 
@@ -275,6 +366,23 @@ rows and inserts receive NULL for the new field, which the new code treats as an
 empty rejection set; old updates leave it untouched. Check the deployed writers
 before reuse. Applying this schema migration leaves the game running; activating
 the new artifact recovery code is a separate deployment.
+
+`run --online-divine-boon` accepts only the sealed manifest ending at 0049,
+with all steps through 0047 already applied. It creates `divine_boon_state` (0048)
+and adds the default-zero `player_data.divine_boon_delivery_seq` column (0049).
+It retains production target, allow-list, fresh backup, checksum, advisory-lock,
+ordered-history and success-last verification safeguards. It requires MariaDB
+11.8 and InnoDB `player_data`, executes the sealed CREATE unchanged, and strengthens
+only the sealed ALTER to `ALTER ONLINE TABLE` with `alter_algorithm=INSTANT` and
+one-second metadata and row-lock waits. Unsupported instant DDL or lock contention
+fails without a rebuild or offline fallback. A completed 0048 resumes at 0049.
+
+The October 22 production review found 127 player rows, InnoDB DYNAMIC format,
+no full-text indexes or triggers, and both additions absent. The running binary
+uses named-column player inserts and updates; its existing reads tolerate the new
+column. Coordinate schema-aware backups across both steps and verify the current
+runtime contract afterward. The old binary remains compatible while running but
+its exact boot contract requires an updated build before the next restart.
 
 Files live under `migrations/immutable/` and are listed explicitly in the manifest.
 Before opening a database, the runner reads every file with no-follow and fixed-size

@@ -13,6 +13,7 @@
  ****************************************************************************/
 
 #include "account/password_async.h"
+#include "account/pwipe_launch.h"
 #include <string>
 #include <memory>
 /*
@@ -77,7 +78,6 @@ extern void roll_basic_attributes(P_char ch, int type);
 extern const struct stat_data stat_factor[];
 extern const char *stat_to_string2(int val);
 extern const char *town_name_list[];
-extern const int avail_hometowns[][LAST_RACE + 1];
 
 /* forward declarations for helpers used by broadcast functions */
 static const char *ws_get_race_name(int race);
@@ -1234,6 +1234,11 @@ void ws_finish_login(struct descriptor_data *d, int password_valid)
 		d->account = free_account(d->account);
 		return;
 	}
+	if (!pwipe_launch_admit(d))
+		return;
+	if (pwipe_launch_closed_at(time(NULL)))
+		ws_send_system(d, "info",
+			       "Preparation access approved. The public gates are still closed.");
 	char tmp_name[MAX_INPUT_LENGTH];
 	strlcpy(tmp_name, d->account->acct_name, sizeof(tmp_name));
 
@@ -1356,6 +1361,8 @@ void ws_cmd_enter(struct descriptor_data *d, cJSON *data)
 	{
 		return;
 	}
+	if (!pwipe_launch_admit(d))
+		return;
 
 	if (!data)
 	{
@@ -1496,7 +1503,8 @@ void ws_cmd_game(struct descriptor_data *d, cJSON *data)
 		}
 	}
 
-	if (cmd && *cmd)
+	/* An empty line is intentional input, including pager continuation. */
+	if (cmd)
 	{
 		write_to_q(cmd, &d->input, 0);
 	}
@@ -1512,6 +1520,11 @@ void ws_cmd_register(struct descriptor_data *d, cJSON *data)
 	if (!d || d->account || d->durisweb_verified || d->durisweb_backend)
 	{
 		ws_send_auth_failed(d, "Already authenticated");
+		return;
+	}
+	if (pwipe_launch_closed_at(time(NULL)))
+	{
+		pwipe_launch_deny(d);
 		return;
 	}
 	if (!ws_player_auth_attempt(d, 1))
@@ -1639,6 +1652,11 @@ void ws_cmd_register(struct descriptor_data *d, cJSON *data)
 							    "Unable to create account with those details");
 						    completed_desc->account =
 							    free_account(completed_desc->account);
+						    return;
+					    }
+					    if (pwipe_launch_closed_at(time(NULL)))
+					    {
+						    pwipe_launch_deny(completed_desc);
 						    return;
 					    }
 					    completed_desc->account->acct_password =
@@ -1832,7 +1850,7 @@ static bool ws_chargen_allowed(struct descriptor_data *d)
 		ws_send_system(d, "error", "Character creation requires the account menu");
 		return false;
 	}
-	return true;
+	return pwipe_launch_admit(d);
 }
 
 static void add_chargen_state(cJSON *response, struct descriptor_data *d)
@@ -2158,7 +2176,13 @@ void ws_cmd_create_character(struct descriptor_data *d, cJSON *data)
 	sex = sex_item->valueint;
 
 	/* parse optional fields */
-	hometown_id = hometown_item && cJSON_IsNumber(hometown_item) ? hometown_item->valueint : -1;
+	if (hometown_item && (!cJSON_IsNumber(hometown_item) ||
+			      hometown_item->valuedouble != hometown_item->valueint))
+	{
+		ws_send_system(d, "error", "Invalid hometown selection");
+		return;
+	}
+	hometown_id = hometown_item ? hometown_item->valueint : -1;
 	is_hardcore = hardcore_item && cJSON_IsBool(hardcore_item) ? cJSON_IsTrue(hardcore_item) :
 								     0;
 	is_newbie = newbie_item && cJSON_IsBool(newbie_item) ? cJSON_IsTrue(newbie_item) : 1;
@@ -2261,15 +2285,22 @@ void ws_cmd_create_character(struct descriptor_data *d, cJSON *data)
 		return;
 	}
 
+	const int actual_hometown = hometown_item ? hometown_id : find_hometown(race_id, true);
+	if (!creation_hometown_available(race_id, resolved_racewar, actual_hometown))
+	{
+		ws_send_system(d, "error", "That hometown is not available for your race and side");
+		return;
+	}
+
 	/* store chargen options in descriptor */
-	d->chargen_hometown = hometown_id;
+	d->chargen_hometown = actual_hometown;
 	d->chargen_hardcore = is_hardcore;
 	d->chargen_newbie = is_newbie;
 
 	/* actual character creation */
 
 	char capitalized_name[MAX_NAME_LENGTH + 1];
-	int i, actual_hometown;
+	int i;
 	P_char ch;
 
 	/* capitalize name */
@@ -2345,26 +2376,6 @@ void ws_cmd_create_character(struct descriptor_data *d, cJSON *data)
 	GET_RACEWAR(ch) = resolved_racewar;
 
 	/* set hometown */
-	if (hometown_id < 0 || hometown_id > LAST_HOME)
-	{
-		actual_hometown = find_hometown(race_id, false);
-		if (actual_hometown == HOME_CHOICE)
-		{
-			/* race has multiple choices - pick first available */
-			for (i = 0; i <= LAST_HOME; i++)
-			{
-				if (avail_hometowns[i][race_id] == 1)
-				{
-					actual_hometown = i;
-					break;
-				}
-			}
-		}
-	}
-	else
-	{
-		actual_hometown = hometown_id;
-	}
 	GET_HOME(ch) = actual_hometown;
 	GET_BIRTHPLACE(ch) = actual_hometown;
 	GET_ORIG_BIRTHPLACE(ch) = actual_hometown;
@@ -2387,6 +2398,18 @@ void ws_cmd_create_character(struct descriptor_data *d, cJSON *data)
 
 	/* initialize character (sets pid, skills, hp/mana/vitality, etc.) */
 	init_char(ch);
+	if (GET_PID(ch) <= 0)
+	{
+		ws_send_system(d, "error",
+			       "Character creation is unavailable. Please contact staff.");
+		d->character = NULL;
+		ch->desc = NULL;
+		free_char(ch);
+		ws_reset_chargen(d);
+		STATE(d) = CON_ACCT_SELECT_CHAR;
+		ws_send_auth_success(d, d->account->acct_name);
+		return;
+	}
 
 	/* copy account password to character */
 	strlcpy(ch->only.pc->pwd, d->account->acct_password, sizeof ch->only.pc->pwd);
@@ -2576,22 +2599,52 @@ void ws_cmd_get_hometowns(struct descriptor_data *d, cJSON *data)
 
 	race_id = race_item->valueint;
 
-	if (race_id < 1 || race_id > LAST_RACE)
+	if (race_item->valuedouble != race_id || !ws_is_playable_race(race_id))
 	{
 		ws_send_system(d, "error", "Invalid race ID");
 		return;
 	}
 
+	int racewar = RACEWAR_NONE;
+	const char *alignment = NULL;
+	const char *faction = ws_get_race_faction(race_id);
+	cJSON *align_item = cJSON_GetObjectItem(data, "alignment");
+	if (!strcmp(faction, "neutral"))
+	{
+		if (align_item)
+		{
+			if (!cJSON_IsString(align_item) ||
+			    (strcmp(align_item->valuestring, "good") &&
+			     strcmp(align_item->valuestring, "evil")))
+			{
+				ws_send_system(d, "error", "Invalid alignment selection");
+				return;
+			}
+			alignment = align_item->valuestring;
+			racewar = ws_resolve_racewar_side(race_id,
+							  !strcmp(alignment, "good") ? 1 : -1);
+		}
+	}
+	else
+	{
+		alignment = faction;
+		racewar = ws_resolve_racewar_side(race_id, !strcmp(faction, "good") ? 1 : -1);
+	}
+
 	response = cJSON_CreateObject();
 	cJSON_AddStringToObject(response, "type", "hometowns");
 	cJSON_AddNumberToObject(response, "race", race_id);
+	if (alignment)
+		cJSON_AddStringToObject(response, "alignment", alignment);
+	else
+		cJSON_AddNullToObject(response, "alignment");
 
 	options = cJSON_CreateArray();
 
 	/* find available hometowns for this race */
 	for (i = 0; i <= LAST_HOME; i++)
 	{
-		if (avail_hometowns[i][race_id] == 1)
+		if (creation_hometown_available(race_id, racewar, i))
 		{
 			option = cJSON_CreateObject();
 			cJSON_AddNumberToObject(option, "id", i);
@@ -3815,8 +3868,13 @@ void ws_cmd_poll_vote(struct descriptor_data *d, cJSON *data)
 /* dispatch */
 void ws_handle_command(struct descriptor_data *d, const char *cmd, cJSON *data)
 {
+	if (!d || STATE(d) == CON_FLUSH)
+		return;
 	/* No account mutation or entry may overtake password verification. */
 	if (d && (d->login_password_job || d->password_request || d->writer_wait_id))
+		return;
+	if ((STATE(d) == CON_ACCT_SELECT_CHAR || STATE(d) == CON_DISPLAY_ACCT_MENU) &&
+	    !pwipe_launch_admit(d))
 		return;
 	static const struct
 	{

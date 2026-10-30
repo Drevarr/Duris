@@ -453,8 +453,12 @@ struct edit_data
 #define INNATE_ARCANE_RUDIMENTS 177
 #define INNATE_WEB_SPRAY 178
 #define INNATE_REFLECTION 179
+#define INNATE_AIR_AFFINITY 180
+#define INNATE_WATER_AFFINITY 181
+#define INNATE_FIRE_AFFINITY 182
+#define INNATE_EARTH_AFFINITY 183
 
-#define LAST_INNATE INNATE_REFLECTION // LAST means last, not last + 1 or whatever
+#define LAST_INNATE INNATE_EARTH_AFFINITY // LAST means last, not last + 1 or whatever
 
 struct extra_descr_data
 {
@@ -1271,6 +1275,7 @@ struct pc_only_data
 	int spare3;
 	int spare4;
 	uint64_t bank_revision; /* Transactional shared account-bank domain revision. */
+	bool divine_trade_payment_pending; // Process-local; never hydrated.
 	uint64_t wallet_revision; /* Transactional carried-wallet domain revision. */
 
 	long frags; /* Pkill counter                           */
@@ -1278,6 +1283,9 @@ struct pc_only_data
 	uint64_t frag_revision; /* Transactional PvP frag-domain revision. */
 	long epics; /* # of epic points                           */
 	uint64_t epic_revision; /* Transactional epic domain revision. */
+	uint64_t divine_boon_delivery_seq; /* Prepared awards included in the saved epic balance. */
+	bool divine_boon_delivery_ready; /* Transient: materialization and recovery finished. */
+	bool divine_boon_delivery_applying; /* Defer nested captures until reward effects finish. */
 	long epic_skill_points;
 	struct EpicBonusState epic_bonus_state;
 	struct gameplay_read_state gameplay_reads;
@@ -1337,6 +1345,9 @@ struct pc_only_data
 	int quest_kill_original;
 	int quest_map_room;
 	int quest_map_bought;
+	// Kept outside the legacy 14-value quest payload in player snapshots.
+	int quest_origin_room; // VNUM; zero for quests accepted before origin tracking.
+	int quest_replacement_due;
 
 	long unsigned int last_ip;
 	int skillpoints;
@@ -1369,6 +1380,7 @@ struct npc_only_data
 	int value[NUMB_CHAR_VALS];
 	sh_int attack_type; /* barehand attack                        */
 	Memory *memory; /* Used for memory system */
+	uint64_t trap_gate_target_runtime_id; /* local gate memory, including a triggering pet */
 	int home;
 	P_char orig_char; /* used instead of memory ptr to keep
 	                      track of who is controlling the mob */
@@ -1774,6 +1786,7 @@ struct descriptor_data
 	char client_str[MAX_INPUT_LENGTH]; /* CLIENT SPECIFIC STRING */
 	int last_map_update; /* CLIENT SPECIFIC INT */
 	int last_group_update; /* CLIENT SPECIFIC INT */
+	char *msp_group_output; /* Last displayed group body; owned by this connection. */
 
 	/* WebSocket support */
 	int websocket;
@@ -1795,6 +1808,8 @@ struct descriptor_data
 	size_t ws_control_output_offset;
 	int gmcp_enabled;
 	bool gmcp_initial_state_pending;
+	bool gmcp_command_receipts; // Opt-in, session-local input dequeue observation.
+	uint64_t gmcp_input_sequence;
 	int mssp_sent;
 	int sga_disabled;
 	int write_failed;

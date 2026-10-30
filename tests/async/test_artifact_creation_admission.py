@@ -8,6 +8,7 @@ from _paths import ROOT, HARNESS_STUBS, extract_function
 
 HARNESS = r"""
 #include "guild/artifact.c"
+#include "combat/trap_legacy.h"
 #include "world/object_template.h"
 #include "cmd/interp.h"
 #include "mob/studioproc.h"
@@ -33,6 +34,7 @@ index_data indexes[4] = {};
 index_data mob_indexes[1] = {};
 P_index mob_index=mob_indexes;
 P_char character_list=nullptr;
+uint64_t character_removal_generation=0;
 int real_room(int vnum) { return vnum==2300 ? 0 : -1; }
 room_data rooms[2] = {};
 const char *equipment_types[CUR_MAX_WEAR+1] = {};
@@ -583,9 +585,8 @@ source=source.replace("// RESTORE_CARRIED",extract_function("handler.c","static 
 source=source.replace("// CONSTRUCTORS","\n".join(extract_function("db.c",sig) for sig in (
  "static P_obj instantiate_object_template_impl(","P_obj instantiate_object_template(const object_template &prototype)",
  "P_obj read_object_for_creation(","P_obj read_object_for_recovery(","P_obj read_object_for_creation_repair(","P_obj read_object(int nr, int type)")))
-terminal_extract=extract_function("handler.c","void extract_char(P_char ch)")
-terminal_cleanup=terminal_extract[terminal_extract.index("\t/* clear equipment_list */"):terminal_extract.index("\n\ttraining_dummy_begin_removal(ch);")]
-source=source.replace("// TERMINAL_EXTRACTION", r"""
+terminal_cleanup=extract_function("handler.c","static void extract_char_items(")
+source=source.replace("// TERMINAL_EXTRACTION", terminal_cleanup+"\n"+r"""
 static player_save_pipeline_result terminal_admission=player_save_pipeline_result::queued;
 int calculate_save_room(P_char,int,int room) { return room; }
 void locker_post_save_hook(P_char) {}
@@ -598,9 +599,10 @@ deferred_save_slot *find_deferred_save_slot(int) { return nullptr; }
 void clear_manual_save_status(int) {}
 telemetry_capture_result telemetry_runtime_game_session_exit(P_char,P_desc,telemetry_session_end_reason) { return {}; }
 void terminal_item_cleanup(P_char ch) {
- P_obj obj; int l;
  const bool terminal_items_saved=IS_PC(ch) && IS_SET(ch->runtime_flags,CHAR_RFLAG_TERMINAL_ITEMS_SAVED);
-"""+terminal_cleanup+"\n}\n"+
+ extract_char_items(ch,terminal_items_saved);
+}
+"""+
 extract_function("handler.c","void extract_char_after_terminal_save(P_char ch)")+"\n"+
 extract_function("actoth.c","bool persistence_save_character_terminal(P_char ch, int type)")+"\n"+
 extract_function("actoth.c","bool persistence_save_all_characters_terminal(int type)"))
@@ -692,7 +694,7 @@ bool world_recovery_read_copyover_object_record(const char *,size_t,world_recove
  return native_fixture;
 }
 P_obj last_materialized=nullptr;
-bool build_recovery_plan(const unsigned char *,size_t,int,uint64_t,recovery_plan *plan) { plan->header.sequence=123; return true; }
+bool build_recovery_plan(const unsigned char *,size_t,int,uint64_t,recovery_plan *plan,bool) { plan->header.sequence=123; return true; }
 bool floor_record_repeats(const recovery_plan &,const std::vector<unsigned char> &) { return false; }
 bool add_object_record(recovery_plan *plan,const unsigned char *,size_t,artifact_payload_domain,uint64_t) {
  if(!native_fixture) return false;
@@ -801,9 +803,10 @@ void owned_recovery_cases() {
 
 creation_helpers="\n".join(extract_function("item_movement_transaction.c",sig) for sig in (
  "size_t creation_payload_depth(","bool stage_displaced_creation_objects(","void restore_displaced_creation_objects(",
- "void extract_creation_roots(","void extract_displaced_creation_objects(","bool reconcile_creation_grant_batch("))
+ "void extract_creation_roots(","void extract_displaced_creation_objects(",
+ "bool item_creation_grant_reconstruct(","bool reconcile_creation_grant_batch("))
 source=source.replace("// CREATION_REPAIR_CASES",r"""
-struct pending_creation_grant { uint64_t item_uid; };
+struct pending_creation_grant { uint64_t item_uid; uint64_t target_container_uid = 0; };
 struct creation_grant_queue { std::vector<pending_creation_grant> requests; };
 struct pending_movement { bool creation_batch=true; item_transfer_payload payload={}; };
 """+extract_function("item_movement_transaction.c","struct displaced_creation_object")+";\n"+r"""
@@ -1594,10 +1597,16 @@ void monolith_cases() {
 """)
 studio=(ROOT/"src/mob/studioproc.c").read_text()
 studio_actions=studio[studio.index("case SP_A_OLOAD:"):studio.index("case SP_A_TRANSFER:")]
-source=source.replace("// STUDIO_CASES", r"""
+studio_actor_context=(extract_function("studioproc.c","struct sp_ctx")+";\n"+
+ extract_function("utility.c","int char_in_list(const P_char ch)")+"\n"+
+ extract_function("studioproc.c","static void sp_revalidate_actor("))
+source=source.replace("// STUDIO_CASES", studio_actor_context+"\n"+r"""
 void run_studio_factory(bool give,int vnum,P_char actor) {
  struct { int num; } action={vnum}; auto *a=&action;
  P_obj o=nullptr; const int room=actor->in_room;
+ sp_ctx context={}; context.actor=actor; auto *cx=&context;
+ const uint64_t actor_id=actor->runtime_id, removal_before=character_removal_generation;
+ const bool actor_was_alive=IS_ALIVE(actor);
  switch(give ? SP_A_GIVE : SP_A_OLOAD) {
 """+studio_actions+r"""
  }
@@ -1756,6 +1765,6 @@ with tempfile.TemporaryDirectory(prefix="artifact-creation-",dir=output) as dire
   "-Isrc","-Isrc/no_mysql","-ffunction-sections","-fdata-sections","-fsanitize=address,undefined",
   "-fno-sanitize-recover=all","-fno-omit-frame-pointer",str(cpp),"src/guild/artifact_population.c",
   "src/item/item_transfer_command.c","src/item/item_ownership_runtime.c","src/guild/artifact_guild_state.c",
-  "src/guild/artifact_guild_command.c","src/persistence/critical_command.c","src/core/safe_format.c","src/player/player_load_topology.c",str(HARNESS_STUBS),"-Wl,--gc-sections","-lcrypto","-pthread",
+  "src/guild/artifact_guild_command.c","src/persistence/critical_command.c","src/core/safe_format.c","src/player/player_load_topology.c","src/combat/trap_legacy.c",str(HARNESS_STUBS),"-Wl,--gc-sections","-lcrypto","-pthread",
   "-o",str(binary)],cwd=ROOT,check=True)
  subprocess.run([str(binary)],cwd=ROOT,check=True,timeout=30)

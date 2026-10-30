@@ -29,6 +29,7 @@ HARNESS = r'''
 #include "player/player_save_pipeline.h"
 #include "player/player_save_worker.h"
 #include "player/player_snapshot_capture.h"
+#include "player/player_snapshot_codec.h"
 #include "combat/combat_outcome_command.h"
 #include "persistence/persistence_observability.h"
 #include "core/prototypes.h"
@@ -55,6 +56,9 @@ HARNESS = r'''
 #include <vector>
 
 P_char character_list = nullptr;
+static bool divine_pending = false;
+void divine_boon_runtime_pulse() {}
+bool divine_boon_runtime_pending() { return divine_pending; }
 static room_data rooms[1]{};
 P_room world = rooms;
 const char *command[] = {"\n"};
@@ -62,6 +66,7 @@ int IS_MORPH(P_char) { return false; }
 int GET_CLASS(P_char, unsigned int) { return 0; }
 void do_color_preferences(P_char, const char *) { assert(false); }
 void show_toggles(P_char) { assert(false); }
+void __free(void *memory, const char *, int) { (std::free)(memory); }
 void gmcp_send_initial_state(P_char) { assert(false); }
 char *skip_spaces(char *s) { while (*s == ' ') ++s; return s; }
 char *one_argument(const char *s, char *out) {
@@ -201,6 +206,11 @@ int main()
     assert(player_save_pipeline_checkpoint_dirty(&alice.ch, 1, 3001) ==
            player_save_pipeline_result::unchanged);
 
+    player_pending_trade_snapshot trade;
+    trade.operation[0]=1;trade.command_hash[0]=2;trade.payment=-80;
+    assert(player_save_pipeline_reserve_trade(41,trade));
+    assert(!player_save_pipeline_reserve_trade(42,trade));
+    player_save_pipeline_release_trade(42);
     // A queued save leaves its owner clean: the writer has it.
     hold_writer(true);
     assert(player_save_pipeline_request(&bob.ch, PLAYER_COMPONENT_SKILLS, 1, 3001) ==
@@ -243,6 +253,14 @@ int main()
     assert((take_order() == std::vector<std::string>{"42:1", "41:8", "44:1", "41:10", "42:2"}));
     player_save_pipeline_pulse();
     assert(player_revision_snapshot_copy(41, &revision) && revision.written_revision == 10);
+    {
+        std::lock_guard<std::mutex> lock(state.mutex);
+        assert(state.committed[41].pending_trade.operation==trade.operation);
+        assert(state.committed[41].pending_trade.payment==-80);
+        assert(!player_snapshot_trade_pending(state.committed[42]));
+    }
+    player_save_pipeline_release_trade(41);
+
 
     // A failed write is reported and its owner is dirty again.
     state.failures[44] = 1;
@@ -266,6 +284,10 @@ int main()
     assert((take_order() == std::vector<std::string>{"44:2", "44:3"}));
 
     // Ended sessions cannot be forgotten while a save or its completion is pending.
+    player_save_pipeline_resume();
+    divine_pending = true;
+    assert(!player_save_pipeline_drain(100)); // An idle writer does not drain deferred Divine work.
+    divine_pending = false;
     player_save_pipeline_resume();
     hold_writer(true);
     state.failures[44] = 2;
@@ -316,9 +338,11 @@ int main()
            player_save_pipeline_result::queued);
     wait_until_held();
     const int alerts_at_shutdown = alerts;
+    divine_pending = true;
     const auto left = player_save_pipeline_finish(persistence_observability_now_usec() + 20000,
                                                   [] { hold_writer(false); });
-    assert(left.empty());
+    assert(left.size() == 1 && left[0] == persistence_job_owner(persistence_job_kind::divine_boon, 1));
+    divine_pending = false;
     assert(alerts == alerts_at_shutdown + 1);
     player_save_pipeline_reset_for_tests();
 
@@ -421,10 +445,10 @@ with tempfile.TemporaryDirectory(prefix="duris-player-save-pipeline-", dir=ROOT 
     production = "#define TOG_OFF 0\n#define TOG_ON 1\n"
     production += "#define PLR_TOG(flag) plr_tog(PLR_FLAGS(ch), flag, arg)\n#define PLR2_TOG(flag) plr_tog(PLR2_FLAGS(ch), flag, arg)\n#define PLR3_TOG(flag) plr_tog(PLR3_FLAGS(ch), flag, arg)\n"
     production += actoth[actoth.index("static const char *toggles_list[]"):actoth.index("void do_more(")]
-    for filename, signature in [("interp.c", "bool is_abbrev("), ("interp.c", "int old_search_block("),
+    for filename, signature in [("interp.c", "char *lohrr_chop("), ("interp.c", "bool is_abbrev("), ("interp.c", "int old_search_block("),
                                 ("utility.c", "int yes_no("), ("utility.c", "int strn_cmp("),
                                 ("actoth.c", "static const char *term_name("), ("actoth.c", "static int plr_tog("),
-                                ("actoth.c", "static int gmcp_tog("), ("actoth.c", "void do_toggle(")]:
+                                ("actoth.c", "void do_toggle(")]:
         production += "\n" + extract_function(filename, signature)
     capture = (SRC / "player_snapshot_capture.c").read_text()
     production += "\n" + capture[capture.index("struct capture_budget"):capture.index("template <typename T> bool add_index_value")]

@@ -103,6 +103,7 @@ class MudClient:
         self.socket.settimeout(0.25)
         self.pending = bytearray()
         self.transcript = bytearray()
+        self.raw_transcript = bytearray()
 
     def close(self) -> None:
         self.socket.close()
@@ -124,6 +125,7 @@ class MudClient:
             return False
         if not chunk:
             raise AssertionError("server closed the gameplay connection")
+        self.raw_transcript.extend(chunk)
         cleaned = self._clean(chunk)
         self.pending.extend(cleaned)
         self.transcript.extend(cleaned)
@@ -393,24 +395,29 @@ def runtime_logs(run_root: pathlib.Path) -> str:
 def create_character(client: MudClient, expected_room: str | None = "The Regression Arena",
                      class_name: str = "w", *, account: str = ACCOUNT,
                      character: str = CHARACTER, email: str = EMAIL,
-                     hometown: str | None = None) -> None:
+                     hometown: str | None = None, race_name: str = "h",
+                     existing_account: bool = False, alignment: str = "g") -> None:
     entry, _ = client.expect_any(("term type", "account name"))
     if entry == "term type":
         client.send("9")
         client.expect("account name")
     client.send(account)
-    client.expect("is this correct?")
-    client.send("y")
-    client.expect("email address")
-    client.send(email)
-    client.expect("is this correct?")
-    client.send("y")
-    client.expect("enter your password")
-    client.send(PASSWORD)
-    client.expect("Please re-enter the same password to confirm:  ")
-    client.send(PASSWORD)
-    client.expect("information correct?")
-    client.send("y")
+    if existing_account:
+        client.expect("enter your password")
+        client.send(PASSWORD)
+    else:
+        client.expect("is this correct?")
+        client.send("y")
+        client.expect("email address")
+        client.send(email)
+        client.expect("is this correct?")
+        client.send("y")
+        client.expect("enter your password")
+        client.send(PASSWORD)
+        client.expect("Please re-enter the same password to confirm:  ")
+        client.send(PASSWORD)
+        client.expect("information correct?")
+        client.send("y")
     client.expect("PRESS RETURN")
     client.send("")
     client.expect("Please select an option")
@@ -422,22 +429,33 @@ def create_character(client: MudClient, expected_room: str | None = "The Regress
     client.expect("meet these criteria?")
     client.send("y")
     client.expect("Your selection")
-    client.send("h")
+    client.send(race_name)
     client.expect("Male or Female")
     client.send("m")
-    client.expect("Hardcore")
-    client.send("n")
-    client.expect("Class Selection")
+    prompt, _ = client.expect_any(("Hardcore", "Class Selection"))
+    if prompt == "Hardcore":
+        client.send("n")
+        client.expect("Class Selection")
     client.send(class_name)
-    if hometown is not None:
-        client.expect("Hometown Selection")
+    stat_prompt_seen = False
+    prompt, _ = client.expect_any(("Alignment only affects", "Hometown Selection", "Your stat rolling system [D]:"))
+    if prompt == "Alignment only affects":
+        client.expect("Your selection")
+        client.send(alignment)
+        prompt, _ = client.expect_any(("Hometown Selection", "Your stat rolling system [D]:"))
+    if prompt == "Hometown Selection":
+        menu = client.expect("Your selection")
+        if hometown is None:
+            # Keep the existing preference for the optional first introduction,
+            # using the actual offered key (Life can be L; Chaos uses C).
+            choices = re.findall(r"(?m)^\s*([A-Za-z0-9])\)([^\r\n]+)", menu)
+            require(bool(choices), "hometown menu had no selectable choices")
+            hometown = next((key for key, name in choices if "Beginner Introduction" in name), choices[0][0])
         client.send(hometown)
     else:
-        client.expect("Alignment only affects")
-        client.send("g")
-        client.expect("Your selection")
-        client.send("p")
-    client.expect("Your stat rolling system [D]:")
+        stat_prompt_seen = True
+    if not stat_prompt_seen:
+        client.expect("Your stat rolling system [D]:")
     client.send("")
     for label, stat in zip(("first bonus", "second bonus", "third bonus", "fourth bonus"), "sdal"):
         client.expect(label)
@@ -451,7 +469,8 @@ def create_character(client: MudClient, expected_room: str | None = "The Regress
     client.send("")
     if expected_room:
         client.expect(expected_room, timeout=30)
-    client.expect("Your starter kit is ready", timeout=30)
+    client.expect_any(("Your starter kit is ready", "Your Chaos Equipment has been prepared"),
+                      timeout=30)
 
 
 def complete_npc_combat_journey(client: MudClient, reset_coins: bool = False) -> None:
@@ -756,7 +775,7 @@ def run_journey(binary: pathlib.Path, reset_coins: bool = False,
                         return
                     if not boons_enabled:
                         client.send("toggle boon")
-                        client.expect("You will no longer be affected by boons.")
+                        client.expect("Divine Boons apply automatically. Your stored legacy setting is preserved.")
                     complete_npc_combat_journey(client, reset_coins)
                     client.close()
                     client = None

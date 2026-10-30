@@ -28,9 +28,18 @@ done
 [[ "$ready" == 1 ]]
 "${MYSQL[@]}" -e "CREATE DATABASE $DB_NAME CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci"
 "${MYSQL[@]}" "$DB_NAME" < "$ROOT/migrations/bootstrap_multithread_safe.sql"
+"${MYSQL[@]}" "$DB_NAME" -e "INSERT INTO player_data(pid,name) VALUES(99,'LegacyQuest');"
 for migration in "$ROOT"/migrations/immutable/*.sql; do
     "${MYSQL[@]}" "$DB_NAME" < "$migration"
 done
+# Legacy defaults and replay preserve a partially completed replacement entitlement.
+"$ROOT/migrations/immutable/0055_world_quest_recovery.sh"
+[[ $("${MYSQL[@]}" "$DB_NAME" -e "SELECT CONCAT(quest_origin_room,':',quest_replacement_due) FROM player_data WHERE pid=99") == 0:0 ]]
+"${MYSQL[@]}" "$DB_NAME" -e "UPDATE player_data SET quest_origin_room=16633,quest_replacement_due=1,quest_kill_how_many=4,quest_kill_original=7 WHERE pid=99;"
+"${MYSQL[@]}" "$DB_NAME" < "$ROOT/migrations/immutable/0055_world_quest_recovery.sql"
+"$ROOT/migrations/immutable/0055_world_quest_recovery.sh"
+[[ $("${MYSQL[@]}" "$DB_NAME" -e "SELECT CONCAT(quest_origin_room,':',quest_replacement_due,':',quest_kill_how_many,':',quest_kill_original) FROM player_data WHERE pid=99") == 16633:1:4:7 ]]
+"${MYSQL[@]}" "$DB_NAME" -e "DELETE FROM player_data WHERE pid=99;"
 # The audit migration is additive and rerunnable, and its verifier checks it.
 "${MYSQL[@]}" "$DB_NAME" < "$ROOT/migrations/immutable/0033_item_owner_audit.sql"
 "$ROOT/migrations/immutable/0033_item_owner_audit.sh"
@@ -59,6 +68,7 @@ g++ -std=c++20 -Wall -Wextra -Wpedantic -Werror -pthread -Isrc \
 g++ -std=c++20 -Wall -Wextra -Wpedantic -Werror -pthread -ffunction-sections -fdata-sections \
     -Isrc "${MYSQL_CFLAGS[@]}" tests/async/player_load_filter_mysql_harness.cpp tests/async/harness_stubs.cpp \
     src/player/player_load_repository.c src/player/player_load_topology.c \
+    src/combat/combat_outcome_command.c src/guild/artifact_guild_command.c src/world/zone_touch_command.c src/world/epic_command.c src/economy/currency_command.c src/persistence/critical_command.c \
     src/player/player_snapshot_repository.c src/player/player_snapshot_codec.c \
     src/item/item_claim_repository.c src/item/item_claim.c src/persistence/dupe_log.c \
     src/sql/item_extra_descr_codec.c src/persistence/persistence_observability.c \
@@ -74,7 +84,11 @@ import sys
 source = (Path(sys.argv[1]) / "src/sql/sql.c").read_text()
 body = source[source.rindex("bool sql_pwipe(int code_verify)"):]
 reset = re.search(r'qry\("(UPDATE player_data SET [^"]+)"\)', body).group(1)
-postflight = re.search(r'db_query\(\s*"(SELECT COUNT\(\*\) FROM player_data WHERE [^"]+)"\)', body).group(1)
+postflight_call = re.search(
+    r'db_query\(\s*((?:"[^"]*"\s*)+),\s*OVERLORD\)', body).group(1)
+overlord = re.search(r'#define\s+OVERLORD\s+(\d+)',
+                    (Path(sys.argv[1]) / 'src/core/config.h').read_text()).group(1)
+postflight = ''.join(re.findall(r'"([^"]*)"', postflight_call)).replace('%d', overlord)
 print(reset + ";")
 print(postflight + ";")
 PY

@@ -13,6 +13,7 @@
 #define GMCP_H
 
 #include "core/structs.h"
+#include "world/world_quest.h"
 
 /* forward declarations */
 struct ShipData;
@@ -56,6 +57,10 @@ void gmcp_handle_negotiation(struct descriptor_data *d, int cmd);
 
 /* parse incoming gmcp data from telnet client */
 void gmcp_handle_input(struct descriptor_data *d, const char *data, size_t len);
+
+// Opt-in dequeue receipt, not proof of successful execution or completed casting.
+// NULL input announces support/current sequence; arguments are never transmitted.
+void gmcp_input_receipt(struct descriptor_data *d, const char *input);
 
 /* core send - handles both telnet (iac sb gmcp) and websocket (json) */
 void gmcp_send(struct descriptor_data *d, const char *package, const char *json);
@@ -120,7 +125,8 @@ void gmcp_comm_channel_ex(struct char_data *ch, const char *channel, const char 
 
 /* quest status - sends bartender quest info */
 void gmcp_quest_status(struct char_data *ch);
-void gmcp_quest_map(struct char_data *ch);
+void gmcp_quest_status(struct char_data *ch, world_quest_target_status status);
+void gmcp_quest_map(struct char_data *ch, world_quest_target_status status);
 void gmcp_send_quest_map(struct char_data *ch, const char *map_buf);
 
 /* send to all who can hear the channel */

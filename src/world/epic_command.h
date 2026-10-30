@@ -47,6 +47,8 @@ enum class epic_reason_type : uint16_t
 	ship_purchase,
 	admin_adjustment,
 	chaos_starter_reward,
+	divine_pvp_award, // Compound combat ledger only; not a standalone epic command.
+	divine_zone_award, // Compound stone claim; checkpointed recipient delivery.
 };
 
 enum epic_command_flag : uint16_t

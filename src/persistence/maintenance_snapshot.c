@@ -13,6 +13,7 @@
  ****************************************************************************/
 
 #include "persistence/maintenance_snapshot.h"
+#include "economy/divine_boon_runtime.h"
 
 #include "net/comm.h"
 #include "core/config.h"
@@ -147,6 +148,8 @@ bool prepare_statistics(maintenance_request &request)
 
 bool prepare_boon_scan(maintenance_request &request)
 {
+	if (!divine_boon_legacy_admissions_allowed())
+		return false;
 	request.values[0] = time(nullptr);
 	const size_t epic_start = 2;
 	const size_t epic_values = epic_zone_completion_snapshot(
@@ -207,7 +210,7 @@ bool maintenance_prepare_request(maintenance_request &request, void *)
 	case maintenance_job_id::cargo_market:
 		request.value_count = cargo_maintenance_snapshot(
 			request.work_id, request.values.data(), request.values.size());
-		return request.value_count == 3 + NUM_PORTS * NUM_PORTS * 4;
+		return request.value_count == 4 + NUM_PORTS * NUM_PORTS * 4;
 	default:
 		return true;
 	}

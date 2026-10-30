@@ -22,7 +22,7 @@ constexpr const char *RUNTIME_BASELINE_ID = "duris-schema-2026-08-27-session11";
 constexpr const char *RUNTIME_BASELINE_FINGERPRINT =
 	"db13d7a42bf82bcbd32bac8d83224913c755fefd000ade6d4e798b1bd4f494dd";
 constexpr unsigned RUNTIME_BASELINE_TABLE_COUNT = 170;
-constexpr unsigned RUNTIME_CURRENT_TABLE_COUNT = 198;
+constexpr unsigned RUNTIME_CURRENT_TABLE_COUNT = 200;
 constexpr const char *RUNTIME_TABLE_SQL_LIST =
 	"'account_banks','account_bound_reward_pwipe_state','account_bound_reward_summons',"
 	"'account_bound_rewards','account_characters','account_erasure_evidence',"
@@ -40,7 +40,7 @@ constexpr const char *RUNTIME_TABLE_SQL_LIST =
 	"'combat_outcome','combat_outcome_participant','corpse_catalog_state','corpse_item_affects',"
 	"'corpse_item_extra_descr','corpse_items','corpses','critical_operation_inbox','critical_outbox',"
 	"'critical_outbox_delivery_dedupe','critical_test_state','ctf_data','currency_bank_baseline',"
-	"'currency_ledger','currency_wallet_baseline','epic_balance_baseline','epic_bonus','epic_gain',"
+	"'currency_ledger','currency_wallet_baseline','divine_boon_state','divine_trade_state','epic_balance_baseline','epic_bonus','epic_gain',"
 	"'epic_ledger','epic_stone_claim','eq_drop','frag_leaderboard','guild_members',"
 	"'guild_outcome_ledger','guild_ranks','guild_transactions','guildhall_rooms','guildhalls',"
 	"'guilds','ip_info','item_current_owner','item_owner_audit','item_owner_revision',"
@@ -72,9 +72,9 @@ constexpr const char *RUNTIME_TABLE_SQL_LIST =
 	"'world_quest_accomplished','zone_story_quest_state','zone_touch_outcome',"
 	"'zone_touch_outcome_participant','zone_touches','zone_trophy','zones'";
 constexpr const char *RUNTIME_MYSQL8_METADATA_FINGERPRINT =
-	"f7f71f2907cc93dba84addc3a51fffeafe0e89bb0391ea3545e1438ce223e571";
+	"c0f7e151b75329ec9eefcdcd30930c609ac8aa154e5500a26413b1060cab7357";
 constexpr const char *RUNTIME_MARIADB10_11_METADATA_FINGERPRINT =
-	"5e5f29e41eeef69216b52b75e56bc07afc3ae59ea84c6c57841c1390315d8588";
+	"43758a9f147f554c3340fb46a9ea44bb17b56e92f359cbd1f66c761bb87a9b00";
 /* Includes the six telemetry stores introduced by migration 0014, the two
  * rollup stores introduced by migration 0017, the five Collector authority
  * stores introduced by migration 0018, corpse catalog authority introduced by
@@ -102,15 +102,20 @@ constexpr const char *RUNTIME_MARIADB10_11_METADATA_FINGERPRINT =
  * Migration 0045 adds nullable capture permission to PvP participant snapshots.
  * Migration 0046 seeds two Nexus catalogue rows; structural fingerprints are unchanged.
  * Migration 0047 retains rejected artifact UIDs across canonical generations.
+ * Migration 0048 adds revision-checked Divine Boon rotation state.
+ * Migration 0049 checkpoints prepared Divine award delivery with player status.
+ * Migration 0050 stores exact Divine trade manifests and the market generation.
+ * Migration 0051 saves prepared artifact/guild delivery proof with entity snapshots.
+ * Migration 0055 adds accepted bartender origin and replacement entitlement.
  * Fingerprints are measured on MySQL 8 and MariaDB 10.11. */
-constexpr const char *RUNTIME_MIGRATION_HEAD_ID = "0047_artifact_rejected_identities";
-constexpr unsigned RUNTIME_MIGRATION_HEAD_SEQUENCE = 47;
+constexpr const char *RUNTIME_MIGRATION_HEAD_ID = "0056_private_chest_receipts";
+constexpr unsigned RUNTIME_MIGRATION_HEAD_SEQUENCE = 57;
 constexpr const char *RUNTIME_MIGRATION_APPLY_CHECKSUM =
-	"5692e9ddcaef423f6b1d487005f0fdafc50b6bccbd85c66fc5ce8875c218bb4b";
+	"c45fd75d0332eb756e067746bf8430ed251ea9261ef83abb0cdc9a9e50d9144c";
 constexpr const char *RUNTIME_MIGRATION_VERIFY_CHECKSUM =
-	"c88ba4baed7333bfa6f39a5df551bae5b08d267a7d8a929a659b09125004b4a8";
+	"4c6f51ac4ab2e8dc7ee96028d11cf877bc05689d92a4c85303c3536394916d3d";
 constexpr const char *RUNTIME_MIGRATION_HISTORY_CHECKSUM =
-	"49e21b2e63dcf3ad49351aa6f0927b2c98b0d284d9701f7683976d501f8144bb";
+	"b6b812c054022e2776cff47bb8798a41ab55771a355f19d94245a38e7cd1c5ad";
 constexpr const char *LOOKUP_DATASET_NAME = "race_class";
 constexpr unsigned LOOKUP_DATASET_VERSION = 1;
 constexpr const char *RUNTIME_DB_CHARACTER_SET = "utf8mb4";

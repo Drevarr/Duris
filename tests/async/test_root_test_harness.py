@@ -55,23 +55,39 @@ sys.modules[runner_spec.name] = runner
 runner_spec.loader.exec_module(runner)
 expected_resource_intensive = {
     "test_account_recovery_journey.py",
+    "test_assassin_combat_journey.py",
     "test_artifact_owner_restart_journey.py",
+    "test_character_stat_choice_journey.py",
+    "test_coin_denomination_journey.py",
+    "test_conjurer_gameplay_journey.py",
     "test_connection_limit_journey.py",
     "test_corpse_trap_restart_journey.py",
+    "test_legacy_trap_journey.py",
     "test_creation_prompt_journey.py",
+    "test_divine_boon_zone_journey.py",
     "test_game_loop_session_journey.py",
     "test_area_coin_pickup.py",
     "test_flatfile_auction_coin_put_journey.py",
     "test_flatfile_boot_preflight.py",
     "test_flatfile_chaos_new_character_kit.py",
     "test_flatfile_combat_journey.py",
+    "test_flatfile_collector_intake_journey.py",
+    "test_flatfile_death_restart_journey.py",
+    "test_flatfile_locker_journey.py",
     "test_flatfile_newbie_regrant_journey.py",
     "test_flatfile_first_session_currency.py",
     "test_flatfile_full_world_boot.py",
     "test_flight_network_journey.py",
     "test_generated_npc_journey.py",
+    "test_gith_monk_journey.py",
+    "test_hostname_files_journey.py",
+    "test_log_hygiene_journey.py",
+    "test_minor_creation_instrument_journey.py",
     "test_mob_gold_dial_runtime.py",
     "test_pet_restart_journey.py",
+    "test_shambler_reflection_journey.py",
+    "test_shop_multi_buy_journey.py",
+    "test_studioproc_duplicate_record.py",
     "test_item_movement_prompt_runtime.py",
     "test_information_cache_journey.py",
     "test_mysql_combat_journey.py",
@@ -83,6 +99,7 @@ assert runner.MANUAL_ONLY_TEST_NAMES == {
     "test_epic_task_catalog_mysql.py",
     "test_epic_task_recovery_journey.py",
     "test_mysql_playtime_journey.py",
+    "test_mysql_coin_denomination_journey.py",
     "test_mysql_locker_grant_journey.py",
     "test_mysql_nexus_journey.py",
     "test_playtime_mysql_repository.py",
@@ -97,6 +114,13 @@ assert {
 } <= discovered
 sample_tests = [
     Path("test_fast.py"),
+    Path("test_assassin_combat_journey.py"),
+    Path("test_character_stat_choice_journey.py"),
+    Path("test_coin_denomination_journey.py"),
+    Path("test_shambler_reflection_journey.py"),
+    Path("test_conjurer_gameplay_journey.py"),
+    Path("test_divine_boon_zone_journey.py"),
+    Path("test_gith_monk_journey.py"),
     Path("test_flatfile_combat_journey.py"),
     Path("test_flatfile_auction_coin_put_journey.py"),
     Path("test_account_recovery_journey.py"),
@@ -183,6 +207,37 @@ with tempfile.TemporaryDirectory(prefix="duris-runner-") as scratch:
                  "FAIL tests/async/test_fails.py", "SIGTERM tests/async/test_signalled.py",
                  "SIGKILL tests/async/test_crashes.py"):
         assert f"    {line}\n" in text, text
+
+    # A child Make cannot use the runner's inherited jobserver descriptors, but
+    # its command-line compiler overrides must survive the subprocess boundary.
+    (tests_dir / "probe.mk").write_text("all:\n\t@echo $(CC)\n")
+    probe = tests_dir / "test_makeflags.py"
+    probe.write_text(
+        "import pathlib, subprocess\n"
+        "result = subprocess.run(['make', '-s', '-f', str(pathlib.Path(__file__).with_name('probe.mk'))], "
+        "capture_output=True, text=True)\n"
+        "assert result.returncode == 0 and not result.stderr, result.stderr\n"
+        "assert 'clang++' in result.stdout, result.stdout\n")
+    with mock.patch.dict(os.environ, {
+        "MAKEFLAGS": "w -j16 --jobserver-auth=9998,9999 -- CC=clang++",
+    }):
+        result = runner.run_test(probe, 5)
+    assert result.status == "PASS", result.output
+
+    # The requested worker limit also applies to journeys that compile helpers.
+    for name in ("test_flatfile_combat_journey.py", "test_pet_restart_journey.py"):
+        (tests_dir / name).write_text(
+            "import fcntl, pathlib, time\n"
+            "with pathlib.Path(__file__).with_name('journey.lock').open('w') as lock:\n"
+            "    fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)\n"
+            "    time.sleep(.2)\n")
+    output = io.StringIO()
+    with mock.patch.object(runner, "ROOT", Path(scratch)), \
+         mock.patch.object(runner, "TEST_DIRECTORY", tests_dir), \
+         mock.patch.object(sys, "argv", ["runner", "--jobs", "1", "--match", "journey"]), \
+         mock.patch.dict(os.environ), contextlib.redirect_stdout(output):
+        assert runner.main() == 0, output.getvalue()
+    assert "2 passed, 0 failed" in output.getvalue(), output.getvalue()
 
     # Stopping the runner, by Ctrl-C or by a SIGTERM from a supervisor or `timeout`, ends
     # the test it is running with everything it started, and starts no other.

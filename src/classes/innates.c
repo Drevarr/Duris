@@ -51,6 +51,7 @@ float regen_factor[REG_MAX + 1];
 
 extern Skill skills[];
 extern P_room world;
+extern const int top_of_world;
 extern struct zone_data *zone_table;
 extern P_index mob_index;
 extern const char *dirs[];
@@ -321,6 +322,10 @@ const struct innate_data innates_data[LAST_INNATE + 1] = {
 	{ "arcane rudiments", NULL },
 	{ "web_spray", do_web_spray },
 	{ "reflection", do_innate_reflection },
+	{ "air affinity", NULL },
+	{ "water affinity", NULL },
+	{ "fire affinity", NULL },
+	{ "earth affinity", NULL },
 };
 
 string list_innates(int race, int cls, int spec)
@@ -377,7 +382,7 @@ static int innate_char_race(P_char ch)
 	int race;
 	struct affected_type *af, *af2;
 
-	race = ch->player.race;
+	race = tutorial_mobile_mechanics_race(ch);
 
 	if (IS_DISGUISE_SHAPE(ch))
 	{
@@ -419,7 +424,8 @@ static int innate_unlock_level(P_char ch, int innate)
 					minlevel = req;
 				}
 			}
-			if (IS_SPECIALIZED(ch) && class_innates[innate][i][ch->player.spec])
+			if (IS_SPECIALIZED(ch) && ch->player.spec <= MAX_SPEC &&
+			    class_innates[innate][i][ch->player.spec])
 			{
 				req = class_innates[innate][i][ch->player.spec];
 				if (!minlevel || req < minlevel)
@@ -979,6 +985,7 @@ void assign_innates()
 	ADD_CLASS_INNATE(INNATE_FLY, CLASS_CONJURER, 30, SPEC_AIR);
 	ADD_CLASS_INNATE(INNATE_HASTE, CLASS_CONJURER, 30, SPEC_AIR);
 	ADD_CLASS_INNATE(INNATE_PROT_FIRE, CLASS_CONJURER, 30, SPEC_FIRE);
+	ADD_CLASS_INNATE(INNATE_FIRESHIELD, CLASS_CONJURER, 30, SPEC_FIRE);
 	ADD_CLASS_INNATE(INNATE_PROT_FIRE, CLASS_CONJURER, 30, SPEC_WATER);
 	ADD_CLASS_INNATE(INNATE_PROT_COLD, CLASS_CONJURER, 30, SPEC_WATER);
 	ADD_CLASS_INNATE(INNATE_WATERBREATH, CLASS_CONJURER, 30, SPEC_WATER);
@@ -986,6 +993,10 @@ void assign_innates()
 	ADD_CLASS_INNATE(INNATE_REGENERATION, CLASS_CONJURER, 36, SPEC_WATER);
 	ADD_CLASS_INNATE(INNATE_LIVING_STONE, CLASS_CONJURER, 30, SPEC_EARTH);
 	ADD_CLASS_INNATE(INNATE_STONE, CLASS_CONJURER, 30, SPEC_EARTH);
+	ADD_CLASS_INNATE(INNATE_AIR_AFFINITY, CLASS_CONJURER, 51, SPEC_AIR);
+	ADD_CLASS_INNATE(INNATE_WATER_AFFINITY, CLASS_CONJURER, 51, SPEC_WATER);
+	ADD_CLASS_INNATE(INNATE_FIRE_AFFINITY, CLASS_CONJURER, 51, SPEC_FIRE);
+	ADD_CLASS_INNATE(INNATE_EARTH_AFFINITY, CLASS_CONJURER, 51, SPEC_EARTH);
 	ADD_CLASS_INNATE(INNATE_STONE, CLASS_REAVER, 36, SPEC_EARTH_REAVER);
 	ADD_CLASS_INNATE(INNATE_REGENERATION, CLASS_SUMMONER, 30, SPEC_NATURALIST);
 	ADD_CLASS_INNATE(INNATE_STONE, CLASS_SUMMONER, 30, SPEC_NATURALIST);
@@ -1024,13 +1035,13 @@ void assign_innates()
 	ADD_CLASS_INNATE(INNATE_FIRESHIELD, CLASS_PSIONICIST, 30, SPEC_PYROKINETIC);
 	ADD_CLASS_INNATE(INNATE_PROT_FIRE, CLASS_PSIONICIST, 30, SPEC_PYROKINETIC);
 	ADD_CLASS_INNATE(INNATE_DRAGONMIND, CLASS_MONK, 30, SPEC_WAYOFDRAGON);
-	ADD_CLASS_INNATE(INNATE_ASTRAL_NATIVE, CLASS_PSIONICIST, 30, SPEC_PSYCHEPORTER);
+	ADD_CLASS_INNATE(INNATE_ASTRAL_NATIVE, CLASS_PSIONICIST, 51, SPEC_PSYCHEPORTER);
 	ADD_CLASS_INNATE(INNATE_IMPROVED_WORMHOLE, CLASS_PSIONICIST, 46, SPEC_PSYCHEPORTER);
 	ADD_CLASS_INNATE(INNATE_IMPROVED_WORMHOLE, CLASS_MINDFLAYER, 46, 0);
 
 	ADD_CLASS_INNATE(INNATE_DECEPTIVE_FLEE, CLASS_ILLUSIONIST, 31, SPEC_DECEIVER);
 
-	ADD_CLASS_INNATE(INNATE_ENTRAPMENT, CLASS_MERCENARY, 45, 0);
+	ADD_CLASS_INNATE(INNATE_ENTRAPMENT, CLASS_MERCENARY, 45, SPEC_BRIGAND);
 
 	//  ADD_CLASS_INNATE(INNATE_LEVITATE, CLASS_ETHERMANCER, 1, 0);
 
@@ -1634,10 +1645,10 @@ void event_snakebite(P_char ch, P_char victim, P_obj /*obj*/, void * /*data*/)
 	};
 	int i;
 
-	if (GET_STAT(ch) <= STAT_INCAP)
+	if (!ch || !char_in_list(ch) || GET_STAT(ch) <= STAT_INCAP || ch->in_room < 0)
 		return;
 
-	if (!is_char_in_room(victim, ch->in_room))
+	if (!is_char_in_room(victim, ch->in_room) || !CanDoFightMove(ch, victim))
 		return;
 
 	if ((GET_LEVEL(ch) + STAT_INDEX(GET_C_AGI(ch))) <
@@ -1824,23 +1835,38 @@ void bite(P_char ch, P_char victim)
 	insectbite(ch, victim);
 }
 
-void do_bite(P_char ch, char *arg, int /*cmd*/)
+void do_bite_target(P_char ch, P_char victim)
 {
-	P_char victim;
-
-	if (!(victim = parse_victim(ch, arg, 0)))
-	{
-		send_to_char("Target who?\n", ch);
+	if (!CanDoFightMove(ch, victim))
 		return;
-	}
 
-	if (!check_innate_time(ch, INNATE_BITE, get_property("innate.timer.bite", 12)))
+	if (!can_use_innate(ch, INNATE_BITE))
 	{
 		send_to_char("You have no &+gvenom&N left!\n", ch);
 		return;
 	}
 
+	victim = guard_check(ch, victim);
+	if (!CanDoFightMove(ch, victim))
+		return;
+	if (!check_innate_time(ch, INNATE_BITE, get_property("innate.timer.bite", 12)))
+	{
+		send_to_char("You have no &+gvenom&N left!\n", ch);
+		return;
+	}
 	bite(ch, victim);
+}
+
+void do_bite(P_char ch, char *arg, int /*cmd*/)
+{
+	P_char victim = parse_victim(ch, arg, 0);
+	if (!victim)
+	{
+		send_to_char("Target who?\n", ch);
+		return;
+	}
+
+	do_bite_target(ch, victim);
 }
 
 void innate_gaze(P_char ch, P_char victim)
@@ -3571,29 +3597,79 @@ void do_innate(P_char ch, char *arg, int cmd)
 		send_to_char("You know no such ability!\n", ch);
 }
 
-void event_conjure_water(P_char ch, P_char /*vict*/, P_obj /*obj*/, void * /*data*/)
+static bool conjured_spring_in_room(int room)
 {
-	P_obj spring;
+	for (P_obj obj = world[room].contents; obj; obj = obj->next_content)
+		if (OBJ_VNUM(obj) == 93300)
+			return true;
+	return false;
+}
 
-	send_to_room(
-		"A &+bsmall spring&n shoots from the &+yground&n obeying a powerful summoning.\n",
-		ch->in_room);
-	spring = read_object(93300, VIRTUAL);
-	if (!spring)
+void event_conjure_water(P_char ch, P_char /*vict*/, P_obj /*obj*/, void *data)
+{
+	if (!ch || !data || !IS_ALIVE(ch))
+		return;
+	const int room = *static_cast<int *>(data);
+	if (room < 0 || room > top_of_world || ch->in_room != room ||
+	    !has_innate(ch, INNATE_CONJURE_WATER) || !can_use_innate(ch, INNATE_CONJURE_WATER))
+		return;
+
+	if (conjured_spring_in_room(room))
 	{
-		logit(LOG_DEBUG, "spell_create_spring(): obj 750 (spring) not loadable");
-		send_to_char("Tell someone to make a spring object ASAP!\n", ch);
+		send_to_char("A summoned spring is already here.\n", ch);
 		return;
 	}
-	obj_to_room(spring, ch->in_room);
-	set_obj_affected(spring, 15 * 60 * 4, TAG_OBJ_DECAY, 0);
+
+	P_obj spring = read_object(93300, VIRTUAL);
+	if (!spring)
+	{
+		logit(LOG_DEBUG, "event_conjure_water: spring object 93300 not loadable");
+		send_to_char("The spring fails to take shape.\n", ch);
+		return;
+	}
+	obj_to_room(spring, room);
+	if (!OBJ_IN_ROOM(spring, room) || !IS_ALIVE(ch) || ch->in_room != room ||
+	    !has_innate(ch, INNATE_CONJURE_WATER) || !check_innate_time(ch, INNATE_CONJURE_WATER))
+	{
+		extract_obj(spring);
+		send_to_char("The spring fails to take shape.\n", ch);
+		return;
+	}
+	set_obj_affected(spring, 15 * 60 * WAIT_SEC, TAG_OBJ_DECAY, 0);
+	send_to_room(
+		"A &+bsmall spring&n shoots from the &+yground&n obeying a powerful summoning.\n",
+		room);
 }
 
 void do_conjure_water(P_char ch, char * /*arg*/, int /*cmd*/)
 {
-	if (!check_innate_time(ch, INNATE_CONJURE_WATER))
+	if (!ch || !IS_ALIVE(ch) || ch->in_room < 0 || ch->in_room > top_of_world ||
+	    !has_innate(ch, INNATE_CONJURE_WATER))
+		return;
+	if (!can_use_innate(ch, INNATE_CONJURE_WATER))
 	{
 		send_to_char("You're too tired to do that right now.\n", ch);
+		return;
+	}
+	if (get_scheduled(ch, event_conjure_water) || conjured_spring_in_room(ch->in_room))
+	{
+		send_to_char("A spring is already summoned or being summoned here.\n", ch);
+		return;
+	}
+	for (P_char caster = world[ch->in_room].people; caster; caster = caster->next_in_room)
+	{
+		P_nevent pending = get_scheduled(caster, event_conjure_water);
+		if (pending && pending->data && *static_cast<int *>(pending->data) == ch->in_room)
+		{
+			send_to_char("A spring is already being summoned here.\n", ch);
+			return;
+		}
+	}
+
+	const int room = ch->in_room;
+	if (!add_event(event_conjure_water, PULSE_VIOLENCE, ch, 0, 0, 0, &room, sizeof(room)))
+	{
+		send_to_char("The spring fails to take shape.\n", ch);
 		return;
 	}
 
@@ -3602,8 +3678,7 @@ void do_conjure_water(P_char ch, char * /*arg*/, int /*cmd*/)
 	send_to_char(
 		"&+LThe earth rumbles as your incantation summons &+bliving water&+L from the depths.\n",
 		ch);
-	add_event(event_conjure_water, 2 * PULSE_VIOLENCE, ch, 0, 0, 0, 0, 0);
-	CharWait(ch, 2 * PULSE_VIOLENCE);
+	CharWait(ch, PULSE_VIOLENCE);
 }
 
 // ------ Foundry ---------
@@ -3763,7 +3838,7 @@ int get_innate_resistance(P_char ch)
 	if (!IS_ALIVE(ch))
 		return 0;
 
-	res = racial_shrug_data[GET_RACE(ch)];
+	res = racial_shrug_data[tutorial_mobile_mechanics_race(ch)];
 	res -= MIN(6, 56 - lvl);
 	res = (int)(res * MIN(1., ((float)lvl) / 50));
 	res = MAX(5, res);
@@ -3933,10 +4008,13 @@ void branch(P_char ch, P_char victim)
 		"$n lifts you lightly and &+rsmashes&n you against the &+yground!&n",
 		"$n lifts $N lightly and &+rsmashes&n $M against the &+yground!&n",
 	};
-	if (!IS_ALIVE(ch) || !IS_ALIVE(victim) || ch->in_room != victim->in_room)
+	if (!IS_ALIVE(ch) || !IS_ALIVE(victim) || ch->in_room != victim->in_room ||
+	    !CanDoFightMove(ch, victim))
 		return;
 
 	victim = guard_check(ch, victim);
+	if (!CanDoFightMove(ch, victim))
+		return;
 
 	act("One of your branches reaches towards $N.", FALSE, ch, 0, victim, TO_CHAR);
 	act("One of $n's branches reaches towards $N.", FALSE, ch, 0, victim, TO_NOTVICT);

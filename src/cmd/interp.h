@@ -18,6 +18,7 @@
 
 const char *input_command_label(const char *input);
 int ordered_command_number(const char *input);
+bool input_is_afk_toggle(const char *input);
 
 extern unsigned int game_locked;
 extern unsigned int game_locked_players;
@@ -901,6 +902,14 @@ extern unsigned int game_locked_level;
 #define CMD_RETIRED_863 863 // Reserved retired command slot; do not reuse.
 #define CMD_DUMMY 864
 #define CMD_FLIGHTS 865
+#define CMD_QVIEW 866
+#define CMD_QREF 867
+#define CMD_QLIST 868
+#define CMD_HLQLIST 869
+#define CMD_QINFO 870
+#define CMD_DIVINEBOON 871
+#define CMD_BATTLEPREP 872
+#define CMD_LAST 873
 
 /* The CMD_s below are not real commands, they are used in item special procedures to identify
  * when wearer gets hit in melee or nuked and when an item is poofing on ground.

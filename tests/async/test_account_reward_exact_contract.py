@@ -96,10 +96,10 @@ pwipe_hook = "account_bound_rewards_on_successful_pwipe()"
 assert pwipe_hook in sql_source
 postflight_pos = index(sql_source, "if (!postflight_ok)")
 pwipe_pos = sql_source.index(pwipe_hook, postflight_pos)
-completed_pos = index(sql_source, 'send_to_all("WIPE COMPLETED!")', pwipe_pos)
+completed_pos = index(sql_source, 'pwipe_filesystem_ready = true', pwipe_pos)
 assert postflight_pos < pwipe_pos < completed_pos
-season_completion_pos = index(sql_source, "if (!sql_complete_pwipe_epoch())", pwipe_pos)
-assert not contains(sql_source[pwipe_pos:season_completion_pos], "return FALSE")
+season_completion_pos = index(sql_source, "if (!sql_prepare_pwipe_filesystem())", pwipe_pos)
+assert contains(sql_source[pwipe_pos:season_completion_pos], "return FALSE")
 manifest = sql_source[index(sql_source, "bool sql_verify_pwipe_manifest"):index(sql_source, "bool sql_verify_persistence_schema")]
 assert contains(manifest, '"account_bound_rewards"')
 assert contains(manifest, '"account_bound_reward_summons"')
@@ -111,9 +111,12 @@ assert contains(source, "remaining_pwipes = remaining_pwipes - 1")
 assert contains(source, "DELETE FROM account_bound_reward_summons")
 lock_pos = index(source, "FOR UPDATE", source.index("bool account_bound_rewards_on_successful_pwipe"))
 delete_pos = index(source, "DELETE FROM account_bound_reward_summons", lock_pos)
-stamp_pos = index(source, "SET last_processed_at=NOW()", delete_pos)
+stamp_pos = index(source, "SET g.last_processed_at=s.reset_started_at", delete_pos)
 assert lock_pos < delete_pos < stamp_pos
 assert contains(source, "INTERVAL 28 DAY")
+assert contains(source, "s.season_epoch=%llu")
+assert contains(source, "s.reset_status='resetting'")
+assert contains(source, "g.last_processed_at <= s.reset_started_at")
 assert "account_bound_reward_pwipe_state" in verifier
 
 print("account reward exact-item/config/cooldown/expiry/pwipe source contract: ok")

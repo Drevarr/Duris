@@ -128,7 +128,8 @@ void verify_awards(const zone_touch_payload &payload, const critical_command &co
 	for (size_t i = 0; i < payload.group_size; ++i)
 	{
 		const auto pid = std::to_string(payload.participant_pids[i]);
-		assert(scalar("SELECT epics FROM player_data WHERE pid=" + pid) == 110 + i);
+		// The writer records the award; the player's canonical save owns epics.
+		assert(scalar("SELECT epics FROM player_data WHERE pid=" + pid) == 100);
 		assert(scalar("SELECT epic_revision FROM player_data WHERE pid=" + pid) == 1);
 		assert(result.balances[i] == 110 + static_cast<int64_t>(i) &&
 		       result.revisions[i] == 1);
@@ -137,7 +138,9 @@ void verify_awards(const zone_touch_payload &payload, const critical_command &co
 		critical_command child;
 		assert(zone_touch_award_command(command, i, &child));
 		assert(scalar("SELECT COUNT(*) FROM epic_ledger WHERE " + operation_where(child) +
-			      " AND pid=" + pid + " AND delta=" + std::to_string(10 + i)) == 1);
+			      " AND pid=" + pid + " AND delta=" + std::to_string(10 + i) +
+			      " AND balance_after=" + std::to_string(110 + i) +
+			      " AND epic_revision=1") == 1);
 		assert(scalar("SELECT COUNT(*) FROM critical_outbox WHERE " +
 			      operation_where(child)) == 1);
 	}
@@ -190,9 +193,17 @@ void verify_rollback(const zone_touch_payload &payload, const critical_command &
 			      " AND alignment=0 AND reset_perc=0 AND last_touch IS NULL") == 1);
 }
 
-void success_and_replay(uint32_t base, unsigned int count, bool record_zone = true)
+void success_and_replay(uint32_t base, unsigned int count, bool record_zone = true,
+			bool prepared = false)
 {
 	auto payload = fixture(base, count, record_zone);
+	payload.prepared_delivery = prepared;
+	if (prepared)
+		for (size_t i = 0; i < count; ++i)
+		{
+			payload.awards[i].base = 100;
+			payload.awards[i].boon_id = 7;
+		}
 	if (count > 1)
 	{
 		std::swap(payload.participant_pids[0], payload.participant_pids[count - 1]);
@@ -203,6 +214,12 @@ void success_and_replay(uint32_t base, unsigned int count, bool record_zone = tr
 	assert(applied.outcome == critical_apply_outcome::applied && applied.error_code == 0);
 	auto result = receipt(applied);
 	assert(!result.recovered_claim);
+	if (prepared)
+		for (size_t i = 0; i < count; ++i)
+		{
+			assert(result.revisions[i] == 1 && result.previous[i] == 0);
+			assert(result.parent_operation.bytes == command.operation_id.bytes);
+		}
 	verify_awards(payload, command, result);
 	const auto outbox_count = scalar("SELECT COUNT(*) FROM critical_outbox");
 	auto duplicate = critical_command_repository_apply(db, command);
@@ -228,6 +245,8 @@ void success_and_replay(uint32_t base, unsigned int count, bool record_zone = tr
 	assert(receipt(duplicate).recovered_claim);
 	assert(scalar("SELECT COUNT(*) FROM critical_outbox WHERE " + operation_where(retouch)) ==
 	       1);
+	assert(scalar("SELECT expected_outbox_events FROM critical_operation_inbox WHERE " +
+		      operation_where(retouch)) == 1);
 	assert(scalar("SELECT COUNT(*) FROM epic_ledger") == ledger_count);
 	assert(scalar("SELECT COUNT(*) FROM critical_operation_inbox i WHERE status=1 AND result_code=0 "
 		      "AND NOT EXISTS (SELECT 1 FROM critical_outbox o WHERE o.operation_id=i.operation_id)") ==
@@ -361,6 +380,7 @@ int main()
 	success_and_replay(100, 1);
 	success_and_replay(200, 15);
 	success_and_replay(300, 3, false);
+	success_and_replay(1100, 15, true, true);
 	legacy_metadata_only();
 	rejection(400, true);
 	rejection(500, false);

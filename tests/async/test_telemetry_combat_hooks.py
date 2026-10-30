@@ -29,13 +29,15 @@ def main():
     helper = function(source, 'static void telemetry_combat_context_changed(')
     start = function(source, 'void set_fighting(P_char ch, P_char vict)')
     stop = function(source, 'void stop_fighting(P_char ch)')
+    unlink = function(source, 'static void unlink_fighting(P_char ch)')
     sparser = (ROOT / 'src/net/sparser.c').read_text()
     assert start.count('telemetry_combat_context_changed(ch)') == 1
     assert start.index('can_hit_target(ch, victim)') < start.index('GET_OPPONENT(ch) = victim;')
     assert start.index('IS_IMMOBILE(ch)') < start.index('GET_OPPONENT(ch) = victim;')
     assert start.index('GET_OPPONENT(ch) = victim;') < start.index('telemetry_combat_context_changed(ch)')
     assert stop.count('telemetry_combat_context_changed(ch)') == 1
-    assert stop.index('GET_OPPONENT(ch) = NULL;') < stop.index('telemetry_combat_context_changed(ch)')
+    assert 'GET_OPPONENT(ch) = NULL;' in unlink
+    assert stop.index('unlink_fighting(ch)') < stop.index('telemetry_combat_context_changed(ch)')
     assert 'game_evidence' not in helper  # automatic combat is not human activity
     will = function(sparser, 'void do_will(P_char ch, char *argument, int /*cmd*/)')
     assert will.index('SET_BIT(ch->specials.affected_by2, AFF2_CASTING)') < \
@@ -58,6 +60,12 @@ struct char_data {
     int in_room = -1;
 };
 using P_char = char_data *;
+void event_water_crossing(P_char, P_char, void *, void *) {}
+std::vector<P_char> water_cancellations;
+void disarm_char_nevents(P_char ch, decltype(&event_water_crossing) callback) {
+    assert(callback == event_water_crossing);
+    water_cancellations.push_back(ch);
+}
 P_char combat_list = nullptr, combat_next_ch = nullptr;
 constexpr int CON_PLAYING = 0, LOG_EXIT = 1, AFF3_TRACKING = 1;
 constexpr int SPELL_CEGILUNE_BLADE = 1, SKILL_LANCE_CHARGE = 2, PULSE_VIOLENCE = 10;
@@ -90,12 +98,13 @@ void telemetry_runtime_game_combat_context(char_data *) noexcept {}
 telemetry_capture_result telemetry_runtime_game_encounter_begin(char_data *, telemetry_encounter_mode) {
     return {};
 }
-''' + helper + '\nvoid accepted_start(P_char ch, P_char victim) {\n' + block + '\n}\n' + stop + r'''
+''' + helper + '\nvoid accepted_start(P_char ch, P_char victim) {\n' + block + '\n}\n' + unlink + '\n' + stop + r'''
 int main() {
     char_data player{}, target{};
     descriptor_data descriptor{};
     player.desc = &descriptor;
     accepted_start(&player, &target);
+    assert((water_cancellations == std::vector<P_char>{&player, &target}));
     assert(combat_list == &player && IS_FIGHTING(&player));
     assert(observed.size() == 1 && observed.back());
     stop_fighting(&player);

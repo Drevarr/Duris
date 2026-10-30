@@ -1,3 +1,4 @@
+#include "economy/divine_trade_runtime.h"
 /****************************************************************************
  *
  *  File: comm.c                                                Part of Duris
@@ -23,6 +24,7 @@
 
 #include "core/prototypes.h"
 #include "world/world_singletons.h"
+#include "flatfile/flatfile_shopkeeper_restore.h"
 #include "item/item_actions.h"
 #include "item/artifact_mana.h"
 #include "item/device_actions.h"
@@ -42,6 +44,7 @@
 #include "cmd/interp.h"
 #include "core/utility.h"
 #include "core/utils.h"
+#include "item/storage_lockers.h"
 #include <arpa/inet.h>
 #include <ctype.h>
 #include <dirent.h>
@@ -100,10 +103,13 @@
 #include "economy/crafting.h"
 #include "account/account_recovery.h"
 #include "item/locker_identify.h"
+#include "item/private_chest_purchase.h"
+#include "item/storage_lockers.h"
 #include "cmd/information_cache.h"
 #include "cmd/help_cache.h"
 #include "account/password_hash.h"
 #include "account/account_reward_config.h"
+#include "account/pwipe_launch.h"
 #include "combat/frag_cap_config.h"
 #include "world/hardcore_config.h"
 #include "item/random_equipment_config.h"
@@ -139,6 +145,7 @@
 #include "flatfile/flatfile_item_repository.h"
 #include "economy/auction_transaction.h"
 #include "economy/collector_catalog_cache.h"
+#include "economy/divine_trade_command.h"
 #include "economy/collector_listing_pipeline.h"
 #include "economy/collector_maintenance.h"
 #include "economy/collector_presence.h"
@@ -146,7 +153,11 @@
 #include "economy/collector_transaction.h"
 #include "combat/combat_outcome_transaction.h"
 #include "guild/artifact_guild_transaction.h"
+#include "guild/artifact_guild_delivery.h"
 #include "economy/boon_reward_transaction.h"
+#include "economy/divine_boon_runtime.h"
+#include "economy/divine_boon_selection.h"
+#include "economy/divine_boon_activity.h"
 #include "economy/boon_shop_transaction.h"
 #include "world/zone_touch_transaction.h"
 #include "world/epic_transaction.h"
@@ -244,6 +255,8 @@ static void maintenance_handle_completions(const maintenance_result *results, si
 	for (size_t index = 0; index < count; ++index)
 	{
 		const auto &result = results[index];
+		if (result.job_id == maintenance_job_id::boon_scan)
+			boon_reward_definition_view_invalidate();
 		if (result.job_id == maintenance_job_id::cargo_market &&
 		    (result.outcome == maintenance_outcome::complete ||
 		     result.outcome == maintenance_outcome::permanent_failure))
@@ -314,12 +327,84 @@ static void maintenance_handle_completions(const maintenance_result *results, si
 	}
 }
 
+static void critical_gameplay_publish_outbox(void)
+{
+	auction_transaction_publish_outbox();
+	collector_transaction_publish_outbox();
+	combat_outcome_transaction_publish_outbox();
+	artifact_guild_transaction_publish_outbox();
+}
+
+#ifndef __NO_MYSQL__
+static void critical_gameplay_drain_outbox(void)
+{
+	sql_async_pulse();
+	critical_gameplay_publish_outbox();
+}
+#endif
+
+void pwipe_resume_writers(void)
+{
+	persistence_writer_resume();
+	player_save_pipeline_resume();
+	critical_outbox_resume();
+	critical_command_coordinator_resume();
+	maintenance_scheduler_resume();
+}
+
+bool pwipe_quiesce_writers(void)
+{
+	const uint64_t failures = player_save_worker_health_copy().failures;
+	const uint64_t command_failures =
+		critical_command_coordinator_health_copy().terminal_failures;
+	const uint64_t delivery_failures = critical_outbox_health_copy().terminal_failures;
+	if (!artifact_guild_transaction_drain(3000) || !locker_async_drain(3000))
+		return false;
+	maintenance_scheduler_quiesce();
+	critical_command_coordinator_quiesce();
+	critical_outbox_quiesce();
+	bool ready = maintenance_scheduler_drain(3000) &&
+		     critical_command_coordinator_drain(3000) && critical_outbox_drain(3000) &&
+		     persistence_flush_all_character_saves() && locker_async_drain(3000) &&
+		     artifact_save_drain(3000) && player_save_pipeline_drain(3000);
+#ifndef __NO_MYSQL__
+	ready = ready && sql_ship_write_pulse();
+#endif
+	// Read-completion callbacks can enqueue a dependent write or read. Finish
+	// that accepted chain before closing the shared writer's admission gate.
+	const uint64_t deadline = persistence_observability_now_usec() + 3000000;
+	while (ready)
+	{
+		ready = persistence_writer_wait_idle(3000) &&
+			persistence_observability_now_usec() < deadline;
+		if (!ready || !sql_async_pulse())
+			break;
+	}
+	if (ready)
+	{
+		// Publication callbacks may have resumed outbox polling while draining.
+		critical_outbox_quiesce();
+		persistence_writer_quiesce();
+		ready = persistence_writer_wait_idle(3000) &&
+			player_save_worker_health_copy().failures == failures &&
+			critical_command_coordinator_health_copy().terminal_failures ==
+				command_failures &&
+			critical_outbox_health_copy().terminal_failures == delivery_failures;
+	}
+	if (!ready)
+		pwipe_resume_writers();
+	return ready;
+}
+
 static void critical_gameplay_handle_completions(const critical_completion *completions,
 						 size_t count)
 {
 	for (size_t index = 0; index < count; ++index)
 		persistence_critical_failure(AVATAR, completions[index]);
 	locker_identify_pulse();
+	private_chest_purchase_pulse();
+	sql_chest_log_pulse();
+	locker_chest_changes_pulse();
 	item_movement_transaction_handle_completions(completions, count);
 	shop_trade_transaction_handle_completions(completions, count);
 	auction_transaction_handle_completions(completions, count);
@@ -327,6 +412,7 @@ static void critical_gameplay_handle_completions(const critical_completion *comp
 	combat_outcome_transaction_handle_completions(completions, count);
 	artifact_guild_transaction_handle_completions(completions, count);
 	boon_reward_transaction_handle_completions(completions, count);
+	divine_trade_runtime_completions(completions, count);
 	boon_shop_transaction_handle_completions(completions, count);
 	zone_touch_transaction_handle_completions(completions, count);
 }
@@ -343,6 +429,20 @@ critical_gameplay_outbox_delivery(const critical_outbox_record &record, void *co
 		return boon_reward_transaction_outbox_delivery(record, context);
 	if (record.destination == 9)
 		return zone_touch_transaction_outbox_delivery(record, context);
+	if (record.destination == DIVINE_TRADE_OUTBOX_DESTINATION)
+	{
+		// The transaction has already saved the complete financial after-images.
+		// A restart restores those records; the outbox never applies a wallet delta.
+		divine_trade_result result;
+		return record.event_type == 1 &&
+				       (record.payload_version == 1 ||
+					record.payload_version == 2 ||
+					record.payload_version == DIVINE_TRADE_PAYLOAD_VERSION) &&
+				       divine_trade_result_decode(record.payload.data(),
+								  record.payload.size(), &result) ?
+			       critical_outbox_delivery_result::already_delivered :
+			       critical_outbox_delivery_result::terminal_failure;
+	}
 	if (record.destination == COLLECTOR_OUTBOX_DESTINATION)
 		return collector_transaction_outbox_delivery(record, context);
 	return auction_transaction_outbox_delivery(record, context);
@@ -529,6 +629,7 @@ int main(int argc, char **argv)
 {
 	int port, sslport;
 	int pos = 1;
+	uint64_t pwipe_resume_epoch = 0;
 	const char *dir;
 
 	port = DFLT_PORT;
@@ -555,6 +656,23 @@ int main(int argc, char **argv)
 
 	while ((pos < argc) && (*(argv[pos]) == '-'))
 	{
+		if (!strcmp(argv[pos], "--resume-pwipe"))
+		{
+			if (pwipe_resume_epoch || pos + 1 >= argc)
+				fatal_boot_error(
+					"comm", "--resume-pwipe requires one expected reset epoch");
+			const char *epoch = argv[++pos];
+			char *end = nullptr;
+			errno = 0;
+			const unsigned long long parsed = strtoull(epoch, &end, 10);
+			if (*epoch < '1' || *epoch > '9' ||
+			    strspn(epoch, "0123456789") != strlen(epoch) || errno || !end || *end ||
+			    parsed < 2)
+				fatal_boot_error("comm", "Invalid expected pwipe reset epoch");
+			pwipe_resume_epoch = parsed;
+			++pos;
+			continue;
+		}
 		if (!strcmp(argv[pos], "--minimal"))
 		{
 			mini_mode = 1;
@@ -623,7 +741,7 @@ int main(int argc, char **argv)
 		{
 			fatal_boot_error("comm",
 					 "Usage: %s [-m|--minimal] [-s] [-p] [-f] "
-					 "[-d pathname] [ port # ]",
+					 "[--resume-pwipe EPOCH] [-d pathname] [ port # ]",
 					 argv[0]);
 		}
 		else if ((port = atoi(argv[pos])) <= 1024)
@@ -654,6 +772,9 @@ int main(int argc, char **argv)
 	{
 		fatal_boot_error("comm", "chdir failed: %s", strerror(errno));
 	}
+	if (pwipe_resume_epoch && (copyover_boot || material_rarity_report_mode))
+		fatal_boot_error("comm",
+				 "SQL pwipe recovery cannot combine with another boot mode");
 	if (material_rarity_report_mode)
 	{
 		boot_material_rarity_objects(mini_mode);
@@ -687,6 +808,24 @@ int main(int argc, char **argv)
 
 	if (!persistence_log_start(LOG_FILE, LOG_WIZ))
 		fatal_boot_error("comm", "Could not start persistence log worker");
+
+	// Lifecycle policy is needed by both ordinary/minimal play and SQL-only recovery.
+	boot_frag_cap_config();
+	boot_account_reward_config();
+	if (pwipe_resume_epoch)
+	{
+		const bool ready = persistence_mode_requires_mysql() &&
+				   sql_resume_pwipe(pwipe_resume_epoch);
+		logit(LOG_STATUS,
+		      ready ? "SQL pwipe recovery is ready for filesystem cleanup." :
+			      "SQL pwipe recovery refused or incomplete; startup remains fenced.");
+		(void)persistence_log_drain(2000);
+		return ready ? 55 : 58;
+	}
+	std::string launch_error;
+	if (!pwipe_launch_load("lib/pwipe_launch.cfg", launch_error))
+		fatal_boot_error("pwipe-launch", launch_error.c_str());
+	logit(LOG_STATUS, "%s", pwipe_launch_status(time(NULL)).c_str());
 
 	if (persistence_mode_requires_mysql() && initialize_mysql() < 0)
 	{
@@ -933,6 +1072,9 @@ int run_the_game(int port, int sslport)
 		fprintf(stderr, "World quest catalog unavailable; bartender quests fail closed.\n");
 	}
 	fprintf(stderr, "--  Done calculating mob level and world-quest catalog.\n");
+	if (!divine_boon_selection_bootstrap())
+		logit(LOG_STATUS,
+		      "Divine Boon candidate catalogue unavailable; selection stays closed.");
 
 	if (!mini_mode)
 		initialize_tradeskills();
@@ -989,12 +1131,6 @@ int run_the_game(int port, int sslport)
 
 		fprintf(stderr, "-- Booting crafting system\n");
 		boot_crafting_system();
-
-		fprintf(stderr, "-- Loading frag-cap configuration\n");
-		boot_frag_cap_config();
-
-		fprintf(stderr, "-- Loading account reward configuration\n");
-		boot_account_reward_config();
 
 		fprintf(stderr, "-- Loading Hardcore configuration\n");
 		boot_hardcore_config();
@@ -1054,12 +1190,14 @@ int run_the_game(int port, int sslport)
 				  "writer thread did not start");
 	}
 	sql_async_boot_done();
+	if (!divine_boon_runtime_boot(static_cast<int64_t>(time(nullptr))))
+		logit(LOG_STATUS, "Divine Boon state unavailable; world bonuses disabled.");
 	critical_apply_fn critical_apply = critical_command_repository_apply_from_pool;
 #ifdef __NO_MYSQL__
 	critical_apply = flatfile_critical_command_repository_apply_selected;
 #else
-	const bool critical_outbox_ready =
-		critical_outbox_init(critical_gameplay_outbox_delivery, NULL);
+	const bool critical_outbox_ready = critical_outbox_init(
+		critical_gameplay_outbox_delivery, NULL, critical_gameplay_drain_outbox);
 #endif
 	if (
 #ifndef __NO_MYSQL__
@@ -1074,6 +1212,10 @@ int run_the_game(int port, int sslport)
 		persistence_alert(AVATAR, "critical_command", "pipeline", "none", "none",
 				  "start_failed", "check critical schema");
 	}
+	if (!artifact_guild_delivery_boot())
+		persistence_alert(
+			AVATAR, "artifact_delivery", "redacted", "none", "none", "boot_pending",
+			"prepared effects remain protected until native recovery is ready");
 	if (!collector_catalog_cache_refresh())
 		logit(LOG_STATUS,
 		      "Collector catalog refresh unavailable; collector gameplay fails closed.");
@@ -1110,7 +1252,8 @@ int run_the_game(int port, int sslport)
 	/* Flush dirty realms and reap the placed resource nodes while the
 	 * world and the store are still up. Idempotent and self-gating, so
 	 * a build with kingdoms disabled pays nothing here. */
-	kingdom_shutdown();
+	if (!_pwipe)
+		kingdom_shutdown();
 	maintenance_scheduler_shutdown();
 	redis_cleanup();
 	player_load_pipeline_shutdown();
@@ -1139,6 +1282,11 @@ int run_the_game(int port, int sslport)
 		artifact_guild_transaction_report_unsaved();
 		locker_async_shutdown();
 	}
+	else
+	{
+		// Pwipe already drained and closed admission before its SQL boundary.
+		player_save_worker_shutdown();
+	}
 
 	/* Don't need this anymore, as dropped artis are handled in real time on the DB.
 	// Look for dropped artis and remove them from the next boot.
@@ -1146,7 +1294,7 @@ int run_the_game(int port, int sslport)
 	*/
 
 #ifdef MEMCHK
-	if (!_copyover)
+	if (!_copyover && !_pwipe)
 	{
 		free_world();
 		dump_mem_log();
@@ -1191,7 +1339,7 @@ int run_the_game(int port, int sslport)
 		logit(LOG_EXIT, "Pwipe Shutdown.");
 		logit(LOG_EXIT, "Max Goods: %d, Max Evils: %d.", max_ingame_good, max_ingame_evil);
 		ws_broadcast_mud_shutdown("pwipe");
-		return 55;
+		return sql_pwipe_filesystem_ready() ? 55 : 58;
 	}
 	ws_broadcast_mud_shutdown("manual");
 	logit(LOG_EXIT, "Normal termination of game.");
@@ -1333,14 +1481,16 @@ static int get_playing_cmd_from_q(P_char character, struct txt_q *queue, char *d
 			collector_transaction_player_busy(character) ||
 			collector_service_player_busy(character),
 		collector_transaction_player_busy(character) ||
-			collector_service_player_busy(character));
+			collector_service_player_busy(character) ||
+			currency_transaction_chest_busy(character));
 }
 
-/** Select the restricted queue throughout ordinary casting or active item use. */
+/** Keep abort reachable during casting, active item use and shoreline preparation. */
 static bool casting_input_for_descriptor(P_desc descriptor, P_char character)
 {
 	return character && descriptor &&
-	       (IS_AFFECTED2(character, AFF2_CASTING) || item_action_active(character)) &&
+	       (IS_AFFECTED2(character, AFF2_CASTING) || item_action_active(character) ||
+		get_scheduled(character, event_water_crossing)) &&
 	       descriptor->connected == CON_PLAYING && !descriptor->showstr_count &&
 	       !descriptor->str;
 }
@@ -1348,10 +1498,12 @@ static bool casting_input_for_descriptor(P_desc descriptor, P_char character)
 /** Send a dequeued playing-state command through the normal command dispatcher. */
 static void dispatch_playing_command(P_char character, char *input)
 {
+	const auto activity = divine_boon_activity_begin(character, ordered_command_number(input));
 	if (character && character->desc && IS_SET(character->specials.act, PLR_PAGING_ON))
 		process_with_paging(character, input);
 	else
 		command_interpreter(character, input);
+	divine_boon_activity_end(activity);
 }
 
 struct game_loop_pulse_context
@@ -1461,6 +1613,9 @@ static void dispatch_session_input(P_desc descriptor, P_char character, char *in
 		string_add(descriptor, input);
 		break;
 	case session_input_route::playing:
+		// Observe actual dequeue before the handler can extract its character
+		// or close the descriptor. No login, pager or editor input is exposed.
+		gmcp_input_receipt(descriptor, input);
 		dispatch_playing_command(character, input);
 		break;
 	case session_input_route::nanny:
@@ -1479,8 +1634,8 @@ static void dispatch_session_input(P_desc descriptor, P_char character, char *in
  * The pulse phase order is a compatibility boundary.  Each helper owns one
  * stage, but all helpers execute on the game thread in the order documented
  * in docs/network/GAME_LOOP_PHASES.md.  In particular, output drains before
- * ne_events() closes the current tick's scheduling window, and two-pulse
- * durable completions remain after that event phase.
+ * ne_events() closes the current tick's scheduling window, and durable
+ * completions remain after that event phase.
  */
 
 // Publish a socket high-water mark only after its server-relative hour ends.
@@ -2175,11 +2330,11 @@ static void run_event_phase(game_loop_pulse_context &ctx)
 static void run_recurring_persistence_phase(game_loop_pulse_context &ctx)
 {
 	const uint64_t loop_tick = ctx.loop_tick;
+	const uint64_t gmcp_begin_us = !(pulse % 2) ? loop_monotonic_us() : 0;
 
 	/* Flush dirty room GMCP updates every 2 pulses (~500ms) */
 	if (!(pulse % 2))
 	{
-		const uint64_t gmcp_begin_us = loop_monotonic_us();
 		gmcp_flush_initial_states();
 		gmcp_flush_dirty_rooms();
 		gmcp_flush_dirty_ship_contacts();
@@ -2187,16 +2342,18 @@ static void run_recurring_persistence_phase(game_loop_pulse_context &ctx)
 		flush_pending_ship_saves();
 		retry_unplaced_ships();
 		locker_async_pulse();
-		critical_completion critical_completions[64] = {};
-		const size_t critical_completion_count =
-			critical_command_coordinator_pulse(critical_completions, 64);
-		critical_gameplay_handle_completions(critical_completions,
-						     critical_completion_count);
-		auction_transaction_publish_outbox();
-		collector_transaction_publish_outbox();
-		combat_outcome_transaction_publish_outbox();
-		artifact_guild_transaction_publish_outbox();
+	}
+	// Publish ready results each pulse, after events and before save capture.
+	critical_completion critical_completions[64] = {};
+	const size_t critical_completion_count =
+		critical_command_coordinator_pulse(critical_completions, 64);
+	critical_gameplay_handle_completions(critical_completions, critical_completion_count);
+	if (!(pulse % 2))
+	{
+		critical_gameplay_publish_outbox();
 		player_save_pipeline_pulse();
+		divine_boon_runtime_pulse();
+		divine_boon_selection_pulse(static_cast<int64_t>(time(nullptr)));
 		persistence_pulse_character_saves();
 		player_load_result load_completions[32] = {};
 		const size_t load_completion_count =
@@ -2230,6 +2387,10 @@ static void run_recurring_persistence_phase(game_loop_pulse_context &ctx)
 				     loop_tick);
 	}
 	sql_async_pulse();
+	divine_trade_runtime_retire_pulse();
+#ifndef __NO_MYSQL__
+	sql_ship_write_pulse();
+#endif
 	artifact_guild_transaction_pulse();
 	if (!(pulse % (WAIT_SEC * 60)))
 		sql_mud_info_refresh();
@@ -2326,15 +2487,13 @@ static void run_combat_phase(game_loop_pulse_context &ctx)
 			}
 			if (t_ch->desc && t_ch->desc->last_group_update)
 			{
-				/* For GMCP clients, send structured data to group panel */
 				if (GMCP_ENABLED(t_ch))
 				{
 					gmcp_send_group_status(t_ch);
 				}
-				/* For MSP clients, display text group output */
 				if (t_ch->desc->term_type == TERM_MSP)
 				{
-					do_group(t_ch, writable_arg(""), 0);
+					send_msp_group(t_ch, false);
 				}
 				t_ch->desc->last_group_update = 0;
 			}
@@ -2585,6 +2744,15 @@ void game_loop(int port, int sslport)
 	if (!mini_mode)
 	{
 		reconcile_shopkeepers(copyover_boot != 0);
+		if (persistence_mode_get() == PERSISTENCE_MODE_FLATFILE_PRIMARY)
+		{
+			std::string error;
+			const char *root = persistence_mode_flatfile_root();
+			if (!flatfile_shopkeeper_bootstrap_new(root ? root : "", &error))
+				fatal_boot_error("shopkeeper", "new shop initialization failed: %s",
+						 error.empty() ? "invalid authoritative state" :
+								 error.c_str());
+		}
 		initialize_transport();
 		// The world is final: every artifact that boot, a copyover or a restored
 		// generation loads is in place, so the lists read now are not stale.
@@ -2619,8 +2787,20 @@ void game_loop(int port, int sslport)
 	{
 		logit(LOG_STATUS, "Opening mother connection.");
 		s = init_socket(port);
+		if (s < 0)
+		{
+			// Return through worker shutdown instead of destroying joinable threads.
+			_reboot = 1;
+			return;
+		}
 		logit(LOG_STATUS, "Opening father connection.");
 		S = init_socket(sslport);
+		if (S < 0)
+		{
+			close(s);
+			_reboot = 1;
+			return;
+		}
 		// The WebSocket and health listener is for a server with a website.
 		const char *websocket = getenv("DURIS_WEBSOCKET");
 		WS = -1;
@@ -2697,6 +2877,8 @@ resume_game_loop:
 		run_session_input_phase(context);
 		run_output_phase(context);
 		run_event_phase(context);
+		if (_pwipe)
+			break;
 		run_recurring_persistence_phase(context);
 		run_activity_phase(context);
 		run_combat_phase(context);
@@ -3074,14 +3256,22 @@ struct timeval timediff(struct timeval *a, struct timeval *b)
  * Empty the queues before closing connection
  */
 
+void flush_input_queue(P_desc d)
+{
+	char discarded[MAX_STRING_LENGTH];
+	while (get_from_q(&d->input, discarded))
+		;
+	d->buflen = 0;
+	d->buf[0] = 0;
+}
+
 void flush_queues(P_desc d)
 {
 	char str[MAX_STRING_LENGTH];
 
 	while (get_from_q(&d->output, str))
 		;
-	while (get_from_q(&d->input, str))
-		;
+	flush_input_queue(d);
 }
 
 int wizconnectsite(char *name, char *player, int flag)
@@ -3224,7 +3414,7 @@ bool runtime_listener_address(sockaddr_in6 *address)
 
 int init_socket(int port)
 {
-	int s, bind_error;
+	int s;
 	sockaddr_in6 sa;
 	int value = 1;
 	struct linger linger_values;
@@ -3241,7 +3431,7 @@ int init_socket(int port)
 	if (!runtime_listener_address(&sa))
 	{
 		logit(LOG_EXIT, "LISTEN_ADDRESS must be a numeric IPv4 or IPv6 address");
-		exit(1);
+		return -1;
 	}
 	/*
 	  gethostname(hostname, MAX_HOSTNAME);
@@ -3271,24 +3461,27 @@ int init_socket(int port)
 	if (s < 0)
 	{
 		logit(LOG_EXIT, "Init-socket");
-		exit(1);
+		return -1;
 	}
 	if (setsockopt(s, SOL_SOCKET, SO_REUSEADDR, &value, sizeof(value)) < 0)
 	{
 		logit(LOG_EXIT, "setsockopt REUSEADDR");
-		exit(1);
+		close(s);
+		return -1;
 	}
 	if (setsockopt(s, SOL_SOCKET, SO_LINGER, &linger_values, sizeof(linger_values)) < 0)
 	{
-		logit(LOG_EXIT, "setsockopt REUSEADDR");
-		exit(1);
+		logit(LOG_EXIT, "setsockopt LINGER");
+		close(s);
+		return -1;
 	}
 	buffsize = sizeof(int);
 
 	if (getsockopt(s, SOL_SOCKET, SO_SNDBUF, (char *)&buffer, (socklen_t *)&buffsize))
 	{
 		logit(LOG_EXIT, "getsockopt SNDBUF");
-		exit(1);
+		close(s);
+		return -1;
 	}
 	if (buffer < MIN_SOCKET_BUFFER_SIZE)
 	{
@@ -3296,20 +3489,25 @@ int init_socket(int port)
 		if (setsockopt(s, SOL_SOCKET, SO_SNDBUF, (char *)&buffer, sizeof(buffer)) < 0)
 		{
 			logit(LOG_EXIT, "setsockopt SNDBUF");
-			exit(1);
+			close(s);
+			return -1;
 		}
 	}
-	if ((bind_error = (bind(s, (struct sockaddr *)&sa, sizeof(sa))) < 0))
+	if (bind(s, (struct sockaddr *)&sa, sizeof(sa)) < 0)
 	{
-		logit(LOG_EXIT, "bind error %d", bind_error);
+		const int bind_error = errno;
+		char address[INET6_ADDRSTRLEN];
+		inet_ntop(AF_INET6, &sa.sin6_addr, address, sizeof(address));
+		logit(LOG_EXIT, "bind [%s]:%d failed: %s (errno=%d)", address, port,
+		      strerror(bind_error), bind_error);
 		close(s);
-		exit(1);
+		return -1;
 	}
 	if (listen(s, SOMAXCONN) < 0)
 	{
 		logit(LOG_EXIT, "listen failed");
 		close(s);
-		exit(1);
+		return -1;
 	}
 	nonblock(s);
 	return (s);
@@ -3368,6 +3566,9 @@ static void forget_hostname(int descriptor);
 
 void close_socket(struct descriptor_data *d)
 {
+	locker_invalidate_chest_access(d->character);
+	locker_invalidate_chest_access(d->original);
+
 	struct descriptor_data *tmp;
 	int is_morphed = d->character ? IS_MORPH(d->character) : 0;
 	if (d && d->player_load_request_id)
@@ -3544,6 +3745,8 @@ void close_socket(struct descriptor_data *d)
 	/* Free WebSocket fragment buffer if any */
 	websocket_free(d);
 	telnet_free_output(d);
+	if (d->msp_group_output)
+		FREE(d->msp_group_output);
 
 	if (d)
 	{
@@ -4475,6 +4678,8 @@ int process_output(P_desc t)
 		}
 
 		AnsiString abuf(buf);
+		if (t->term_type == TERM_GENERIC)
+			abuf.colorize(0);
 		abuf.term(buf, t->character && PLR3_FLAGGED(t->character, PLR3_UNDERLINE) ?
 				       TL_UNDERLINE :
 				       TL_BLINK);
@@ -4640,7 +4845,8 @@ static void note_player_input_activity(P_desc t, const char *input)
 		return;
 
 	t->character->specials.timer = 0;
-	REMOVE_BIT(t->character->specials.act, PLR_AFK);
+	if (!input_is_afk_toggle(input))
+		REMOVE_BIT(t->character->specials.act, PLR_AFK);
 }
 
 static void process_line(P_desc t, char *in)

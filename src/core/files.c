@@ -8,6 +8,7 @@
  * ***************************************************************************
  */
 
+#include "combat/trap_legacy.h"
 #include "core/prototypes.h"
 #include "world/difficulty.h"
 #include "core/structs.h"
@@ -312,7 +313,10 @@ void event_short_affect(P_char, P_char, P_obj, void *);
 	 ((obj)->timer[2] == (control)->timer[2]) && ((obj)->timer[3] == (control)->timer[3]) && \
 	 ((obj)->wear_flags == (control)->wear_flags) && ((obj)->weight == (control)->weight) && \
 	 ((obj)->material == (control)->material) && ((obj)->cost == (control)->cost) &&         \
-	 ((obj)->type == (control)->type))
+	 ((obj)->type == (control)->type) && ((obj)->trap_eff == (control)->trap_eff) &&         \
+	 ((obj)->trap_dam == (control)->trap_dam) &&                                             \
+	 ((obj)->trap_charge == (control)->trap_charge) &&                                       \
+	 ((obj)->trap_level == (control)->trap_level))
 
 /*
  * following are functions that write data to disk (or prepare data for
@@ -529,7 +533,8 @@ ulong ObjUniqueFlags(P_obj obj, P_obj control)
 	if (obj->type != control->type)
 		flag |= O_U_TYPE;
 
-	if (obj->trap_charge != control->trap_charge)
+	if (obj->trap_eff != control->trap_eff || obj->trap_dam != control->trap_dam ||
+	    obj->trap_charge != control->trap_charge || obj->trap_level != control->trap_level)
 		flag |= O_U_TRAP;
 
 	if (obj->wear_flags != control->wear_flags)
@@ -1612,8 +1617,7 @@ void delete_character(P_char ch, bool delete_locker,
 				    done(character_delete_result::refused);
 				    return;
 			    }
-			    // The ship's stored rows and Redis key follow its deleted row.
-			    sql_delete_ship(deleted.name.c_str());
+			    // Runtime cleanup also forgets unplaced rows and their proof/snapshot.
 			    done(forget_deleted_character(deleted));
 		    }))
 		done(character_delete_result::refused);
@@ -1795,7 +1799,7 @@ int restoreStatus(char *buf, P_char ch)
 	if (stat_vers > 38)
 		ch->player.spec = GET_BYTE(buf);
 
-	if (IS_MULTICLASS_PC(ch))
+	if (IS_MULTICLASS_PC(ch) || ch->player.spec > MAX_SPEC)
 	{
 		ch->player.spec = 0;
 	}
@@ -2120,6 +2124,9 @@ int restoreStatus(char *buf, P_char ch)
 	ch->points.max_mana = ch->points.base_mana + calculate_mana(ch);
 	ch->points.max_vitality = vitality_limit(ch);
 
+	// Legacy pfiles contain no accepted origin or replacement entitlement.
+	ch->only.pc->quest_origin_room = 0;
+	ch->only.pc->quest_replacement_due = 0;
 	if (stat_vers > 41)
 	{
 		ch->only.pc->quest_active = GET_INTE(buf);
@@ -2145,6 +2152,7 @@ int restoreStatus(char *buf, P_char ch)
 int restoreAffects(char *buf, P_char ch)
 {
 	struct affected_type af;
+	struct affected_type *previous_affects = ch->affected;
 	char *start = buf;
 	short count;
 	long short_duration;
@@ -2248,6 +2256,17 @@ int restoreAffects(char *buf, P_char ch)
 				  &af.type, sizeof(af.type));
 		}
 	}
+	/* affect_to_char prepends; restore the saved order within the new prefix. */
+	struct affected_type *restored = ch->affected;
+	struct affected_type *ordered = previous_affects;
+	while (restored != previous_affects)
+	{
+		struct affected_type *next = restored->next;
+		restored->next = ordered;
+		ordered = restored;
+		restored = next;
+	}
+	ch->affected = ordered;
 	affect_total(ch, FALSE);
 
 	/*
@@ -2646,11 +2665,44 @@ P_obj restoreObjects(char *buf, P_char ch, int not_room)
 	::byte o_f_flag;
 	/* Deprecated item-format field; the read advances the cursor. */
 	[[maybe_unused]] ::byte dummy_byte;
-	int tmp, count, i, loc, obj_count = 0, V_num, i_count, ignore = 0;
+	int tmp, count, i, loc, obj_count = 0, V_num, i_count;
 	struct extra_descr_data *t_desc;
 	static struct obj_data d_obj; // dummy object
 	ulong o_u_flag;
 	P_obj root_obj = NULL;
+	// Each open list retains its container and nearest surviving parent.
+	std::vector<std::pair<P_obj, P_obj>> containers;
+
+	// Place only complete subtrees: cached saved weights must not decide nesting.
+	auto place_object = [&](P_obj item, P_obj parent)
+	{
+#ifdef _PFILE_
+		if (parent)
+		{
+			item->loc_p = LOC_INSIDE;
+			item->loc.inside = parent;
+		}
+		obj_to_char(item, ch);
+#else
+		if (IS_SET(item->extra_flags, ITEM_PROCLIB) &&
+		    (NULL == get_scheduled(item, proclib_obj_event)))
+			add_event(proclib_obj_event, PULSE_MOBILE + number(-4, 4), NULL, NULL, item,
+				  0, NULL, 0);
+
+		if (parent &&
+		    (parent->type == ITEM_QUIVER || !ch ||
+		     GET_OBJ_WEIGHT(item) + container_total_weight(parent) <= parent->value[0]))
+			obj_to_obj_at_end(item, parent);
+		else if (ch)
+			obj_to_char_at_end(item, ch);
+		else
+		{
+			obj_to_room(item, corpse_room);
+			if (not_room && item->type != ITEM_CORPSE)
+				writeSavedItem(item);
+		}
+#endif
+	};
 
 	obj_vers = (int)GET_BYTE(buf);
 	if (obj_vers > SAV_ITEMVERS)
@@ -2692,7 +2744,7 @@ P_obj restoreObjects(char *buf, P_char ch, int not_room)
 
 		if (o_f_flag & O_F_EOL)
 		{
-			if (!c_obj && !ignore)
+			if (containers.empty())
 			{ /*
 			   * end of the whole list
 			   */
@@ -2713,15 +2765,14 @@ P_obj restoreObjects(char *buf, P_char ch, int not_room)
 				}
 				return root_obj ? root_obj : (P_obj)1;
 			}
-			if (!ignore)
+			obj = containers.back().first;
+			c_obj = containers.back().second;
+			containers.pop_back();
+			if (obj)
 			{
-				if (OBJ_INSIDE(c_obj))
-					c_obj = c_obj->loc.inside;
-				else
-					c_obj = NULL;
+				recalc_container_weight(obj);
+				place_object(obj, c_obj);
 			}
-			else
-				ignore--;
 
 			continue;
 		}
@@ -2737,13 +2788,6 @@ P_obj restoreObjects(char *buf, P_char ch, int not_room)
 			obj = &d_obj;
 			bzero(obj, sizeof(struct obj_data));
 			dummy_obj = TRUE;
-
-			/*
-			 * have to fudge, if we can't load a container, we have to
-			 * keep track or the list will end prematurely.
-			 */
-			if (o_f_flag & O_F_CONTAINS)
-				ignore++;
 		}
 
 		obj->g_key = 1;
@@ -3022,48 +3066,20 @@ P_obj restoreObjects(char *buf, P_char ch, int not_room)
 		{
 			do
 			{
-#ifdef _PFILE_
-				if (c_obj)
+				normalize_legacy_trap(obj, OBJ_VNUM(obj));
+				if (!(o_f_flag & O_F_CONTAINS))
 				{
-					obj->loc_p = LOC_INSIDE;
-					obj->loc.inside = c_obj;
+					recalc_container_weight(obj);
+					place_object(obj, c_obj);
 				}
-
-				obj_to_char(obj, ch);
-#else
-				if (IS_SET(obj->extra_flags, ITEM_PROCLIB) &&
-				    (NULL == get_scheduled(obj, proclib_obj_event)))
-				{
-					add_event(proclib_obj_event, PULSE_MOBILE + number(-4, 4),
-						  NULL, NULL, obj, 0, NULL, 0);
-				}
-
-				if (c_obj && (c_obj->type == ITEM_QUIVER || !ch))
-					obj_to_obj_at_end(obj, c_obj);
-				else if (c_obj && ((GET_OBJ_WEIGHT(obj) + GET_OBJ_WEIGHT(c_obj) <=
-						    c_obj->value[0]) ||
-						   !ch))
-				{
-					obj_to_obj_at_end(obj, c_obj);
-				}
-				else
-				{
-					if (ch)
-						obj_to_char_at_end(obj, ch);
-					else
-					{
-						obj_to_room(obj, corpse_room);
-						if (not_room)
-							if (obj->type != ITEM_CORPSE)
-								writeSavedItem(obj);
-					}
-				}
-#endif
 				if (--i_count)
 					obj = read_object(V_num, VIRTUAL);
 			} while (i_count);
-
-			if (o_f_flag & O_F_CONTAINS)
+		}
+		if (o_f_flag & O_F_CONTAINS)
+		{
+			containers.emplace_back(dummy_obj ? nullptr : obj, c_obj);
+			if (!dummy_obj)
 				c_obj = obj;
 		}
 	}
@@ -3383,6 +3399,7 @@ P_obj read_one_object(char *read_buf)
 		}
 	}
 
+	normalize_legacy_trap(obj, OBJ_VNUM(obj));
 #ifndef _PFILE_
 	if (IS_SET(obj->extra_flags, ITEM_PROCLIB) &&
 	    (NULL == get_scheduled(obj, proclib_obj_event)))

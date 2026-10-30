@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 
-from _paths import SRC, rel
+from _paths import HARNESS_STUBS, SRC, rel
 import os
 import contextlib
 import fcntl
@@ -39,7 +39,7 @@ with lock as publication:
         binary = temporary_path / "flatfile_player_test"
         compile_result = subprocess.run(
             [
-                "g++",
+                "g++", str(HARNESS_STUBS),
                 "-std=c++20",
                 "-Wall",
                 "-Wextra",
@@ -54,6 +54,9 @@ with lock as publication:
                 rel("player_load_topology.c"),
                 rel("flatfile_identity_repository.c"),
                 rel("flatfile_item_repository.c"),
+                rel("divine_trade.c"), rel("divine_trade_command.c"),
+                rel("divine_trade_flatfile.c"), rel("flatfile_ship_repository.c"),
+                rel("flatfile_cargo_repository.c"),
                 rel("item_claim.c"),
                 rel("dupe_log.c"),
                 rel("flatfile_collector_repository.c"),
@@ -76,10 +79,10 @@ with lock as publication:
                 rel("item_transfer_command.c"),
                 rel("shop_trade_command.c"),
                 rel("critical_command.c"),
-                rel("epic_command.c"),
+                rel("epic_command.c"), rel("zone_touch_command.c"),
                 rel("currency_command.c"),
                 rel("auction_command.c"),
-                rel("combat_outcome_command.c"),
+                rel("combat_outcome_command.c"), rel("artifact_guild_command.c"),
                 rel("boon_reward_command.c"),
                 rel("boon_shop_command.c"),
                 rel("persistence_observability.c"),
@@ -112,19 +115,21 @@ with lock as publication:
         state_root = temporary_path / "state"
         run_result = subprocess.run(
             [str(binary), str(state_root)],
-            cwd=ROOT,
+            cwd=temporary_path,
             text=True,
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
         )
         if run_result.returncode:
             raise SystemExit(run_result.stdout)
+        if not (temporary_path / "logs/log/item_claims").is_file():
+            raise SystemExit("player repository claims were not logged in the isolated runtime")
 
         domain_source = (SRC / "flatfile_player_domain_repository.c").read_text()
         player_source = (SRC / "flatfile_player_repository.c").read_text()
         materialize_source = (SRC / "player_load_materialize.c").read_text()
         for token in (
-            "constexpr uint32_t domain_format_version = 3",
+            "constexpr uint32_t domain_format_version = 4",
             "base_stat_revision",
             "record.domains.base_stats",
             "format_version >= 3",

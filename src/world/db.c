@@ -9,6 +9,7 @@
  * ***************************************************************************
  */
 
+#include "combat/trap.h"
 #include "core/prototypes.h"
 #include "player/news.h"
 #include "player/player_save_pipeline.h"
@@ -2993,6 +2994,10 @@ object_template parse_object_template(int nr)
 		obj->trap_charge = tmp;
 		REQUIRED_FSCANF(obj_f, " %d \n", &tmp);
 		obj->trap_level = tmp;
+		if (!trap_configuration_valid(obj_index[nr].virtual_number, obj->trap_dam,
+					      obj->trap_level))
+			logit(LOG_STATUS, "Object %d has unsupported trap damage type %d.",
+			      obj_index[nr].virtual_number, obj->trap_dam);
 	}
 	/* ensure builders dont mess things up */
 	if (IS_SET(obj->wear_flags, ITEM_TAKE) && !IS_SET(obj->wear_flags, ITEM_HOLD))
@@ -3103,8 +3108,9 @@ static void stage_artifact_population()
 			auto prototype = parse_object_template(index);
 			const int vnum = obj_index[index].virtual_number;
 			prototypes.push_back({ vnum, prototype.extra_flags });
-			// Reports need prototype values, never a temporary gameplay object.
-			if ((prototype.extra_flags & ITEM_ARTIFACT) ||
+			// Reports and bag accounting need immutable values, never temporary objects.
+			if (prototype.type == ITEM_CONTAINER ||
+			    (prototype.extra_flags & ITEM_ARTIFACT) ||
 			    saved_artifacts.count(vnum) || artifact_tracks_vnum(vnum))
 				object_templates.try_emplace(vnum, std::move(prototype));
 		}
@@ -3332,6 +3338,81 @@ void no_reset_zone_reset(int zone_number)
 		add_event(event_reset_zone, WAIT_MIN * 60, 0, 0, 0, 0, &zone_number,
 			  sizeof(zone_number));
 		sql_set_zone_reset_perc(zone.number, zone.reset_perc + 1);
+	}
+}
+
+// Castle keys are single-use and limited to one live copy. A surviving carrier
+// is not restocked, so only relock a gate when its source can supply the key.
+// Run after the reset rows: the castle's doors precede its mobile/item loads.
+static void restore_castle_reset_access(int zone)
+{
+	if (zone_table[zone].number != 24)
+		return;
+
+	bool occupied = false;
+	for (P_char ch = character_list; ch; ch = ch->next)
+		if ((!IS_NPC(ch) || IS_MORPH(ch)) && ch->in_room >= 0 &&
+		    ch->in_room <= top_of_world && world[ch->in_room].zone == zone)
+		{
+			occupied = true;
+			break;
+		}
+
+	static const struct
+	{
+		int key, carrier, home, room, direction, other_room;
+	} gates[] = {
+		{ 2405, 2406, 2427, 2414, DIR_DOWN, 2415 },
+		{ 2418, 2415, 2439, 2427, DIR_UP, 2428 },
+		{ 2422, 2418, 2452, 2446, DIR_WEST, 2448 },
+		{ 2425, 2419, 2456, 2460, DIR_UP, 2461 },
+		{ 2436, 2433, 2481, 2471, DIR_NORTH, 2479 },
+		{ 2437, 2420, 2477, 2480, DIR_NORTH, 2488 },
+		{ 2438, 2428, 2493, 2480, DIR_SOUTH, 2498 },
+		{ 2402, 2401, 2401, 2401, DIR_NORTH, 2402 },
+	};
+	for (const auto &gate : gates)
+	{
+		// The durable entrance key keeps its ordinary empty-zone policy. Include
+		// the entrance when a player body remains, or the internal escape route
+		// would still end at a locked outer door. Linkdead bodies count too.
+		if (gate.key == 2402 && !occupied)
+			continue;
+
+		const int room = real_room(gate.room);
+		const int other_room = real_room(gate.other_room);
+		if (room < 0 || other_room < 0 || world[room].zone != zone ||
+		    world[other_room].zone != zone)
+			continue;
+		auto *exit = world[room].dir_option[gate.direction];
+		auto *back = world[other_room].dir_option[rev_dir[gate.direction]];
+		if (!exit || !back || exit->to_room != other_room || back->to_room != room ||
+		    exit->key != gate.key || back->key != gate.key)
+			continue;
+
+		bool supplied = false;
+		const int home = real_room(gate.home);
+		if (!occupied && home >= 0)
+			for (P_char mob = world[home].people; mob; mob = mob->next_in_room)
+			{
+				if (!IS_NPC(mob) || !IS_ALIVE(mob) ||
+				    mob_index[GET_RNUM(mob)].virtual_number != gate.carrier)
+					continue;
+				for (P_obj obj = mob->carrying; obj; obj = obj->next_content)
+					if (OBJ_VNUM(obj) == gate.key)
+						supplied = true;
+				// has_key() checks HOLD only; key 2437 is worn on the neck.
+				for (int slot = 0; slot <= CUR_MAX_WEAR; ++slot)
+					if (mob->equipment[slot] &&
+					    OBJ_VNUM(mob->equipment[slot]) == gate.key)
+						supplied = true;
+			}
+		if (supplied)
+			continue;
+
+		// A secret but unlocked door is still unusable through open/movement.
+		REMOVE_BIT(exit->exit_info, EX_LOCKED | EX_SECRET);
+		REMOVE_BIT(back->exit_info, EX_LOCKED | EX_SECRET);
 	}
 }
 
@@ -4132,6 +4213,8 @@ void reset_zone(int zone, int force_item_repop)
 		else
 			last_cmd = 0;
 	}
+
+	restore_castle_reset_access(zone);
 
 	if (zone_table[zone].lifespan_min != zone_table[zone].lifespan_max)
 		zone_table[zone].lifespan =

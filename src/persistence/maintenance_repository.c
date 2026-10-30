@@ -13,6 +13,8 @@
  ****************************************************************************/
 
 #include "persistence/maintenance_repository.h"
+#include "economy/divine_boon_repository.h"
+#include "economy/divine_trade_repository.h"
 
 #include "combat/frag_cap_config.h"
 #include "core/defines.h"
@@ -475,6 +477,20 @@ struct boon_scan_row
 
 maintenance_result execute_boon_scan(MYSQL *connection, const maintenance_request &request)
 {
+	// Restored requests bypass new game-thread admission. Retire them before
+	// parsing old payloads or changing any legacy definition in closed modes.
+	divine_boon_state state;
+	const auto loaded = divine_boon_sql_load(connection, &state);
+	if (loaded == divine_boon_store_result::ok && state.mode != divine_boon_mode::legacy)
+		return failure(request, maintenance_outcome::complete, 0);
+	if (loaded == divine_boon_store_result::not_found)
+		return failure(request, maintenance_outcome::retryable_failure, EAGAIN);
+	if (loaded != divine_boon_store_result::ok && loaded != divine_boon_store_result::not_found)
+		return failure(request,
+			       loaded == divine_boon_store_result::invalid ?
+				       maintenance_outcome::permanent_failure :
+				       maintenance_outcome::retryable_failure,
+			       loaded == divine_boon_store_result::invalid ? EBADMSG : EIO);
 	if (request.value_count < 3 || request.values[0] <= 0 || request.values[1] < 0)
 		return failure(request, maintenance_outcome::permanent_failure, EINVAL);
 	const size_t epic_records = static_cast<size_t>(request.values[1]);
@@ -507,6 +523,19 @@ maintenance_result execute_boon_scan(MYSQL *connection, const maintenance_reques
 	}
 	if (!begin_transaction(connection))
 		return sql_failure(connection, request);
+	// The maintenance worker is independent of the player/state writer. Hold the
+	// authority row until scan commit, so a concurrent cutover either waits for
+	// this accepted scan or closes it before any legacy mutation can start.
+	const auto locked = divine_boon_sql_load(connection, &state, true);
+	if (locked != divine_boon_store_result::ok || state.mode != divine_boon_mode::legacy)
+	{
+		execute_sql(connection, "ROLLBACK");
+		return failure(request,
+			       locked == divine_boon_store_result::ok ?
+				       maintenance_outcome::complete :
+				       maintenance_outcome::retryable_failure,
+			       locked == divine_boon_store_result::ok ? 0 : EAGAIN);
+	}
 	const std::string selection =
 		"SELECT id,time,duration,racewar,opt,criteria,pid FROM boons WHERE active=1 AND id>" +
 		std::to_string(request.cursor) + " ORDER BY id LIMIT " + limit_sql(request);
@@ -669,18 +698,29 @@ maintenance_result execute_boon_scan(MYSQL *connection, const maintenance_reques
 maintenance_result execute_cargo_market(MYSQL *connection, const maintenance_request &request)
 {
 	constexpr size_t ports = 10;
-	constexpr size_t expected_values = 3 + ports * ports * 4;
-	if (request.value_count != expected_values || request.values[0] <= 0 ||
-	    (request.values[1] != 0 && request.values[1] != 1) ||
+	constexpr size_t legacy_values = 3 + ports * ports * 4;
+	constexpr size_t expected_values = legacy_values + 1;
+	if ((request.value_count != expected_values && request.value_count != legacy_values) ||
+	    (request.value_count == expected_values && request.values[legacy_values] < 0) ||
+	    request.values[0] <= 0 || (request.values[1] != 0 && request.values[1] != 1) ||
 	    (request.values[2] != 0 && request.values[2] != 1) ||
 	    (!request.values[1] && !request.values[2]) || request.row_budget < ports * ports)
 		return failure(request, maintenance_outcome::permanent_failure, EINVAL);
 	if (!begin_transaction(connection))
 		return sql_failure(connection, request);
+	uint64_t stored_generation = 0;
+	if (!divine_trade_sql_generation(connection, &stored_generation, true))
+		return sql_failure(connection, request);
+	const uint64_t captured_generation =
+		request.value_count == expected_values ?
+			static_cast<uint64_t>(request.values[legacy_values]) :
+			0;
 	bool already_applied = false;
 	if (!marker_matches_and_lock(connection, "maintenance_cargo", request.work_id, 0,
 				     &already_applied))
 		return sql_failure(connection, request);
+	if (stored_generation != captured_generation)
+		already_applied = true; // Retire restored old work without replacing market/timers.
 	if (!already_applied)
 	{
 		if (request.values[1])

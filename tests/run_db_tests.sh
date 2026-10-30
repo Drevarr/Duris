@@ -28,8 +28,10 @@ started=$SECONDS
 
 # Longest first.
 xargs -P "${TEST_DB_JOBS:-12}" -L 1 bash -c 'run_one "$@"' _ <<EOF
+player_pid_exhaustion $DB python3 tests/async/run_player_pid_exhaustion_journey.py --server $SERVER
 artifact_guild_reward_journey $DB python3 tests/async/test_mysql_artifact_guild_reward_journey.py --server $SERVER
 artifact_owner_restart $DB python3 tests/async/test_artifact_owner_restart_journey.py --backend mariadb --server $SERVER
+divine_boon_zone $DB python3 tests/async/test_divine_boon_zone_journey.py --backend mariadb --server $SERVER
 epic_training_journey $DB python3 tests/async/test_mysql_epic_training_journey.py --server $SERVER
 locker_grant_journey $DB python3 tests/async/test_mysql_locker_grant_journey.py --server $SERVER
 nexus_journey $DB python3 tests/async/test_mysql_nexus_journey.py --server $SERVER
@@ -44,9 +46,12 @@ world_capture $DB python3 tests/async/test_mysql_world_capture_journey.py --serv
 legacy_migration tests/async/run_legacy_migration_mysql.sh
 telemetry_repository $DB python3 tests/async/test_telemetry_repository.py --sql-fixture
 telemetry_schema_boot $DB python3 tests/async/run_telemetry_schema_boot_journey.py --server $SERVER
+telemetry_posthog_gameplay python3 tests/async/run_telemetry_player_journey.py --backend mariadb
 saved_item_allocator $DB python3 tests/async/run_saved_item_allocator_journey.py $SERVER
 mysql_combat $DB python3 tests/async/test_mysql_combat_journey.py --server $SERVER
+coin_denominations $DB python3 tests/async/test_mysql_coin_denomination_journey.py --server $SERVER
 flight_network $DB python3 tests/async/test_flight_network_journey.py --backend mariadb --server $SERVER
+death_level_projection $DB python3 tests/async/run_death_level_projection_journey.py --backend mariadb --binary $SERVER --output bin/tests/db/death-level-projection
 world_restart_copyover $DB python3 tests/async/run_world_restart_journey.py $SERVER copyover
 world_restart_midcapture $DB python3 tests/async/run_world_restart_journey.py $SERVER midcapture
 world_restart_clean $DB python3 tests/async/run_world_restart_journey.py $SERVER restart
@@ -62,10 +67,13 @@ migration_runner_engines python3 tests/async/run_migration_runner_engines.py
 corpse_haul $DB python3 tests/async/run_corpse_haul_journey.py $SERVER
 corpse_haul_count_cap $DB python3 tests/async/run_corpse_haul_count_cap_journey.py $SERVER mariadb
 corpse_trap_restart $DB python3 tests/async/test_corpse_trap_restart_journey.py $SERVER mariadb
+legacy_traps $DB python3 tests/async/test_legacy_trap_journey.py $SERVER mariadb
 information_cache $DB python3 tests/async/test_information_cache_journey.py --backend mariadb --server $SERVER
 deletion $DB python3 tests/async/run_mysql_deletion_journey.py --server $SERVER
 stalled_writer tests/async/run_mysql_stalled_writer_journey.sh
+private_chest_purchase $DB python3 tests/async/run_private_chest_purchase_mysql.py
 game_loop_queries $DB python3 tests/async/test_mysql_game_loop_queries_journey.py --server $SERVER
+last_command_journey $DB python3 tests/async/run_last_command_journey.py --server $SERVER
 bank_restart $DB python3 tests/async/run_mysql_bank_restart_journey.py $SERVER
 idle_timeout $DB python3 tests/async/run_mysql_idle_timeout_journey.py $SERVER
 address_retention $DB python3 tests/async/run_address_retention_journey.py $SERVER
@@ -99,17 +107,20 @@ critical_command_schema tests/async/run_critical_command_schema_mysql.sh
 combat_baseline_repair tests/async/run_combat_baseline_repair_mysql.sh
 collector_notification tests/async/run_collector_notification_mysql.sh
 boon_reward_zone $DB tests/async/run_boon_reward_zone_schema_mysql.sh
+divine_trade $DB tests/async/run_divine_trade_mysql.sh
 combat_outcome $DB tests/async/run_combat_outcome_schema_mysql.sh
 account_bank_delta tests/async/run_account_bank_delta_mysql.sh
 account_locker_conversion_check tests/async/run_account_locker_conversion_check_mysql.sh
 legacy_personal_locker_access_repair tests/async/run_legacy_personal_locker_access_repair_mysql.sh
 player_replacement_state tests/async/run_player_replacement_state_mysql.sh
 epic_transaction $DB tests/async/run_epic_transaction_schema_mysql.sh
+epic_stone_transaction $DB python3 tests/async/test_epic_stone_transaction.py
 auction_transaction $DB tests/async/run_auction_transaction_schema_mysql.sh
 auction_list $DB python3 tests/async/run_auction_list_journey.py --server $SERVER
 artifact_guild $DB tests/async/run_artifact_guild_schema_mysql.sh
 statistics $DB bash tests/async/run_statistics_mysql.sh
 session_audit $DB tests/async/run_session_audit_schema_mysql.sh
+last_command $DB python3 tests/async/test_last_command.py --mysql
 artifact_mana tests/async/run_artifact_mana_mysql.sh
 player_load_repository $DB tests/async/run_player_load_repository_mysql.sh
 character_rename_references $DB tests/async/run_character_rename_references_mysql.sh

@@ -38,6 +38,7 @@
 #include "world/map.h"
 #include "core/mm.h"
 #include "classes/necromancy.h"
+#include "player/pet_restore_runtime.h"
 #include "persistence/persistence_checkpoint.h"
 #include "item/objmisc.h"
 #include "item/random_equipment.h"
@@ -2137,7 +2138,51 @@ void spell_elemental_swarm(int level, P_char ch, char * /*arg*/, int /*type*/, P
 	group_add_member(ch, mob);
 }
 
-void spell_conjour_elemental(int level, P_char ch, char * /*arg*/, int /*type*/, P_char /*victim*/,
+const char *elemental_summon_failure_message(P_char ch, const char *arg, int spell)
+{
+	if ((spell != SPELL_CONJURE_ELEMENTAL && spell != SPELL_CONJURE_GREATER_ELEMENTAL) || !ch ||
+	    !IS_PC(ch) || !GET_SPEC(ch, CLASS_CONJURER, SPEC_FIRE) || !arg)
+		return NULL;
+	arg += strspn(arg, " \t\r\n");
+	if (!*arg)
+		return NULL;
+	const size_t length = strcspn(arg, " \t\r\n");
+	if (length == 6 && !strncasecmp(arg, "mephit", length) &&
+	    !arg[length + strspn(arg + length, " \t\r\n")])
+		return NULL;
+	return "Cast without an option for an elemental, or use only 'mephit'.\n";
+}
+
+static void make_fire_mephit(P_char mob)
+{
+	const bool greater = GET_VNUM(mob) != 1100;
+	REMOVE_BIT(mob->specials.affected_by2, AFF2_FIRESHIELD);
+	if (IS_SET(mob->only.npc->str_mask, STRUNG_KEYS))
+		str_free(mob->player.name);
+	if (IS_SET(mob->only.npc->str_mask, STRUNG_DESC1))
+		str_free(mob->player.long_descr);
+	if (IS_SET(mob->only.npc->str_mask, STRUNG_DESC2))
+		str_free(mob->player.short_descr);
+	if (IS_SET(mob->only.npc->str_mask, STRUNG_DESC3))
+		str_free(mob->player.description);
+	mob->player.name = str_dup(greater ? "greater fire mephit" : "fire mephit");
+	mob->player.short_descr = str_dup(greater ? "a greater fire mephit" : "a fire mephit");
+	mob->player.long_descr = str_dup(greater ? "A greater fire mephit waits here.\n" :
+						   "A fire mephit waits here.\n");
+	mob->player.description =
+		str_dup("A compact being of elemental fire watches you intently.\n");
+	SET_BIT(mob->only.npc->str_mask, STRUNG_KEYS | STRUNG_DESC1 | STRUNG_DESC2 | STRUNG_DESC3);
+}
+
+static void schedule_elemental_death(P_char mob, int delay)
+{
+	if (mob->only.npc->summon_kind)
+		schedule_pet_death(mob, delay);
+	else
+		add_event(event_pet_death, delay, mob, NULL, NULL, 0, NULL, 0);
+}
+
+void spell_conjour_elemental(int level, P_char ch, char *arg, int /*type*/, P_char /*victim*/,
 			     P_obj /*obj*/)
 {
 	P_char mob;
@@ -2158,6 +2203,14 @@ void spell_conjour_elemental(int level, P_char ch, char * /*arg*/, int /*type*/,
 	{
 		return;
 	}
+	if (const char *failure =
+		    elemental_summon_failure_message(ch, arg, SPELL_CONJURE_ELEMENTAL))
+	{
+		send_to_char(failure, ch);
+		return;
+	}
+	const bool mephit = IS_PC(ch) && GET_SPEC(ch, CLASS_CONJURER, SPEC_FIRE) && arg &&
+			    *skip_spaces(arg);
 
 	if (IS_PC_PET(ch))
 	{
@@ -2228,6 +2281,8 @@ void spell_conjour_elemental(int level, P_char ch, char * /*arg*/, int /*type*/,
 	}
 
 	GET_SIZE(mob) = SIZE_MEDIUM;
+	if (mephit)
+		make_fire_mephit(mob);
 	mob->player.m_class = CLASS_WARRIOR;
 
 	char_to_room(mob, room, 0);
@@ -2297,6 +2352,10 @@ void spell_conjour_elemental(int level, P_char ch, char * /*arg*/, int /*type*/,
 		mob->points.damsizedice = (int)(0.8 * mob->points.damsizedice);
 	}
 
+	if (IS_PC(ch) && GET_SPEC(ch, CLASS_CONJURER, SPEC_FIRE))
+		summoned_pet_mark(mob, mephit ? summoned_pet_kind::conjured_fire_mephit :
+						summoned_pet_kind::conjured_fire_elemental);
+
 	if (IS_PC(ch) && GET_LEVEL(mob) > GET_LEVEL(ch) &&
 	    charisma <
 		    number(10, (int)(get_property("summon.lesser.elemental.charisma", 140.000))) &&
@@ -2306,8 +2365,7 @@ void spell_conjour_elemental(int level, P_char ch, char * /*arg*/, int /*type*/,
 		    mob, TO_ROOM);
 		act("$N is NOT pleased with you at all!", TRUE, ch, 0, mob, TO_CHAR);
 		// Poof in 5-10 sec.
-		add_event(event_pet_death, (4 + number(1, 6)) * WAIT_SEC, mob, NULL, NULL, 0, NULL,
-			  0);
+		schedule_elemental_death(mob, (4 + number(1, 6)) * WAIT_SEC);
 		MobStartFight(mob, ch);
 	}
 	else
@@ -2321,8 +2379,7 @@ void spell_conjour_elemental(int level, P_char ch, char * /*arg*/, int /*type*/,
 		if (duration >= 0)
 		{
 			duration += number(1, 10);
-			add_event(event_pet_death, (duration + 1) * 60 * 4, mob, NULL, NULL, 0,
-				  NULL, 0);
+			schedule_elemental_death(mob, (duration + 1) * 60 * 4);
 		}
 	}
 }
@@ -2650,7 +2707,7 @@ int conjure_terrain_check(P_char ch, P_char mob)
 	return 0;
 }
 
-void conjure_specialized(P_char ch, [[maybe_unused]] int level)
+void conjure_specialized(P_char ch, [[maybe_unused]] int level, bool mephit)
 {
 	P_char mob;
 	int summoned, room;
@@ -2723,6 +2780,8 @@ void conjure_specialized(P_char ch, [[maybe_unused]] int level)
 		return;
 	}
 
+	if (mephit)
+		make_fire_mephit(mob);
 	char_to_room(mob, room, 0);
 	act(summons[ch->player.spec - 1], TRUE, mob, 0, 0, TO_ROOM);
 
@@ -2814,6 +2873,10 @@ void conjure_specialized(P_char ch, [[maybe_unused]] int level)
 		}
 	}
 
+	if (IS_PC(ch) && GET_SPEC(ch, CLASS_CONJURER, SPEC_FIRE))
+		summoned_pet_mark(mob, mephit ? summoned_pet_kind::conjured_fire_mephit :
+						summoned_pet_kind::conjured_fire_elemental);
+
 	if (IS_PC(ch) && !IS_TRUSTED(ch) && !(has_air_staff_arti(ch)) &&
 	    charisma <
 		    number(10, (int)(get_property("summon.greater.elemental.charisma", 140.000))))
@@ -2822,8 +2885,7 @@ void conjure_specialized(P_char ch, [[maybe_unused]] int level)
 		    mob, TO_ROOM);
 		act("$N is NOT pleased with you at all!", TRUE, ch, 0, mob, TO_CHAR);
 		// Poof in 5-10 sec.
-		add_event(event_pet_death, (4 + number(1, 6)) * WAIT_SEC, mob, NULL, NULL, 0, NULL,
-			  0);
+		schedule_elemental_death(mob, (4 + number(1, 6)) * WAIT_SEC);
 		MobStartFight(mob, ch);
 	}
 	else
@@ -2854,13 +2916,12 @@ void conjure_specialized(P_char ch, [[maybe_unused]] int level)
 		if (duration >= 0)
 		{
 			duration += number(1, 10);
-			add_event(event_pet_death, (duration + 1) * 60 * 4, mob, NULL, NULL, 0,
-				  NULL, 0);
+			schedule_elemental_death(mob, (duration + 1) * 60 * 4);
 		}
 	}
 }
 
-void spell_conjour_greater_elemental(int level, P_char ch, char * /*arg*/, int /*type*/,
+void spell_conjour_greater_elemental(int level, P_char ch, char *arg, int /*type*/,
 				     P_char /*victim*/, P_obj /*obj*/)
 {
 	P_char mob;
@@ -2880,6 +2941,14 @@ void spell_conjour_greater_elemental(int level, P_char ch, char * /*arg*/, int /
 	{
 		return;
 	}
+	if (const char *failure =
+		    elemental_summon_failure_message(ch, arg, SPELL_CONJURE_GREATER_ELEMENTAL))
+	{
+		send_to_char(failure, ch);
+		return;
+	}
+	const bool mephit = IS_PC(ch) && GET_SPEC(ch, CLASS_CONJURER, SPEC_FIRE) && arg &&
+			    *skip_spaces(arg);
 
 	if (IS_PC_PET(ch))
 	{
@@ -2911,7 +2980,7 @@ void spell_conjour_greater_elemental(int level, P_char ch, char * /*arg*/, int /
 
 	if (GET_CLASS(ch, CLASS_CONJURER) && IS_SPECIALIZED(ch))
 	{
-		conjure_specialized(ch, level);
+		conjure_specialized(ch, level, mephit);
 		return;
 	}
 
@@ -3167,15 +3236,13 @@ void spell_earthen_maul(int level, P_char ch, char * /*arg*/, int /*type*/, P_ch
 	if ((dam_flag == 1) && !OUTSIDE(ch))
 		dam_flag = 3;
 
-	if (ch->specials.z_cord != 0)
-		dam_flag = 0;
+	/* Conjure the needed earth when terrain/altitude supplies none. Do this
+	 * after the indoor upgrade so earthless rooms keep the normal tier. */
+	if (ch->specials.z_cord != 0 || dam_flag == 0)
+		dam_flag = 1;
 
 	switch (dam_flag)
 	{
-	case 0:
-		send_to_char("No earth to move here, try a different spell.\n", ch);
-		return;
-		break;
 	case 1:
 		messages.attacker = "&+yYou cause the &+yEARTH to reach up and maul your opponent!";
 		messages.victim = messages.room =
@@ -3441,7 +3508,10 @@ void spell_fireball(int level, P_char ch, char * /*arg*/, int /*type*/, P_char v
 	if (!NewSaves(victim, SAVING_SPELL, mod))
 		dam = (int)(dam * 2);
 
-	spell_damage(ch, victim, dam, SPLDAM_FIRE, SPLDAM_GLOBE, &messages);
+	uint flags = SPLDAM_GLOBE;
+	if (IS_PC(ch) && GET_SPEC(ch, CLASS_CONJURER, SPEC_FIRE) && GET_LEVEL(ch) >= 51)
+		flags = 0;
+	spell_damage(ch, victim, dam, SPLDAM_FIRE, flags, &messages);
 }
 
 /*
@@ -4684,10 +4754,57 @@ void spell_siren_song(int /*level*/, P_char ch, char * /*arg*/, int /*type*/, P_
 	}
 }
 
+const char *elemental_form_failure_message(P_char ch, P_char victim, int spell)
+{
+	int spec = 0;
+	switch (spell)
+	{
+	case SPELL_EARTH_FORM:
+		spec = SPEC_EARTH;
+		break;
+	case SPELL_FIRE_FORM:
+		spec = SPEC_FIRE;
+		break;
+	case SPELL_WATER_FORM:
+		spec = SPEC_WATER;
+		break;
+	case SPELL_AIR_FORM:
+	case SPELL_ELEMENTAL_AURA:
+	case SPELL_FIRE_AURA:
+		break;
+	default:
+		return NULL;
+	}
+
+	if (!ch || !victim)
+		return "You must target yourself to assume an elemental form.\n";
+	if (spec && (ch != victim || IS_NPC(ch) || !GET_SPEC(ch, CLASS_CONJURER, spec)))
+		return "Only the matching Magus can assume this form, and only on themselves.\n";
+
+	if (affected_by_spell(victim, SPELL_AIR_FORM) ||
+	    affected_by_spell(victim, SPELL_EARTH_FORM) ||
+	    affected_by_spell(victim, SPELL_FIRE_FORM) ||
+	    affected_by_spell(victim, SPELL_WATER_FORM))
+		return "An elemental form already surrounds you.\n";
+
+	if ((spec || spell == SPELL_AIR_FORM) &&
+	    (affected_by_spell(victim, SPELL_ELEMENTAL_AURA) ||
+	     affected_by_spell(victim, SPELL_FIRE_AURA) ||
+	     IS_AFFECTED2(victim,
+			  AFF2_EARTH_AURA | AFF2_WATER_AURA | AFF2_FIRE_AURA | AFF2_AIR_AURA) ||
+	     IS_AFFECTED4(victim, AFF4_ICE_AURA)))
+		return "An elemental aura already surrounds you.\n";
+
+	return NULL;
+}
+
 const char *elemental_aura_failure_message(P_char ch)
 {
 	if (!ch || ch->in_room < 0 || ch->in_room > top_of_world)
 		return "There is no elemental planar essence here to draw upon.\n";
+
+	if (const char *failure = elemental_form_failure_message(ch, ch, SPELL_ELEMENTAL_AURA))
+		return failure;
 
 	if (affected_by_spell(ch, SPELL_ELEMENTAL_AURA) || IS_AFFECTED2(ch, AFF2_EARTH_AURA) ||
 	    IS_AFFECTED2(ch, AFF2_WATER_AURA) || IS_AFFECTED2(ch, AFF2_FIRE_AURA) ||
@@ -5175,6 +5292,8 @@ void spell_dimension_door(int level, P_char ch, char * /*arg*/, int /*type*/, P_
 
 	if (GET_SPEC(ch, CLASS_SORCERER, SPEC_SHADOW))
 		CharWait(ch, WAIT_SEC);
+	else if (IS_PC(ch) && GET_SPEC(ch, CLASS_CONJURER, SPEC_AIR))
+		CharWait(ch, WAIT_SEC * 3);
 	else if (IS_PC(ch))
 		CharWait(ch, WAIT_SEC * 9);
 	else
@@ -5362,6 +5481,8 @@ void spell_relocate(int /*level*/, P_char ch, char * /*arg*/, int /*type*/, P_ch
 
 	if (GET_SPEC(ch, CLASS_SORCERER, SPEC_SHADOW))
 		CharWait(ch, 4);
+	else if (IS_PC(ch) && GET_SPEC(ch, CLASS_CONJURER, SPEC_AIR))
+		CharWait(ch, WAIT_SEC * 5);
 	else if (IS_PC(ch))
 		CharWait(ch, 80);
 	else
@@ -8195,18 +8316,20 @@ void spell_group_haste(int level, P_char ch, char * /*arg*/, int /*type*/, P_cha
 	}
 }
 
+static bool has_other_skin_spell(P_char ch)
+{
+	return affected_by_spell(ch, SPELL_SHADOW_SHIELD) ||
+	       affected_by_spell(ch, SPELL_BIOFEEDBACK) || IS_AFFECTED(ch, AFF_BIOFEEDBACK) ||
+	       affected_by_spell(ch, SPELL_IRONWOOD) || affected_by_spell(ch, SPELL_VINES) ||
+	       IS_AFFECTED5(ch, AFF5_VINES) || affected_by_spell(ch, SPELL_ICE_ARMOR) ||
+	       affected_by_spell(ch, SPELL_NEG_ARMOR) ||
+	       affected_by_spell(ch, SPELL_DRAKESCALE_AEGIS);
+}
+
 bool has_skin_spell(P_char ch)
 {
-	if (!affected_by_spell(ch, SPELL_STONE_SKIN) && !IS_AFFECTED(ch, AFF_STONE_SKIN) &&
-	    !affected_by_spell(ch, SPELL_SHADOW_SHIELD) &&
-	    !affected_by_spell(ch, SPELL_BIOFEEDBACK) && !IS_AFFECTED(ch, AFF_BIOFEEDBACK) &&
-	    !affected_by_spell(ch, SPELL_IRONWOOD) && !affected_by_spell(ch, SPELL_VINES) &&
-	    !IS_AFFECTED5(ch, AFF5_VINES) && !affected_by_spell(ch, SPELL_ICE_ARMOR) &&
-	    !affected_by_spell(ch, SPELL_NEG_ARMOR) &&
-	    !affected_by_spell(ch, SPELL_DRAKESCALE_AEGIS))
-		return false;
-	else
-		return true;
+	return affected_by_spell(ch, SPELL_STONE_SKIN) || IS_AFFECTED(ch, AFF_STONE_SKIN) ||
+	       has_other_skin_spell(ch);
 }
 #define MACE_OF_EARTH_VNUM 23805
 void spell_stone_skin(int level, P_char ch, char * /*arg*/, [[maybe_unused]] int type,
@@ -8214,8 +8337,14 @@ void spell_stone_skin(int level, P_char ch, char * /*arg*/, [[maybe_unused]] int
 {
 	struct affected_type af;
 	int absorb = (level / 4) + number(1, 4);
+	int layers = 0;
 
-	if (!has_skin_spell(victim))
+	if (IS_PC(victim) && GET_SPEC(victim, CLASS_CONJURER, SPEC_EARTH))
+		for (struct affected_type *layer = victim->affected; layer; layer = layer->next)
+			if (layer->type == SPELL_STONE_SKIN)
+				layers++;
+
+	if (!has_skin_spell(victim) || (layers > 0 && layers < 3 && !has_other_skin_spell(victim)))
 	{
 		if (has_innate(ch, INNATE_LIVING_STONE) ||
 		    (victim->equipment[WIELD] &&
@@ -9989,10 +10118,99 @@ void spell_deflect(int /*level*/, P_char ch, char * /*arg*/, [[maybe_unused]] in
 	}
 }
 
-void spell_air_form(int /*level*/, P_char /*ch*/, char * /*arg*/, [[maybe_unused]] int type,
+void spell_earth_form(int /*level*/, P_char ch, char * /*arg*/, int /*type*/, P_char victim,
+		      P_obj /*obj*/)
+{
+	if (const char *failure = elemental_form_failure_message(ch, victim, SPELL_EARTH_FORM))
+	{
+		send_to_char(failure, ch);
+		return;
+	}
+
+	struct affected_type af = {};
+	af.type = SPELL_EARTH_FORM;
+	af.duration = 8;
+	af.bitvector2 = AFF2_EARTH_AURA;
+	affect_to_char(victim, &af);
+	act("Your body hardens into living stone.", FALSE, ch, 0, 0, TO_CHAR);
+	act("$n's body hardens into living stone.", FALSE, ch, 0, 0, TO_ROOM);
+}
+
+void spell_fire_form(int /*level*/, P_char ch, char * /*arg*/, int /*type*/, P_char victim,
+		     P_obj /*obj*/)
+{
+	if (const char *failure = elemental_form_failure_message(ch, victim, SPELL_FIRE_FORM))
+	{
+		send_to_char(failure, ch);
+		return;
+	}
+
+	struct affected_type af = {};
+	af.type = SPELL_FIRE_FORM;
+	af.duration = 8;
+	af.bitvector2 = AFF2_FIRE_AURA | AFF2_FIRESHIELD;
+	af.location = APPLY_AC;
+	af.modifier = -15;
+	affect_to_char(victim, &af);
+
+	af.bitvector2 = 0;
+	af.location = APPLY_STR_MAX;
+	af.modifier = 15;
+	affect_to_char(victim, &af);
+	af.location = APPLY_DEX_MAX;
+	af.modifier = -20;
+	affect_to_char(victim, &af);
+	af.location = APPLY_AGI_MAX;
+	af.modifier = -20;
+	affect_to_char(victim, &af);
+	af.location = APPLY_CON_MAX;
+	af.modifier = 25;
+	affect_to_char(victim, &af);
+	act("Your body bursts into living flame.", FALSE, ch, 0, 0, TO_CHAR);
+	act("$n's body bursts into living flame.", FALSE, ch, 0, 0, TO_ROOM);
+}
+
+void spell_water_form(int /*level*/, P_char ch, char * /*arg*/, int /*type*/, P_char victim,
+		      P_obj /*obj*/)
+{
+	if (const char *failure = elemental_form_failure_message(ch, victim, SPELL_WATER_FORM))
+	{
+		send_to_char(failure, ch);
+		return;
+	}
+
+	struct affected_type af = {};
+	af.type = SPELL_WATER_FORM;
+	af.duration = 8;
+	af.bitvector2 = AFF2_WATER_AURA;
+	af.location = APPLY_STR_MAX;
+	af.modifier = -20;
+	affect_to_char(victim, &af);
+
+	af.bitvector2 = 0;
+	af.location = APPLY_DEX_MAX;
+	af.modifier = 50;
+	affect_to_char(victim, &af);
+	af.location = APPLY_AGI_MAX;
+	af.modifier = 25;
+	affect_to_char(victim, &af);
+	af.location = APPLY_CON_MAX;
+	af.modifier = -10;
+	affect_to_char(victim, &af);
+	act("Your body dissolves into flowing water.", FALSE, ch, 0, 0, TO_CHAR);
+	act("$n's body dissolves into flowing water.", FALSE, ch, 0, 0, TO_ROOM);
+}
+
+void spell_air_form(int /*level*/, P_char ch, char * /*arg*/, [[maybe_unused]] int type,
 		    P_char victim, P_obj /*obj*/)
 {
 	struct affected_type af;
+
+	if (const char *failure = elemental_form_failure_message(ch, victim, SPELL_AIR_FORM))
+	{
+		send_to_char(failure, ch);
+		return;
+	}
 
 	if (IS_AFFECTED2(victim, AFF2_AIR_AURA))
 		return;
@@ -11819,6 +12037,12 @@ bool check_item_teleport(P_char ch, char *arg, int cmd)
 	else
 	{
 		generic_find(arg, FIND_OBJ_INV | FIND_OBJ_EQUIP | FIND_OBJ_ROOM, ch, &dummy, &obj);
+		// A carried item named "rock" must not hide a matching room climb portal.
+		if (cmd == CMD_CLIMB &&
+		    (!obj || obj->type != ITEM_TELEPORT || obj->value[1] != cmd))
+		{
+			generic_find(arg, FIND_OBJ_ROOM, ch, &dummy, &obj);
+		}
 	}
 	if (!obj)
 		return FALSE;
@@ -14622,7 +14846,8 @@ void single_unholy_word(int level, P_char ch, char * /*arg*/, int /*type*/, P_ch
 	else
 	{
 		int dam = level * 3 + 20;
-		dam = GET_RACE(victim) == RACE_GITHZERAI ? (int)(dam * 1.5) : dam;
+		dam = tutorial_mobile_mechanics_race(victim) == RACE_GITHZERAI ? (int)(dam * 1.5) :
+										 dam;
 		dam = dam * get_property("spell.area.damage.factor.unholyWord", 1.000);
 
 		if (GET_SPEC(ch, CLASS_CLERIC, SPEC_ZEALOT))
@@ -14714,7 +14939,8 @@ void single_voice_of_creation(int level, P_char ch, char * /*arg*/, int /*type*/
 	else
 	{
 		int dam = level * 3 + 20;
-		dam = GET_RACE(victim) == RACE_GITHYANKI ? (int)(dam * 1.5) : dam;
+		dam = tutorial_mobile_mechanics_race(victim) == RACE_GITHYANKI ? (int)(dam * 1.5) :
+										 dam;
 		if (spell_damage(ch, victim, dam, SPLDAM_HOLY, 0, &messages) == DAM_NONEDEAD)
 		{
 			if (lev < (level / 2 + 2)) /* 14-27 blind */
@@ -14778,7 +15004,8 @@ void single_holy_word(int level, P_char ch, char * /*arg*/, int /*type*/, P_char
 	else
 	{
 		int dam = level * 3 + 20;
-		dam = GET_RACE(victim) == RACE_GITHYANKI ? (int)(dam * 1.5) : dam;
+		dam = tutorial_mobile_mechanics_race(victim) == RACE_GITHYANKI ? (int)(dam * 1.5) :
+										 dam;
 		if (GET_SPEC(ch, CLASS_CLERIC, SPEC_ZEALOT))
 		{
 			dam = (int)(dam * 1.25);
@@ -14878,8 +15105,7 @@ void spell_holy_word(int level, P_char ch, char * /*arg*/, int /*type*/, P_char 
 			    get_property("spell.area.chanceStep.holyWord", 20));
 }
 
-void spell_solar_flare(int level, P_char ch, char * /*arg*/, int /*type*/, P_char victim,
-		       P_obj /*obj*/)
+void spell_solar_flare(int level, P_char ch, char * /*arg*/, int type, P_char victim, P_obj obj)
 {
 	int dam;
 	struct damage_messages messages = {
@@ -14893,6 +15119,9 @@ void spell_solar_flare(int level, P_char ch, char * /*arg*/, int /*type*/, P_cha
 	};
 
 	dam = (6 * level) + number(1, 25);
+	if (IS_PC(ch) && GET_SPEC(ch, CLASS_CONJURER, SPEC_FIRE) && type == SPELL_TYPE_SPELL &&
+	    !obj)
+		dam = dam * 110 / 100;
 
 	if (spell_damage(ch, victim, dam, SPLDAM_FIRE, 0, &messages))
 		return;
@@ -15945,14 +16174,11 @@ void spell_resurrect(int level, P_char ch, char * /*arg*/, [[maybe_unused]] int 
 	 * restore lost exp from death
 	 */
 
-	if (IS_PC(t_ch) && !IS_TRUSTED(t_ch))
+	// Protected and level-one deaths legitimately have no XP to restore. The
+	// XP dispatcher floors ordinary gains at one, so skip a zero-loss corpse.
+	if (IS_PC(t_ch) && !IS_TRUSTED(t_ch) && obj->value[4] != 0)
 	{
 		resu_exp = obj->value[4];
-		if (resu_exp == 0)
-		{
-			// send_to_char("&-RERROR! Player corpse with zero exp, please notify a god!&n\r\n", ch);
-			wizlog(56, "MEMORY ERROR: Player corpse with zero exp!");
-		}
 
 		if (!IS_TRUSTED(ch))
 		{
@@ -22654,8 +22880,9 @@ void spell_contain_being(int /*level*/, P_char ch, char * /*arg*/, [[maybe_unuse
 	af.type = SPELL_CONTAIN_BEING;
 	af.duration = 100;
 	af.flags = AFFTYPE_SHORT;
-	affect_to_char_with_messages(victim, &af, "You your physical composure returns to normal.",
-				     "$n's &+Yphysical composure slowly returns to &+Lnormal&n.");
+	affect_to_char_with_messages(
+		victim, &af, "Your containment fades; your essence can no longer be learned.",
+		"The containment around $n fades; its essence can no longer be learned.");
 }
 
 /* ---- DRAGOON SPELLS ----*/

@@ -23,6 +23,8 @@
 #include "classes/necromancy.h"
 #include "economy/collector_presence.h"
 #include "player/pet_restore_runtime.h"
+#include "persistence/persistence_checkpoint.h"
+#include "redis/redis_floor_runtime.h"
 #include <cstdint>
 #include <ctime>
 #include <algorithm>
@@ -166,6 +168,27 @@ void charm_broken(struct char_link_data *cld)
 {
 	int necropets[] = { 3, 4, 5, 6, 7, 8, 9, 10, 78, 79, 80, 81, 82, 83, 84, 85 };
 
+	// Once control breaks, the owner's next save no longer includes this pet.
+	// Preserve ledger-held durable gear, then drop the rest before hostility/extraction.
+	if (cld->type == LNK_PET && IS_NPC(cld->linking) && IS_PC(cld->linked) &&
+	    cld->linking->in_room != NOWHERE)
+	{
+		P_char pet = cld->linking;
+		hold_durable_pet_items(pet);
+		unequip_all(pet);
+		while (pet->carrying)
+		{
+			P_obj object = pet->carrying;
+			const bool money = object->type == ITEM_MONEY;
+			obj_from_char(object);
+			obj_to_room(object, pet->in_room);
+			// Coin piles can merge and free the object during placement.
+			if (!money && object->obj_uid && OBJ_ROOM(object))
+				redis_log_floor_drop(object, world[object->loc.room].number);
+		}
+		mark_player_dirty_components(GET_PID(cld->linked), PLAYER_COMPONENT_PETS);
+	}
+
 	// Verify that the pet is still following anyone, as some mobs self-poof
 	if (cld->linking && cld->linking->following)
 	{
@@ -267,7 +290,11 @@ int setup_pet(P_char mob, P_char ch, int duration, int flag)
 	if (IS_PC(ch) && (!(flag & PET_RESTORE) || (IS_NPC(mob) && !mob->only.npc->summon_kind)))
 	{
 		name = string(mob->player.name) + " _" + string(ch->player.name) + "_";
+		if (IS_NPC(mob) && IS_SET(mob->only.npc->str_mask, STRUNG_KEYS))
+			str_free(mob->player.name);
 		mob->player.name = str_dup(name.c_str());
+		if (IS_NPC(mob))
+			SET_BIT(mob->only.npc->str_mask, STRUNG_KEYS);
 	}
 
 	return duration;
@@ -658,7 +685,6 @@ void raise_undead(int level, P_char ch, P_char /*victim*/, P_obj obj, int which_
 	// 5 at 56.
 	undead->points.damsizedice = (level - 1) / 11;
 
-	StartRegen(undead, regen_resource::mana);
 	balance_affects(undead);
 	undead->only.npc->str_mask = (STRUNG_KEYS | STRUNG_DESC1 | STRUNG_DESC2);
 
@@ -752,6 +778,8 @@ void raise_undead(int level, P_char ch, P_char /*victim*/, P_obj obj, int which_
 
 	extract_obj(obj);
 	char_to_room(undead, ch->in_room, 0);
+	// Sunlight-sensitive mana regeneration reads the pet's room.
+	StartRegen(undead, regen_resource::mana);
 
 	int duration = setup_pet(undead, ch, MAX(4, timeToDecay), PET_NOCASH);
 	add_follower(undead, ch);

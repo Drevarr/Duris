@@ -74,9 +74,10 @@ production port 7777; the default remains 4000.
 | 52 | reboot | yes |
 | 53 | copyover reboot | yes |
 | 54 | auto reboot | yes |
-| 55 | pwipe shutdown | no |
+| 55 | complete pwipe; explicit fresh start required | no |
 | 56 | mud hung reboot | yes |
 | 57 | auto reboot with copyover | yes |
+| 58 | incomplete, unconfirmed or refused pwipe recovery; inspect durable state | no |
 | 139 | crash (SIGSEGV) | yes |
 | 128 + N | killed by signal N, named: 137 is `killed by SIGKILL` | yes |
 | other | unknown | yes |
@@ -88,6 +89,15 @@ and then removes. Copyover (`copyover` command) execs a fresh binary while
 keeping player connections alive via `copyover.dat`.
 
 ### Executable rollback and callback labels
+
+Divine Boon releases supporting multiple objectives per hour can persist slots
+with the same start time. Older binaries reject that snapshot. Before rolling
+back to a binary that requires unique start times, run `divineboon pause` using
+the current binary, wait for its durable confirmation, and let all objectives
+expire (up to eight hours), or retire each with `divineboon replace <slot>`.
+Use `divineboon status` to confirm the published state has no active slots and
+no pending write before stopping the current binary. Keep rotation paused until
+the rollback is verified. Do not delete or hand-edit the persisted state.
 
 Before an authorized clean build or rollout, identify the actual supervisor,
 its system/user scope, and the executable behind the listener. A service name
@@ -189,23 +199,529 @@ in one explicitly requested step. Installation does not create credentials, chan
 `.env`, run legacy migrations, or promote a database. A failed production preflight is
 a deployment blocker, not a reason to weaken the unit or reuse development secrets.
 
-Do not use the `pwipe` shutdown path for ordinary restarts: exit code `55`
-causes `cycle_mud.sh` to run the filesystem player wipe artifact after the
-server exits.
+For the supervised wipe, drain accepted external work, stop external writers and
+the normal service, and keep competing launchers stopped. Run the existing
+launcher as the game user and issue the confirmed pwipe command. Keep services
+stopped through any same-epoch recovery. Only after durable completion, explicitly
+start the normal service and perform the integration cutover below. Never run
+checkout qualification scripts as root or through sudo.
 
-Pwipe advances `season_reset_state.season_epoch` and records `resetting` before the first
-destructive SQL statement. If any later step fails, the server exits and subsequent boots
-refuse to start while that state remains. Treat this as an incomplete destructive reset:
-preserve the database and logs, determine which reset postcondition failed, and recover
-or complete the reset under operator control. Do not change the row back to `active`
-merely to bypass the boot fence.
+### Account gate for a prepared new season
+
+The shipped `lib/pwipe_launch.cfg` is required at every player-serving boot and
+defaults to `enabled=false`. After a separately authorized wipe has durably
+completed, with the game stopped, arm `enabled=true`, set the exact UTC
+`opens_at_utc=YYYY-MM-DDTHH:MM:SSZ` and list approved **existing account names** in
+`allowed_accounts` (comma separated, exact and case-insensitive). The October 28
+plan uses `2026-10-28T18:00:00Z` and `mosheh`. A missing/invalid config refuses boot;
+do not remove it to troubleshoot. SQL-only `--resume-pwipe` remains independent.
+
+The gate allows approved accounts through normal password and admission checks.
+Public logins receive the launch notice and disconnect after output drains;
+registration and character preparation are deferred. It applies to Telnet, TLS,
+native WebSocket login and restored copyover connections. Config and artwork
+(`lib/information/pwipe_launch`) live outside the wiped stores. Missing artwork
+falls back to a plain notice. Changes to the time/allowlist require a restart.
+
+Browser clients must retain the received refusal after the server closes the
+socket. DurisWeb's companion [PR #118](https://github.com/LuminariMUD/DurisWeb/pull/118)
+fixes the previous generic-dialog replacement. Verify the actual deployed client
+with `run_pwipe_launch_browser_journey.py` against a disposable gate before relying
+on its opening-time display. The socket journey
+`run_pwipe_launch_gate_journey.py` covers both maintained admission backends;
+`run_pwipe_runtime_journey.py` includes the armed launcher-cleanup/new-season case.
+
+Before opening, verify approved entry, public refusal and restart persistence on
+every enabled transport. The world continues ticking. At `now >= opens_at_utc`,
+fresh public connections use ordinary login/creation automatically, without a
+restart or another wipe. This deadline is not a readiness detector: if preparation
+cannot finish, stop before the deadline and obtain the owner's revised opening
+time. An older binary removes the restriction, so keep the game stopped during a
+rollback before launch. After launch verification, explicitly disable the expired
+gate in the next controlled config update. The gate does not fence external writers
+or replace any season-reset barrier. Qualification and current limitations are in
+the [launch-gate handoff](../ongoing-projects/plan-pwipe-launch-gate-2026-10-28.md).
+
+Do not use `pwipe` for ordinary restarts. Fresh current-master qualification is
+tracked in issue #417; closed #264 contains prior evidence. A handoff repair alone
+is not wipe readiness.
+
+The in-game operator command requires Forger level or explicit trusted command
+permission; `shutdown pwipe confirm yes`
+additionally requires Overlord permission and MariaDB-primary. The pwipe phrase
+accepts no extra arguments and always schedules five minutes, announced as PWIPE.
+Malformed input, unsupported mode and insufficient permission preserve an existing
+countdown. A plain `shutdown` cancels a manual request; a valid new request replaces
+it. Manual countdowns cancel when their real issuer leaves play, disconnects or loses
+permission, including the final pending tick. A switched staff body still identifies
+its original issuer. Automatic reboots and immediate launcher-signal requests keep
+their existing independent behavior. Cancellation ends when execution begins;
+post-boundary recovery follows the durable season fence below.
+
+Pwipe advances `season_reset_state.season_epoch` and records `resetting` before
+destructive SQL. Startup refuses any non-active season. The singleton also holds
+its handoff receipt: while `reset_status='resetting'`, a NULL `reset_completed_at`
+means SQL/Redis/reward processing is incomplete; a non-NULL value means those stages
+finished and filesystem cleanup remains. The launcher keeps status `resetting`
+through cleanup, then atomically activates that exact epoch and records the final
+completion time. Only then does it print `Wiped!`.
+
+`shutdown pwipe` is unsupported in `flatfile-primary` and refuses immediately,
+before scheduling a countdown or cancelling an existing reboot. The real client-free
+server journey proves unchanged player snapshot/legacy files and continued save,
+logout, reconnect and another boot. A MariaDB client binary refuses flatfile-primary
+at startup; hybrid fallback mode is also rejected by existing configuration. This
+is rejection qualification, not a successful flat-file wipe.
+
+Account rewards follow `lib/account_rewards.cfg`: preserving grants does not
+preserve old inventory or summon-to-body links. Eligible new characters on the
+surviving account use `divineclaim list` and `divineclaim summon <number>`; each
+character may hold one copy of each grant. Permanent and unexpired day grants
+survive an eligible preserving reset; finite grants lose one wipe and disappear
+at zero. With `pwipe.preserve=false`, an eligible reset removes all grants. The
+28-day protection and fixed-boundary retry rules are documented in that config.
+The disposable runtime journey tests new-character claims under both settings
+(`--discard-rewards` selects false), including saved instances and cooldowns
+through reconnect and another boot. The native reset-hook matrix separately
+covers expiry, protection windows and failed/ambiguous commit retries.
+
+Reset policy confirmed by the owner for #264: every account-bank balance resets,
+including staff and every racewar side. Bank rows are deleted without resetting
+their allocator; accounts, credentials and donation history survive. Retained bank
+ledger/baseline evidence keeps old bank IDs and cannot become a new bank's opening
+balance. Only current exact level-62 Overlords are recreated under the same account
+and name, with new PIDs, clean progression/currency, empty items/skills and fresh
+opening baselines. Other characters and staff are retired. Their rows remain inactive
+under reserved `~pwipe-PID` names, releasing ordinary names for the new season.
+The roster change is one transaction: failure rolls back name/account/body changes
+and retains the incomplete-reset fence. Old summon links are cleared every reset,
+independently of the 28-day grant-decrement policy. The completed local full-world
+journeys, store inventory, failure/replay cases and integration variants are recorded
+in the [issue #417 findings](../ongoing-projects/issue-417-pwipe-qualification-findings.md).
+That record names the tested revision and remaining rollout conditions.
+
+The native player identity is a positive signed integer. Pwipe checks the live
+`player_data` allocator before crossing the boundary and checks recreated PIDs and
+remaining capacity before publishing SQL-ready. An oversized allocator must be
+repaired or migrated before a wipe can proceed. Do not reset it to the largest
+active PID: retained ledgers, baselines and recovery evidence may reference higher
+identities. Establish a non-aliasing allocation range from the retained history.
+If an older build already committed an unplayable roster, or an external allocator
+change caused a fenced postflight failure, ordinary same-epoch resume does not
+repair those identities. Use the verified matched pre-wipe restore rather than
+forcing the season active. Recreated staff now start at their preserved hometown
+with a standard visible prompt.
+
+Eligible Overlords are selected from active durable character/account ownership,
+independent of whether the account-character projection has already been repaired
+by login. Matching blocked mappings, including stale-name mappings, exclude recreation.
+Explicit deletion tombstones still exclude recreation, as in ordinary
+projection repair, and an unregistered durable owner cannot receive a new body.
+Missing, stale-name or wrong-account projections are rebuilt for the new PID under
+the canonical owner in the same roster transaction. Birth and last-save timestamps
+both start at recreation time; first login cannot interpret the body as saved at
+Unix epoch zero and add decades of offline age. Committed roster recovery remains
+idempotent and does not allocate another body.
+
+Ordinary `item_current_owner`, `item_owner_revision` and
+`item_ownership_baseline` records remain protected bookkeeping. They carry typed
+identities, revisions and provenance, not serialized objects. The actual player
+loader reports an owner claim with no payload as missing; it does not rebuild that
+object from the claim or baseline. Wipe removes saved payloads and keeps their
+row-ID and UID allocators increasing, so retained source references and custody
+cannot alias newly created items. Recreated characters have new PIDs and do not
+inherit retired player-owner revisions. Offline inspection of a retired PID may
+still read its historical status; normal account menus exclude deleted mappings.
+
+This metadata is not an independent epoch fence: live payload stores must reset,
+and old Redis/native recovery inputs must stay isolated or archived. Do not delete
+books to make an inventory appear empty or republish an old world image into a
+new epoch. The native SQL journey checks exact metadata retention, absent old
+item graphs, clean recreated-owner reads and fresh UID allocation on both engines.
+
+Kingdom realms, purchased garrisons and legacy land ownership reset with guilds,
+even if the optional kingdom feature is disabled. Association IDs can be reused;
+retaining their old world rows would give a new guild the prior season's holdings.
+
+Active Divine Boon objectives and their repeat-selection preferences retire at wipe.
+The same versioned authority keeps its increasing boon-ID counter, bounded staff
+history and pause/mode configuration. New-season objectives cannot reuse an old
+cargo allowance's boon ID. Snapshot validation precedes the irreversible boundary;
+a failed durable retirement leaves the reset fenced. Protected cargo receipts/books
+are retained. The native reset journey proves committed receipt replay is inert,
+and an unapplied pre-reset purchase is stale after ship deletion, including after
+a same-named fresh mortal receives a higher-ID ship. Historical books/generation
+remain unchanged; old wallet/cargo/market after-images do not return. Current boon
+IDs are monotonic, so old books do not supply a new objective's allowance.
+
+Auction custody payloads and siege items/affects/descriptions reset with the other
+physical stores, including rows read by the startup artifact population scan. Their
+separate audit ledgers, receipts and quarantine evidence survive. Quest trophies
+remain character history; current gameplay does not consult their boot-loaded cache.
+
+Artifact domain rows clear ownership, location, timers, souls and legacy custody
+references. Canonical UIDs become retired (or absent when none existed), preserving
+old-body rejection and allowing a fresh body through the existing creation path.
+Rejected UIDs, delivery markers, baselines and immutable outcome/receipt history
+survive; revision allocation continues from that history. Pending old deliveries
+recognize the retired body and cannot feed or bind its replacement.
+
+Preparation drains the shared writer and its actual SQL read-completion chain
+before closing admission. Accepted player saves and SQL writes finish before reset;
+a timeout retains queued work and resumes normal admission. A terminal SQL failure
+during the drain rolls back its transaction and refuses reset. This joint behavior
+is covered by `run_pwipe_writer_mysql.py` against both disposable SQL engines;
+peripheral subsystem drain implementations keep their separate qualification.
+
+Collector candidates and held stock close through the normal audited season-reset
+cancellation. Held items move to destroyed custody; listing records, payloads,
+receipts and increasing listing IDs remain as history. Normal recovery excludes
+terminal history belonging to retired characters, so it cannot fill the new catalog
+or sell old stock. Preflight validates pending records/payloads after writer drain.
+A failed cancellation leaves the reset fenced; retry skips already-closed listings.
+The full existing runtime schema fingerprint is rechecked before the boundary,
+including columns used by delegated ledger/custody writers.
+
+Reward policy uses the durable reset start time and validates the current resetting
+epoch. Grant changes and their policy timestamp commit together, so retrying an
+unfinished reset cannot decrement grants again, even months later or after a lost
+COMMIT acknowledgment. The existing 28-day protection between distinct resets is
+preserved; eligibility is determined at each reset's start, not at retry time. Old
+summon/body links are cleared even when that protection keeps the grants unchanged.
+
+Before the boundary, the server checks `wipe_it_all --check` along with its existing
+schema/Redis checks. Missing artifacts, unexpected store symlinks/types and denied
+access abort before SQL reset. Cleanup revalidates the same fixed paths. Backups,
+accounts and configuration are preserved; symlinks within a wiped store are removed
+as links. This filesystem check covers the legacy stores handled by this script.
+Modern SQL/Redis/checkpoint stores have separate lifecycle and isolation contracts;
+the issue #417 findings record the inventory and tested recovery scope.
+
+SQL-ready publication requires an independent empty-row check for every one of
+the 103 canonical delete/reset tables, including account lockers and all payload
+children. The focused contract ties the fixed runtime list to the lifecycle
+manifest. A residual row leaves the same epoch resetting with no SQL-ready stamp;
+repair its writer/cause and resume that epoch. Do not delete protected receipt or
+history tables to satisfy a seasonal-empty check.
+
+Partial-update stores have explicit values: outpost ownership/resources/units and
+territory/portal clear, level becomes 8, walls 1 and hitpoints 300000; nexus alignment
+and touch clear while its catalogue/effect/bonus remain; timer names remain with
+zero values; cap counters/leaders/side unlocks clear and its configured base/deadline
+reset. Zone catalogue/rules remain while epic alignment resets. The native matrix
+seeds nondefault values and checks these results alongside versioned artifact,
+collector and Divine-state retirement.
+
+A successful SQL-stage server exits 55; an incomplete irreversible reset exits 58.
+Exit 55 alone never authorizes deletion: the launcher checks its boot epoch's
+successor and the durable SQL-ready receipt. Both terminal statuses propagate
+through notifications; the systemd unit prevents restart on 55 and 58. Ordinary
+reboots and crashes retain their restart policy. A crash during an incomplete reset
+is stopped by the durable fence on the next launch.
+The default `runtime/maintenance-scheduler.state`, or configured
+`MAINTENANCE_STATE_FILE`, and its `.tmp` sibling are also live native recovery
+inputs. Drain alone does not clear captured retries or unacknowledged completions.
+Guarded cleanup moves them to a private `Players/Backup/pwipe-maintenance.*` archive
+before activation; the archive records their configured source path. Keep these
+bytes with recovery evidence and never restore them into a new season's scheduler
+path. This also covers external configured paths and paths inside a wiped store.
+Unreadable, symlinked, noncanonical or unrecognized checkpoints refuse preflight
+before deletion. Every existing ancestor must be searchable before an absent-file
+check is trusted; a hidden checkpoint is never treated as missing. Genuinely missing
+directories are allowed. A checkpoint parent nested below a cleared store is refused
+for retryability; direct store-root and external parents remain supported. Repair/quarantine such input explicitly before retrying; do not
+bypass the check. A partial move remains fenced and a normal retry archives what
+remains. A duplicate already-active epoch skips all cleanup and keeps fresh state.
+
+Retained SQL receipts are consumed at their owning identity boundaries. The
+critical repository checks a duplicate operation's stored hashes/committed result
+before domain dispatch; it returns the receipt rather than applying the mutation
+again. The normal outbox fetches status 0, and its drain includes future retry rows.
+Prepared artifact/guild boot recovery can explicitly retry status-2 deliveries;
+its pre-boundary drain includes all pending delivery state. Retired artifact UID
+and guild incarnation checks keep historical deliveries from binding replacements,
+even when a numeric guild ID is reused. Preserve these books and their markers.
+
+Zone-story history/daily state uses the current SQL epoch and player PID. Retaining
+the history blob does not give a fresh PID its old namesake's progress or renown.
+Native reload proof covers old/new partitions, fresh assignment/completion and
+idempotent replay of an old completion. Epic-stone claims use persistent item UID;
+artifact mana is also UID-only counter/version state, not a serialized object.
+Fresh UID leases and isolated old physical recovery inputs prevent those histories
+from constructing or rewarding an old item. Legacy quest-trophy history has no
+enabled current gameplay caller; critical-test counters have no normal asset reader.
+
+The former `CRITICAL_COMMAND_JOURNAL_DIR` now holds only
+`locker-identification/<pid>.receipt` service receipts. Their filenames and encoded
+payment identities bind PID/account/side. Preserve prepared/paid/failed/delivered
+receipts: a recreated character gets a higher PID and cannot load/charge its old
+receipt, even on the same account. This is receipt identity, not a new season field.
+The actual-service regression also refuses an old receipt copied to a new PID's
+filename and proves fresh identification works without altering retained bytes.
+
+Normal MariaDB account admission calls `sql_load_account` / `sql_save_account`;
+player admission selects the SQL load repository in `player_load_pipeline.c`.
+The client-free build selects its explicit flat-file provider and
+`FLATFILE_STATE_DIR/identities/accounts`; mixed fallback mode is refused. Legacy
+`lib/players`, `lib/accounts`, fallback and quarantine entries remain policy/
+historical inventory labels, not automatic current SQL fallback inputs. Explicit
+pfile inspection/import commands use `SAVE_DIR` (`Players`) or artifact import
+paths; do not use old-season import sources to repopulate a fresh season.
+
+Keep `Accounts/email.db` when optional email verification is enabled, site bans in
+`lib/misc/ban_sites`, and invitation/accepted/declined-name policy under `Players`.
+These account/admission controls survive; byte-exact synthetic canaries cover the
+actual paths during cleanup. In a client-free installation the whole
+`FLATFILE_STATE_DIR` namespace remains authoritative and untouched: pwipe refuses
+before countdown/mutation. This does not claim flat-file wipe support. Specific
+protected flat-file domain/journal entries remain independently inventoried.
+
+MUD mail is character-name scoped, independent of current SQL PID/account identity.
+Normal boot reads `Accounts/mail`, or `Players/mail` when the preferred path is
+absent. A recreated/reused name must not receive its old character's letters.
+Cleanup archives **both** fixed spool paths under private
+`Players/Backup/pwipe-mail.*` (`current` / `legacy`, plus `source-paths`) before
+activation. Preserve that historical evidence outside the automatic mail paths.
+A fresh boot creates a new empty current spool; normal new mail still works.
+`Accounts` account/registration files are preserved. Unsafe/unreadable spools or an
+unsafe/inaccessible account directory refuse preflight; a partial archival stays
+fenced and normal retry finishes it. Already-active duplicate completion preserves
+fresh mail. Do not copy an archived spool back into the new season's live path.
+
+The filesystem lock is inherited by the wipe child. Killing launcher parents
+therefore does not permit overlapping cleanup while that child is still running;
+a competing resume refuses. An orphan can finish file cleanup but cannot activate
+the epoch after its launcher activator is gone. Inspect the recorded epoch, wait
+for that cleanup to end and resume that same epoch normally. Whole-process-group
+interruption can leave partial cleanup; the durable fence and idempotent resume
+cover that case too. Never remove the lock file to bypass a live cleanup.
+A boundary COMMIT with no acknowledgment is treated conservatively: the failed
+process does not resume writers or authorize filesystem cleanup, even if the
+transaction ultimately rolled back. Keep that process stopped and inspect the
+exact durable epoch/status independently. If the old epoch is still active and
+old SQL/files are verified intact, restart that unchanged season explicitly; no
+pending epoch exists to resume. If the successor is resetting, recover that same
+epoch through the SQL-only and launcher steps below. Never edit the row to active.
+A raw server start also refuses a resetting epoch at its explicit season-state
+guard (currently generic fatal status 1). The maintained launcher/service reports
+58 and prevents restart; do not treat the raw executable's generic failure as
+permission to run cleanup.
+
+
+The disposable runtime qualifier accepts `--redis` and an absolute MariaDB binary
+path. Run it as an ordinary user through the direct launcher; the former
+`--systemd` mode has been removed. Its private minimal-world fixture does not
+replace the full-world operator journey. Native SQL dependency
+checks separately exercise a real unavailable Redis endpoint and a denied cleanup
+command: the first preserves the old season, the second keeps the new epoch fenced.
+Repairing Redis cleanup alone does not declare SQL reset complete.
+
+Before stopping website writers, complete DurisWeb's
+[legacy temporary-copy preservation gate](https://github.com/LuminariMUD/DurisWeb/blob/7147e6b1bece2e650dbe3cb312c904edfa43bf9d/docs/deployment.md#legacy-temporary-copy-preservation-gate).
+Its service's private temporary directory can be removed on stop. The player-event
+season fence orders publication against the SQL boundary. The website cutover is
+owned jointly by the wipe operator and website service owner:
+
+1. Complete the legacy-copy inventory, keeper and verified byte-preservation gate
+   before stopping the configured website unit. Keep those protected copies in the
+   matched recovery inventory; do not adopt or delete unmanaged originals by guess.
+2. Stop the website through its configured service manager and wait for graceful
+   completion. HTTP must stop accepting work, websocket peers must close, and the
+   active donation publisher/audit jobs must settle before the SQL boundary. Keep
+   the website stopped during reset and matched recovery capture. Accepted webhook
+   records, monetary totals, sessions and pending outbox rows remain durable.
+3. Complete the authorized MUD reset, verify its exact SQL epoch is active, then
+   start the fresh game explicitly. Preserve the deployment namespace, webhook
+   verification token, independent donation signing secret and account credentials.
+   If donation delivery is enabled, verify the native
+   `REDIS_DONATION_SUBSCRIBER=TRUE`, matching secret and MUD hook are ready before
+   resuming the website publisher. Do not publish into a disabled game consumer.
+4. Start the website normally. It reads the active epoch for scoped Redis feeds;
+   it does not reuse old character rosters or derived MUD-permission caches. Obtain
+   fresh websocket capabilities through the surviving authenticated session and
+   reconnect. Recreated Overlords retain access; retired staff do not acquire it
+   through an old cookie or cached role. Explicit website-admin grants are separate.
+5. Verify fresh WHO/presence, live login/logout delivery, current ranking/character
+   lists and scoped cache inputs. Old-epoch keys or old general-cache values must
+   not supply new data. Reload the dashboard and check current account/role state.
+6. Reconcile queued donations by durable provider/event IDs. A queued row can be
+   published with the new active epoch; a repeated webhook must not add another
+   monetary credit. `published` records Redis publication, so also verify native
+   game delivery when that feature is enabled. Never reset outbox status or totals
+   merely to force a replay.
+
+The private normal-backend journey accepts `--redis --website CHECKOUT` and a
+production-profile MUD binary. It automatically uses owned MySQL 8 for the jointly
+supported schema; the MUD-only MariaDB 10.11 factory is not the website baseline.
+It refuses conflicting modes and checkout runtime
+environment files, uses synthetic data/owned SQL and Redis, and records exact
+server/companion revisions and binary hash. The separate explicit PrivateTmp keeper
+fixture rehearses source retention and protected-byte verification through both
+unit stops. These fixtures do not operate an installed website or production game.
+
+Native hotboot and cold artifact boot inspect `COPYOVER_STATE_FILE` (default
+`copyover.dat`) and its `.recovering` claim. These images contain no SQL epoch and
+must leave their live paths before a new season activates. The guarded filesystem
+step archives the publication, claim and either `.consuming` barrier directory
+under a private `Players/Backup/pwipe-copyover.*` directory, with the configured
+source path recorded. A consumption barrier may be empty or contain only its native
+`image`. Existing images must be readable regular files with native `COPY` magic;
+symlinks, unknown types/content, inaccessible parents and unsafe backup paths fail
+preflight before destructive SQL. Canonical absolute or data-root-relative custom
+paths with existing parent directories are supported, including a separate state
+volume and a file directly in a cleared store root. Parents nested below a cleared
+store are refused before SQL reset: cleanup would remove the parent and break a
+same-epoch retry. Relocate configured recovery state to a persistent parent first.
+`.`/`..` and symlink aliases refuse. All game writers remain
+stopped through archiving and activation. Partial archive failure keeps the season
+fenced; same-epoch retry preserves prior archives and moves remaining inputs. A
+completed-epoch replay skips cleanup and leaves a new season's handoff untouched.
+Keep these archives as recovery evidence and include configured external handoff
+paths in the matched backup inventory; never republish an old image into a new
+season's live path. Ordinary same-season copyover keeps its existing format/flow.
+
+Before scheduling a wipe, prepare and verify a **matched pre-wipe recovery point**.
+The regular MariaDB backup contains SQL and journals; `PREBOOT_BACKUP=1` does not
+add legacy filesystem or Redis coverage. After the website preservation gate above,
+stop external seasonal/account-benefit writers and stop/drain the game. Freeze DDL
+for the capture. With writers stopped, publish a verified SQL generation under the
+approved policy, capture the data-root filesystem stores from the reset/retention
+inventory (including wiped targets, accounts, bans, archives and configuration), and
+capture Redis recovery data. Record the active SQL epoch/status, SQL generation and
+manifest hash, filesystem archive hash, Redis capture hash, binary/world revision,
+namespace and required configuration/key custody together. Copy the complete SQL
+generation to an owner-only directory outside the backup policy's rotating root,
+verify that frozen copy, and record its path and manifest hash. Preboot backups and
+scheduled retention can otherwise prune the referenced generation during the wipe.
+Store the supplements beside that frozen copy; do not modify its immutable manifest
+or files. Check age/capacity/
+replica/drill status under [BACKUPS.md](BACKUPS.md); missing or mismatched supplements
+mean the recovery preparation is incomplete. Keep external benefit writers stopped
+until the reset/cutover is complete; restrict the resumed countdown to maintenance.
+
+Rehearse restoration into fresh, isolated candidates before authorizing the wipe.
+Verify every recorded hash and the matching active epoch before starting a candidate;
+check current independent erasure/tombstone evidence. Use the existing private-DB
+import and migration/value reconciliation, native journal verification, filesystem
+copy and a separate Redis instance, then prove account login, saved items/balances,
+world recovery and another boot. A full Redis RDB belongs only in a dedicated
+candidate instance; never load it over shared live Redis or another application's
+namespace. Use the matching runtime/configuration and world authentication key.
+The optional `run_pwipe_runtime_journey.py --redis --restore` exercises this frozen
+capture and isolated matched recovery with synthetic data. It does not promote a
+candidate, install host backup policy or authorize a production restore.
+
+Native SQL dependency
+checks separately exercise a real unavailable Redis endpoint and a denied cleanup
+command: the first preserves the old season, the second keeps the new epoch fenced.
+Repairing Redis cleanup alone does not declare SQL reset complete.
+
+Before stopping website writers, complete DurisWeb's
+[legacy temporary-copy preservation gate](https://github.com/LuminariMUD/DurisWeb/blob/7147e6b1bece2e650dbe3cb312c904edfa43bf9d/docs/deployment.md#legacy-temporary-copy-preservation-gate).
+Its service's private temporary directory can be removed on stop. The player-event
+season fence orders publication against the SQL boundary; the external-writer,
+cache, donation and reconnect rehearsal is recorded in the pwipe qualification plan.
+
+After an interruption, stop the launcher/server and all external seasonal writers,
+preserve logs and the matching DB/filesystem/Redis backup generation, and inspect
+`SELECT season_epoch, reset_status, reset_started_at, reset_completed_at FROM
+season_reset_state WHERE state_id=1`. For `resetting` with a non-NULL completion
+timestamp, repair the filesystem problem and, with the same configuration, run
+`./scripts/cycle_mud.sh --resume-pwipe EPOCH` (add `--dev` locally). It validates the
+exact epoch, serializes cleanup, retries safely, activates only after successful
+cleanup, and returns 55 without starting the game. Repeating it for that already
+completed epoch does not delete new-season files. After an ambiguous activation
+acknowledgment, read the row or repeat this same command; do not invent another epoch.
+
+New reset epochs also record `roster_recreated` in the season singleton. Begin
+sets it to 0; Overlord recreation and its 1 checkpoint commit in the same transaction.
+New SQL-ready publication requires that committed checkpoint. NULL denotes legacy
+or unknown provenance; the additive migration preserves it. Previously SQL-ready
+legacy epochs can still use filesystem resume.
+
+For `resetting` with NULL completion time and a known 0/1 roster checkpoint, use the
+matching built native binary from the data root, with the original environment,
+port and lifecycle configuration: `bin/server/dms_new --resume-pwipe EPOCH PORT`.
+This SQL-only command acquires the normal runtime exclusion guard and verifies the
+sealed schema and baselines before mutation. It refuses active/wrong/unknown epochs,
+keeps the existing epoch and reset start, retries the reset body, skips a committed
+roster, and targets the original Redis epoch. It starts no world, listeners or runtime
+writers and does not clear filesystem data or activate the season. Exit 55 means SQL
+is ready; run the existing launcher resume above to finish files and activation.
+Exit 58 means recovery refused or remains incomplete; inspect `logs/log/status` and
+`logs/log/debug`, repair the cause and repeat the same expected epoch. A second SQL
+resume of a SQL-ready resetting epoch is read-only and also returns 55. It does not
+reopen a completed active season. Keep all external writers stopped through both steps.
+
+An unfinished legacy/unknown checkpoint cannot safely establish whether new staff
+PIDs already committed. Use a matched pre-wipe DB/filesystem/Redis restore under
+operator control for that case. Never infer a checkpoint or change the row to
+`active` merely to bypass the fence. MariaDB generations made by
+`persistence_backup.py` contain SQL and journals; filesystem and Redis recovery
+evidence must be verified separately for a matched wipe restore. Full matched-restore,
+carryover and integration results are recorded in the issue #417 findings; #264 is
+historical qualification. Production reset,
+recovery or restore requires owner authorization. Once the complete workflow is
+qualified and the row is active, start the new season explicitly.
 
 Every active Redis key and channel includes the boot-captured SQL season epoch. The old
 process continues to target only the old epoch while pwipe is in progress; after restart,
 the new process targets only the completed new epoch. Redis invalidation deletes and then
 verifies the old epoch when Redis is enabled. If Redis is explicitly disabled, old keys
 cannot become visible when it is enabled in a later season because no active unscoped
-surface remains.
+surface remains. If a wipe completed with Redis disabled, keep the game stopped
+while enabling the configured Redis connection again, verify the SQL season is
+active, and start explicitly with the same deployment namespace. Boot captures the
+new SQL epoch; it does not select an old epoch's authenticated world image or cache/
+presence inputs. Check new-epoch presence and fresh save/reconnect/recovery. Retained
+old keys are evidence, not a reason to clear shared Redis. The disposable
+`--redis --redis-reenable` runtime journey exercises this cutover with a real old
+floor item and authenticated world payload.
+
+### Telemetry at a season reset
+
+The wipe operator and telemetry sender owner coordinate this manual cutover.
+`TELEMETRY_SEASON_ID` is independent of the SQL epoch; record both old and intended
+new IDs. Keep the assigned project/sender/environment/limits, identity key,
+reviewed property catalog and protected outage directory unchanged.
+
+1. Before the reset, record sender health with `world telemetry` and include the
+   protected outage directory in the matched recovery generation. Do not print
+   tokens or keys. The old process continues to report its old telemetry scope.
+2. Let the old MUD drain and exit normally. Its shutdown path reaps the telemetry
+   worker before returning the wipe exit status. Confirm the process has exited;
+   keep the new MUD stopped while rolling the sender. A live owner makes the
+   state command refuse with errno 11; do not bypass that lock.
+3. Use `scripts/telemetry/outage.py DIRECTORY` while stopped to inspect the existing
+   binding/history. Run the existing native command with that binding's allocation:
+
+   ```text
+   bin/tools/telemetry-state rollover-season DIRECTORY PROJECT SENDER ENVIRONMENT NEW_SEASON TOTAL NORMAL HEALTH
+   ```
+
+4. Verify `outages.ledger.recovery.<generation>` contains the prior frame, old
+   observations retain their scopes, and the new quota binding has the intended
+   season with both current-day classes exhausted. Repeating the same command on
+   that day is safe and must not change bytes/generation/archives. After an
+   interrupted publication, reopen/validate and retry; never initialize a new
+   directory or delete quota evidence.
+5. Set the service's `TELEMETRY_SEASON_ID` to that same new ID, preserve the other
+   binding and reviewed-catalog settings, and start explicitly after the SQL reset
+   is complete. A stale telemetry season refuses worker startup. New character/
+   session identities carry the new season; old observations are not relabeled.
+6. Expect no new HTTP allowance on the rollover day, including health attempts.
+   Quota resumes normally on the next UTC day; inspect sender progress then.
+   Keep archived history and any honest `unknown_tail` classification even when
+   old HTTP requests were acknowledged. Complete the website writer/client steps
+   separately before claiming the entire external cutover.
+
+`test_telemetry_runtime_integration.py --posthog` rehearses the worker/CLI/HTTPS
+sequence in a private directory for both compiled backend variants. It checks
+active-owner refusal, complete drain/reap, archived bytes, idempotence, stale and
+new environment bindings, distinct same-subject identities and zero new HTTP on
+that day. The outage fault harness separately proves next-day allocation and
+interrupted rollover recovery. These are local component/manual-cutover proofs;
+production execution remains governed by the reset authorization above.
 
 ## Pre-service safety gate
 
@@ -336,6 +852,7 @@ Useful checks:
 
 ```bash
 tail -f logs/log/status                 # boot + DB issues
+rg 'HOMETOWN ALARM:' logs/log/status     # alarm trigger, town/room, NPC vnum, race and pet master
 rg 'NEVENT BUDGET WINDOW' logs/log/status # deferred and late events, a line per 75 s
 rg 'telemetry_health' logs/log/status  # telemetry writer state and alerts
 ```
@@ -488,9 +1005,41 @@ dropped on any other error; their owners are marked dirty and saved again. See
 [CRITICAL_COMMAND_PIPELINE.md](../persistence/CRITICAL_COMMAND_PIPELINE.md).
 
 For `critical_outbox`, pending age may briefly rise during destination recovery.
-`dead_letter>0`, `incomplete_inbox>0`, or `committed_without_outbox>0` is an integrity
-incident. Preserve the database rows, stop affected domain cutovers, and run
-the typed reconciliation report. After correcting the destination, retry only the
+`boon_rewards` counts checks filtered before operation-ID allocation separately
+from accepted submissions and completions. Definition refresh failures reduce the
+optimization, not reward eligibility: unavailable or 60-second-old views fall
+back to the authoritative writer. Definition creation/reactivation invalidates
+on admission and writer retries; removal, expiry and completion also invalidate.
+Zero-entry accepted SQL results retain a versioned canonical receipt with an
+explicit zero-event expectation, while old 2,080-byte receipts remain readable.
+`critical_outbox_health` reports operational counts and the historical audit
+separately: `unavailable` means no successful refresh yet, `stale` means a failed
+refresh or an overdue observation, and `fresh` includes the age of the last good
+sample. Operational counts refresh with the 250 ms delivery loop; the historical
+audit runs after delivery, initially and then 60 seconds after each attempt.
+`state=unknown` must not be interpreted as an empty queue. Lifecycle drains use a
+new worker observation rather than these diagnostic counts, and allow the normal
+game-thread outbox publishers to progress within the existing caller deadline.
+`dead_letter>0`, `incomplete_inbox>0`, or `outbox_mismatches>0` is an integrity
+incident. The last counter counts committed operations whose expected event set
+differs from the actual set, including partial loss, wrong indexes, and unexpected
+events for a zero-effect operation. Preserve the database rows, stop affected
+domain cutovers, and run the typed reconciliation report.
+
+`state=reconciliation` and `unknown_expectations>0` mean some historical event
+sets cannot yet be proven. `reconciliation_candidates` is the subset without any
+outbox row; it is a candidate count, not proof of loss. An old multi-event
+operation can remain unknown even with a surviving event. Investigate that
+coverage rather than assuming zero or declaring the audit clean. The audit scans
+all committed history on each scheduled attempt. Session audits require their
+typed receipt to prove an omission; combat children require the exact derived
+parent/participant identity, hashes, ledger revision/delta, reason, and source.
+New operations record their expected event count atomically. No-op/rejected
+operations can expect zero; recovered stone receipts still expect their event.
+Never backfill unknown expectations from surviving outbox rows, subtract a fixed
+candidate count, delete evidence, or manufacture events to make the display green.
+
+After correcting the destination, retry only the
 specific numeric dead-letter ID through the guarded repair API; never edit payloads or
 execute SQL copied from a command.
 
@@ -522,6 +1071,28 @@ seconds and the process returned to the live game loop. No fallback restart shou
 forced. Correct the database failure, confirm the writer's age is falling, then request
 the copyover again. Shutdown alerts carry `shutdown_cancelled=0`: shutdown went ahead,
 and the log names any save it could not write.
+
+## Quintaragon Castle reset access
+
+Zone 24 retains its ordinary mode-1 timer admission: a connected playing character
+prevents a timer reset; a linkdead body does not. After any castle reset, the seven
+consumable-key gates stay locked only when their authored carrier has the key at
+its home room. A key held elsewhere, or a surviving keyless carrier, leaves the
+corresponding gate closed but unlocked and visible. This does not restock mobs or
+change key consumption, equipment limits, or ordinary loot.
+
+When any player body remains in the castle, including a linkdead or morphed player or staff,
+the reset leaves all seven pairs and the outer entrance unlocked and visible so
+normal open/movement commands can leave the zone. This also applies to staff
+`zreset ok` and `zreset full`. It removes reset-created door obstruction, not
+monsters or terrain hazards. A later empty reset with stocked sources restores
+the normal locks and secret closet. Other parties can therefore find an unlocked
+gate after a reset with an unavailable key source; this is intentional.
+
+The affected key VNUMs are 2405, 2418, 2422, 2425, 2436, 2437 and 2438. Entrance
+key 2402 retains its normal empty-zone policy, and bookcase key 2434 is unchanged.
+Copyover/world recovery retains its saved door flags until a qualifying reset;
+the rule does not migrate old snapshots or repair arbitrary manual locks.
 
 ## Restart and crash recovery
 

@@ -24,8 +24,8 @@ constexpr uint32_t CRITICAL_COMMAND_SCHEMA_VERSION = 1;
 constexpr size_t CRITICAL_COMMAND_ID_BYTES = 16;
 constexpr size_t CRITICAL_COMMAND_ID_HEX_SIZE = 33;
 constexpr size_t CRITICAL_COMMAND_MAX_KEYS = 3003;
-// A full PvP outcome includes up to 15 equipment/public-log snapshots.
-constexpr size_t CRITICAL_COMMAND_MAX_PAYLOAD_BYTES = 3 * 1024 * 1024;
+// A full 20/20 PvP outcome retains every equipment/public-log snapshot.
+constexpr size_t CRITICAL_COMMAND_MAX_PAYLOAD_BYTES = 8 * 1024 * 1024;
 constexpr size_t CRITICAL_COMMAND_MAX_ENCODED_BYTES =
 	CRITICAL_COMMAND_MAX_PAYLOAD_BYTES + 128 * 1024;
 static_assert(52 + CRITICAL_COMMAND_MAX_KEYS * 40 + CRITICAL_COMMAND_MAX_PAYLOAD_BYTES <=
@@ -52,6 +52,7 @@ enum class critical_entity_type : uint8_t
 	shopkeeper,
 	collector,
 	pet,
+	ship,
 };
 
 struct critical_entity_key
@@ -77,6 +78,7 @@ enum class critical_command_type : uint16_t
 	boon_shop = 14,
 	shop_trade = 15,
 	collector = 18,
+	divine_trade = 19,
 };
 
 enum class critical_source_site : uint16_t

@@ -129,6 +129,7 @@ OBJS =  $(SHIP_OBJS) \
 				 world/hardcore_config.o \
 				 account/creation_availability_config.o \
 				 account/login_mode_banner.o \
+				 account/pwipe_launch.o \
 				 combat/frag_cap_config.o \
 				 cmd/actcomm.o \
 				 cmd/actinf.o \
@@ -195,6 +196,19 @@ OBJS =  $(SHIP_OBJS) \
          magic/blispells.o \
 				 cmd/boards.o \
 				 economy/boon.o \
+				 economy/divine_boon.o \
+				 economy/divine_boon_repository.o \
+				 economy/divine_boon_runtime.o \
+				 economy/divine_boon_activity.o \
+				 economy/divine_boon_commands.o \
+				 economy/divine_boon_selection.o \
+				 economy/divine_boon_delivery.o \
+				 economy/divine_trade.o \
+				 economy/divine_trade_command.o \
+				 economy/divine_trade_repository.o \
+				 economy/divine_trade_flatfile.o \
+                 economy/divine_trade_runtime.o \
+				 flatfile/flatfile_cargo_repository.o \
 				 combat/breath_weapons.o \
 				 world/buildings.o \
          economy/cardgames.o \
@@ -261,6 +275,7 @@ OBJS =  $(SHIP_OBJS) \
 				 cmd/interp.o \
 				 combat/justice.o \
 				 combat/kick.o \
+				 combat/forced_movement.o \
 				 classes/language.o \
 				 world/limits.o \
 				 item/linked_objects.o\
@@ -309,6 +324,7 @@ OBJS =  $(SHIP_OBJS) \
 				 flatfile/flatfile_item_repository.o \
 				 flatfile/flatfile_collector_repository.o \
 				 flatfile/flatfile_artifact_repository.o \
+				 flatfile/flatfile_artifact_guild_delivery.o \
 				 flatfile/flatfile_corpse_ownership.o \
 				 flatfile/flatfile_corpse_restore.o \
 				 flatfile/flatfile_association_repository.o \
@@ -363,6 +379,7 @@ OBJS =  $(SHIP_OBJS) \
 				 guild/artifact_guild_command.o \
 				 guild/artifact_guild_repository.o \
 				 guild/artifact_guild_state.o \
+				 guild/artifact_guild_delivery.o \
 				 guild/artifact_guild_transaction.o \
 				 economy/boon_reward_command.o \
 				 economy/boon_reward_repository.o \
@@ -497,6 +514,7 @@ OBJS =  $(SHIP_OBJS) \
 				 net/ssl.o \
 				 world/statistics.o \
 				 item/storage_lockers.o \
+				 item/private_chest_purchase.o \
 				 item/locker_identify.o \
 				 item/locker_receipt.o \
 				 persistence/locker_async.o \
@@ -504,6 +522,7 @@ OBJS =  $(SHIP_OBJS) \
 				 cmd/track.o \
 				 economy/tradeskill.o \
 				 combat/trap.o \
+				 combat/trap_legacy.o \
 				 kingdom/kingdom.o \
 				 kingdom/kingdom_geometry.o \
 				 kingdom/kingdom_config.o \
@@ -547,6 +566,8 @@ OBJS =  $(SHIP_OBJS) \
 				 net/gmcp.o \
 				 net/ttype.o \
 				 account/wiz_newchar.o \
+				 cmd/battleprep.o \
+				 cmd/last.o \
 				 world/zcheck.o \
 				 telemetry/telemetry_activity.o \
 				 telemetry/telemetry_config.o \
@@ -625,11 +646,12 @@ $(DMS_BINARY): $(DMS_OBJS) $(BACKEND_STAMP)
 pfile: $(PFILE_BINARY)
 
 $(PFILE_BINARY): $(PFILE_OBJS) $(SHARED_PFILE_OBJS) $(OBJDIR)/core/mm.o $(OBJDIR)/core/common.o \
-		$(OBJDIR)/core/memory.o
+		$(OBJDIR)/core/memory.o $(OBJDIR)/combat/trap_legacy.o
 	@mkdir -p $(dir $@)
 	$(CC) $(CFLAGS) $(LDFLAGS) -g -o $@ \
 		$(PFILE_OBJS) $(SHARED_PFILE_OBJS) \
-		$(OBJDIR)/core/common.o $(OBJDIR)/core/mm.o $(OBJDIR)/core/memory.o $(LIBS)
+		$(OBJDIR)/core/common.o $(OBJDIR)/core/mm.o $(OBJDIR)/core/memory.o \
+		$(OBJDIR)/combat/trap_legacy.o $(LIBS)
 
 # Build any C object into OBJDIR, creating folders as needed.
 $(OBJDIR)/%.o: %.c

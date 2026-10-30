@@ -74,6 +74,13 @@ player_save_apply_result apply_snapshot(const player_snapshot &snapshot, void *)
 {
     std::unique_lock<std::mutex> lock(state.mutex);
     ++state.attempts[snapshot.pid];
+    if (snapshot.pid == 2 && snapshot.revision == 3) {
+        // The final RENT_INN capture must replace the queued crash checkpoint
+        // with both its intent and the key identity needed by the repository.
+        assert(snapshot.save_intent == 3 && snapshot.items.size() == 1);
+        const auto &key = snapshot.items[0];
+        assert(key.object_uid == 4040101 && key.vnum == 40401 && key.type == 18 && key.extra_flags == 8388608);
+    }
     if (snapshot.pid == 1 && snapshot.revision == 1)
     {
         state.first_started = true;
@@ -323,7 +330,12 @@ int main()
     // A newer save of a queued owner does not overtake what was queued after that
     // owner's save: it queues behind. Only the last job queued is replaced.
     assert(player_save_worker_submit(snapshot_for(2, 2)) == player_save_submit_result::accepted);
-    assert(player_save_worker_submit(snapshot_for(2, 3)) == player_save_submit_result::replaced);
+    auto rent = snapshot_for(2, 3);
+    rent.save_intent = 3;
+    rent.items.push_back({});
+    rent.items[0].object_uid = 4040101; rent.items[0].vnum = 40401;
+    rent.items[0].type = 18; rent.items[0].extra_flags = 8388608;
+    assert(player_save_worker_submit(std::move(rent)) == player_save_submit_result::replaced);
     assert(persistence_writer_pending(persistence_job_kind::locker, 7));
     assert(!persistence_writer_pending(persistence_job_kind::corpse, 7));
     assert(persistence_writer_submit(persistence_job_kind::player, 4, 1, locker_job(4)) ==
@@ -336,6 +348,15 @@ int main()
     assert(owners[1] == persistence_job_owner(persistence_job_kind::player, 2));
     assert(owners[3] == persistence_job_owner(persistence_job_kind::artifact, 8));
     assert(owners[6] == persistence_job_owner(persistence_job_kind::player, 2));
+    // Closing admission retains the blocked/queued generation. A timeout does
+    // not discard it; later callbacks cannot sneak another job behind the fence.
+    persistence_writer_quiesce();
+    assert(!persistence_writer_wait_idle(10));
+    assert(player_save_worker_submit(snapshot_for(15, 1)) == player_save_submit_result::unavailable);
+    assert(errno == ESHUTDOWN);
+    assert(persistence_writer_submit(persistence_job_kind::sql, 16, 64, locker_job(16)) ==
+           player_save_submit_result::unavailable);
+    assert(persistence_writer_pending_owners() == owners);
     {
         std::lock_guard<std::mutex> lock(state.mutex);
         state.release_first = true;
@@ -360,6 +381,10 @@ int main()
     assert(health.submitted == 7 && health.replaced == 1 && health.applied == 7);
     assert(health.queued_jobs == 0 && health.inflight_jobs == 0 && health.queued_bytes == 0);
     assert(health.high_water_jobs >= 5);
+
+    assert(persistence_writer_submit(persistence_job_kind::sql, 16, 64, locker_job(16)) ==
+           player_save_submit_result::unavailable);
+    persistence_writer_resume();
 
     // A lost connection is retried at the head: pid 6 waits for pid 5.
     assert(player_save_worker_submit(snapshot_for(5, 1)) == player_save_submit_result::accepted);

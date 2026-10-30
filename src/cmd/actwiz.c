@@ -1765,45 +1765,11 @@ void do_stat(P_char ch, char *argument, int cmd, P_obj object)
 	}
 	else if ((*arg1 == 'w') || (*arg1 == 'W'))
 	{
-		send_to_char("broken, leave me alone.\n", ch);
+		send_to_char(
+			"World-wide exit statistics are unavailable. Use zlist, zcheck <zone>, "
+			"or rlist to inspect the world.\n",
+			ch);
 		return;
-
-		/*
-		    for (x = 0; x <= top_of_zone_table; x++)
-		    {
-		      zone = &zone_table[x];
-		      snprintf(o_buf, MAX_STRING_LENGTH, "&+YZone: (&N%d&+Y)  Name:&N %s\n",
-		              world[zone->real_bottom].zone, zone->name);
-
-		      for (i3 = 0, i = zone->real_bottom;
-		           (i != NOWHERE) && (i <= zone->real_top); i++)
-		        for (i2 = 0; i2 < NUM_EXITS; i2++)
-		          if(world[i].dir_option[i2])
-		          {
-		            if((world[i].dir_option[i2]->to_room == NOWHERE) ||
-		                (world[world[i].dir_option[i2]->to_room].zone !=
-		                 world[i].zone))
-		            {
-		              if(!i3)
-		                i3 = 1;
-		              if(world[i].dir_option[i2]->to_room == NOWHERE)
-		                snprintf(o_buf + strlen(o_buf), MAX_STRING_LENGTH - strlen(o_buf),
-		                        " &+Y[&n%5d&+Y](&n%5d&+Y)&n &+R%-5s&n to &+WNOWHERE\n",
-		                        world[i].number, i, dirs[i2]);
-		              else
-		                snprintf(o_buf + strlen(o_buf), MAX_STRING_LENGTH - strlen(o_buf),
-		                        " &+Y[&n%5d&+Y]&n &+R%-5s&n to &+Y[&+R%3d&n:&+Y%5d&+Y]&n %s\n",
-		                        world[i].number, dirs[i2],
-		                        zone_table[world[world[i].dir_option[i2]->to_room].zone].number,
-		                        world[world[i].dir_option[i2]->to_room].number,
-		                        world[world[i].dir_option[i2]->to_room].name);
-		            }
-		          }
-		      send_to_char(o_buf, ch);
-		    }
-		    return;
-		*/
-		/* stat on object  */
 	}
 	else if ((*arg1 == 'o') || (*arg1 == 'O') || (*arg1 == 'i') || (*arg1 == 'I'))
 	{
@@ -3348,49 +3314,11 @@ void do_stat(P_char ch, char *argument, int cmd, P_obj object)
 			send_to_char(buf, ch);
 			return;
 		}
-		qi = find_quester_id(GET_RNUM(mob));
-		struct quest_complete_data *qdata = quest_index[qi].quest_complete;
-		struct goal_data *goals;
-
-		if (!qdata)
-		{
-			snprintf(buf, MAX_STRING_LENGTH, "'%s' is not a quest complete mob.\n",
-				 mob->player.short_descr);
-			send_to_char(buf, ch);
-		}
-		else
-		{
-			snprintf(buf, MAX_STRING_LENGTH, "'%s' has quest:\n",
-				 mob->player.short_descr);
-			send_to_char(buf, ch);
-
-			while (qdata)
-			{
-				snprintf(buf, MAX_STRING_LENGTH, "'%s'\n", qdata->message);
-				send_to_char(buf, ch);
-				if (qdata->receive)
-				{
-					for (goals = qdata->receive; goals; goals = goals->next)
-					{
-						snprintf(buf, MAX_STRING_LENGTH,
-							 "Receive: '%c' %d\n", goals->goal_type,
-							 goals->number);
-						send_to_char(buf, ch);
-					}
-				}
-				if (qdata->give)
-				{
-					for (goals = qdata->give; goals; goals = goals->next)
-					{
-						snprintf(buf, MAX_STRING_LENGTH, "Give: '%c' %d\n",
-							 goals->goal_type, goals->number);
-						send_to_char(buf, ch);
-					}
-				}
-
-				qdata = qdata->next;
-			}
-		}
+		// Use the same guarded quest renderer as qview. The old path indexed
+		// quest_index[-1] for ordinary mobs and printed numeric goal types as
+		// control characters.
+		snprintf(buf, sizeof buf, "%d", mob_index[GET_RNUM(mob)].virtual_number);
+		do_qview(ch, buf, CMD_QVIEW);
 	}
 	else
 		send_to_char(STAT_SYNTAX, ch);
@@ -4359,8 +4287,9 @@ static const char *scheduled_shutdown_type_name(int shutdown_type, bool uppercas
 	switch (shutdown_type)
 	{
 	case TimedShutdownData::OK:
-	case TimedShutdownData::PWIPE:
 		return uppercase ? "SHUTDOWN" : "shutdown";
+	case TimedShutdownData::PWIPE:
+		return uppercase ? "PWIPE" : "pwipe";
 	case TimedShutdownData::COPYOVER:
 	case TimedShutdownData::AUTOREBOOT_COPYOVER:
 		return uppercase ? "COPYOVER" : "copyover";
@@ -4380,6 +4309,12 @@ static void log_shutdown(const char *kind)
 	logit(LOG_STATUS, "%s by %s: %s", kind, shutdownData.IssuedBy, shutdownData.Reason);
 }
 
+static void cancel_shutdown_ticks(event_func_type callback)
+{
+	for (auto tick = nevent_find_next(callback); tick.event; tick = nevent_find_next(callback))
+		(void)nevent_cancel(tick);
+}
+
 void timedShutdown(P_char, P_char, P_obj, void * /*data*/)
 {
 	// timed shutdown event, run with no character; shutdownData holds the issuer, the
@@ -4391,11 +4326,47 @@ void timedShutdown(P_char, P_char, P_obj, void * /*data*/)
 	}
 
 	char buf[500];
+	P_char issuer = NULL;
+	for (P_desc d = descriptor_list; d; d = d->next)
+	{
+		P_char real = d->original ? d->original : d->character;
+		if (d->connected == CON_PLAYING && real && !IS_NPC(real) &&
+		    !str_cmp(GET_NAME(real), shutdownData.IssuedBy))
+		{
+			issuer = real;
+			break;
+		}
+	}
+	const bool manual = shutdownData.eShutdownType != TimedShutdownData::AUTOREBOOT &&
+			    shutdownData.eShutdownType != TimedShutdownData::AUTOREBOOT_COPYOVER;
+	const bool pending = shutdownData.eShutdownType == TimedShutdownData::PWIPE ||
+			     shutdownData.reboot_time != 0 || shutdownData.next_warning >= 0;
+	if (manual && pending &&
+	    (!issuer || !can_exec_cmd(issuer, CMD_SHUTDOWN) ||
+	     (shutdownData.eShutdownType == TimedShutdownData::PWIPE &&
+	      GET_LEVEL(issuer) < OVERLORD)))
+	{
+		cancel_shutdown_ticks(timedShutdown);
+		const char *type = scheduled_shutdown_type_name(shutdownData.eShutdownType, false);
+		const char *reason = issuer ? "issuer lost permission" :
+					      "issuer left the game or disconnected";
+		snprintf(buf, sizeof buf, "&+R*** Scheduled %s cancelled: %s. ***&n\n", type,
+			 reason);
+		send_to_all(buf);
+		logit(LOG_STATUS, "Scheduled %s cancelled for %s: %s", type, shutdownData.IssuedBy,
+		      reason);
+		shutdownData.eShutdownType = TimedShutdownData::NONE;
+		unlink("logs/shutdown_info.txt");
+		return;
+	}
 	// round a bit due to floating point errors...
 	if (shutdownData.reboot_time == 0)
 	{
-		// perform the shutdown...
-		switch (shutdownData.eShutdownType)
+		// Disarm before terminal work so another tick cannot execute it twice.
+		cancel_shutdown_ticks(timedShutdown);
+		const auto action = shutdownData.eShutdownType;
+		shutdownData.eShutdownType = TimedShutdownData::NONE;
+		switch (action)
 		{
 		case TimedShutdownData::OK:
 			snprintf(
@@ -4455,7 +4426,9 @@ void timedShutdown(P_char, P_char, P_obj, void * /*data*/)
 				"end!!!\033[0m\r\n\033[1;5;44m............\033[0m\r\n\033[1;5;44m........\033[0m\r\n\033[1;5;44m......\033[0m\r\n\033[1;5;44m...\033[0m\r\n\033[1;5;44m.\033[0m\n\r");
 			send_to_all(buf);
 			logit(LOG_STATUS, "Shutdown pwipe called.");
-			shutdownflag = _pwipe = 1;
+			// Pre-boundary drains must still publish/save accepted old-season work.
+			shutdownflag = 1;
+			_pwipe = 0;
 			if (!sql_pwipe(1723699))
 			{
 				if (sql_pwipe_crossed_boundary())
@@ -4490,55 +4463,21 @@ void timedShutdown(P_char, P_char, P_obj, void * /*data*/)
 	}
 	else
 	{
-		P_char issuer = NULL;
-		// find the god doing the shutdown.  If he/she loses link or logs off, the reboot will
-		// be cancelled.
-		for (P_desc d = descriptor_list; d; d = d->next)
+		const time_t secs = shutdownData.reboot_time - time(0);
+		if (secs <= 1)
 		{
-			if (d->character && isname(GET_NAME(d->character), shutdownData.IssuedBy))
+			cancel_shutdown_ticks(timedShutdown);
+			if (issuer)
 			{
-				issuer = d->character;
-				break;
+				int old_level = GET_LEVEL(issuer);
+				issuer->player.level = MAXLVL;
+				do_restore(issuer, writable_arg(" all"), CMD_RESTORE);
+				issuer->player.level = old_level;
 			}
-		}
-		/*   if(!ch)
-		   {
-		     // CANCEL the reboot.
-		     shutdownData.eShutdownType = TimedShutdownData::NONE;
-		     send_to_all("&+R*** Scheduled Reboot Cancelled ***&n\n");
-		     snprintf(buf, 500, "Scheduled reboot cancelled: unable to locate %s", shutdownData.IssuedBy);
-		     wizlog(60, buf);
-		     return;
-		   }
-	   */
-		// how much longer until a reboot?
-		time_t secs = shutdownData.reboot_time - time(0);
-		// special case:  going to reboot in less then ~1 second - force a restore all.
-		if ((secs <= 1) && (issuer != NULL))
-		{
-			// do restoreall here...
-			int old_level = GET_LEVEL(issuer);
-			issuer->player.level = MAXLVL;
-			do_restore(issuer, writable_arg(" all"), CMD_RESTORE);
-			issuer->player.level = old_level;
-
-			// setting the reboot_time to 0 forces the reboot to occur next event
 			shutdownData.reboot_time = 0;
-			secs *= WAIT_SEC;
-			if (!secs)
-				secs = 1;
-			add_event(timedShutdown, secs, NULL, NULL, NULL, 0, NULL, 0);
-			return;
-		}
-		else if (secs <= 1)
-		{
-			// no restore since no ch.
-			// setting the reboot_time to 0 forces the reboot to occur next event
-			shutdownData.reboot_time = 0;
-			secs *= WAIT_SEC;
-			if (!secs)
-				secs = 1;
-			add_event(timedShutdown, secs, NULL, NULL, NULL, 0, NULL, 0);
+			// An overdue wall deadline must still queue a positive final tick.
+			add_event(timedShutdown, secs > 0 ? WAIT_SEC : 1, NULL, NULL, NULL, 0, NULL,
+				  0);
 			return;
 		}
 		// if the next warning timer isn't set, set it now
@@ -4611,40 +4550,62 @@ void displayShutdownMsg(P_char ch)
 void do_shutdown(P_char ch, char *argument, int /*cmd*/)
 {
 	char buf[100], arg[MAX_STRING_LENGTH];
-
 	if (IS_NPC(ch))
 		return;
-
 	argument = one_argument(argument, arg);
+	const bool pwipe = !str_cmp(arg, "pwipe");
+	if (pwipe)
+	{
+		if (!persistence_mode_requires_mysql())
+		{
+			send_to_char("Pwipe is unavailable in flatfile-primary mode.\r\n", ch);
+			return;
+		}
+		if (GET_LEVEL(ch) < OVERLORD)
+		{
+			send_to_char(
+				"The world resists your attempt to destroy it! You must attain a higher level to do this.\r\n",
+				ch);
+			return;
+		}
+		char confirm[16], yes[16], extra;
+		if (!argument || sscanf(argument, " %15s %15s %c", confirm, yes, &extra) != 2 ||
+		    str_cmp(confirm, "confirm") || str_cmp(yes, "yes"))
+		{
+			send_to_char(
+				"You must use 'shutdown pwipe confirm yes' exactly for a player wipe.\r\n",
+				ch);
+			return;
+		}
+	}
 
 	int mins_to_reboot = 0;
-	const char *type = "reboot";
 	char reason[MAX_STRING_LENGTH] = "";
-
-	type = scheduled_shutdown_type_name(shutdownData.eShutdownType, false);
-
-	// Parse: shutdown <type> [minutes] [reason...]
 	char temp_arg[MAX_INPUT_LENGTH];
-	const char *reason_start = argument;
-
 	if (argument && *argument)
 	{
-		reason_start = one_argument(argument, temp_arg);
-
-		// If temp_arg is numeric, it's minutes
-		if (isdigit(temp_arg[0]))
+		const char *reason_start = one_argument(argument, temp_arg);
+		const bool delay = isdigit(static_cast<unsigned char>(temp_arg[0])) ||
+				   ((temp_arg[0] == '-' || temp_arg[0] == '+') &&
+				    isdigit(static_cast<unsigned char>(temp_arg[1])));
+		if (delay)
 		{
-			mins_to_reboot = atol(temp_arg);
-
-			// Skip whitespace to get to reason
-			while (isspace(*reason_start))
-				reason_start++;
-
-			// If there's text after minutes, that's the reason
+			char *end = NULL;
+			errno = 0;
+			const long minutes = strtol(temp_arg, &end, 10);
+			if (errno || !end || *end || minutes < 0 || minutes > INT_MAX / 60)
+			{
+				send_to_char(
+					"Invalid shutdown delay. Use a nonnegative whole number of minutes.\r\n",
+					ch);
+				return;
+			}
+			mins_to_reboot = static_cast<int>(minutes);
+			while (isspace(static_cast<unsigned char>(*reason_start)))
+				++reason_start;
 			if (*reason_start)
 				strlcpy(reason, reason_start, sizeof reason);
 		}
-		// If temp_arg is NOT numeric, entire argument is the reason
 		else
 			strlcpy(reason, argument, sizeof reason);
 	}
@@ -4656,7 +4617,7 @@ void do_shutdown(P_char ch, char *argument, int /*cmd*/)
 			shutdownData.eShutdownType = TimedShutdownData::AUTOREBOOT_COPYOVER;
 			send_to_all("&+R*** Code will copyover at auto reboot. ***&N\n");
 		}
-		return; // AutoReboots cannot be cycled.
+		return;
 	}
 	if (shutdownData.eShutdownType == TimedShutdownData::AUTOREBOOT_COPYOVER)
 	{
@@ -4665,121 +4626,83 @@ void do_shutdown(P_char ch, char *argument, int /*cmd*/)
 			shutdownData.eShutdownType = TimedShutdownData::AUTOREBOOT;
 			send_to_all("&+R*** Code will no longer copyover at auto reboot. ***&N\n");
 		}
-		return; // AutoReboots cannot be cycled.
-	}
-
-	// if there is a pending shutdown, cancel it now...
-	if ((shutdownData.eShutdownType != TimedShutdownData::NONE))
-	{
-		snprintf(buf, 100, "&+R*** Scheduled %s cancelled ***&n\n", type);
-		send_to_all(buf);
-		snprintf(buf, 100, "Scheduled %s cancelled by %s", type, GET_NAME(ch));
-		shutdownData.eShutdownType = TimedShutdownData::NONE;
-		wizlog(60, "%s", buf);
-		sql_log(ch, WIZLOG, "Shutdown cancelled by %s", GET_NAME(ch));
-		// Delete shutdown info file when cancelled
-		unlink("logs/shutdown_info.txt");
-	}
-
-	if (!*arg)
-	{
-		send_to_char(
-			"Syntax: shutdown <ok | reboot | copyover> [minutes] [reason]\r\n"
-			"\r\n"
-			"Examples:\r\n"
-			"  shutdown reboot                    - Immediate reboot (no reason given)\r\n"
-			"  shutdown reboot 5                  - Reboot in 5 minutes (no reason given)\r\n"
-			"  shutdown reboot updating new code  - Immediate reboot with reason\r\n"
-			"  shutdown reboot 5 emergency patch  - Reboot in 5 minutes with reason\r\n"
-			"  shutdown copyover fixing bug       - Hot restart with reason\r\n"
-			"  shutdown ok server maintenance     - Shutdown (no restart) with reason\r\n"
-			"\r\n"
-			"Notes:\r\n"
-			"  - Scheduled shutdowns are cancelled when the scheduler leaves the game\r\n"
-			"    or uses the shutdown command again\r\n"
-			"  - Reason is optional; it is broadcast to players and saved for tracking\r\n",
-			ch);
 		return;
 	}
 
-	if (!str_cmp(arg, "ok"))
+	auto requested = TimedShutdownData::NONE;
+	const bool crash = !str_cmp(arg, "segfault");
+	if (*arg)
 	{
-		shutdownData.eShutdownType = TimedShutdownData::OK;
-	}
-	else if (!str_cmp(arg, "reboot"))
-	{
-		shutdownData.eShutdownType = TimedShutdownData::REBOOT;
-	}
-	else if (!str_cmp(arg, "autoreboot"))
-	{
-		shutdownData.eShutdownType = TimedShutdownData::AUTOREBOOT;
-	}
-	else if (!str_cmp(arg, "copyover"))
-	{
-		shutdownData.eShutdownType = TimedShutdownData::COPYOVER;
-	}
-	else if (!str_cmp(arg, "pwipe"))
-	{
-		argument = one_argument(argument, arg);
-		if (!str_cmp(arg, "confirm"))
+		if (!str_cmp(arg, "ok"))
+			requested = TimedShutdownData::OK;
+		else if (!str_cmp(arg, "reboot"))
+			requested = TimedShutdownData::REBOOT;
+		else if (!str_cmp(arg, "autoreboot"))
+			requested = TimedShutdownData::AUTOREBOOT;
+		else if (!str_cmp(arg, "copyover"))
+			requested = TimedShutdownData::COPYOVER;
+		else if (pwipe)
+			requested = TimedShutdownData::PWIPE;
+		else if (!crash)
 		{
-			argument = one_argument(argument, arg);
-			if (!str_cmp(arg, "yes"))
-			{
-				send_to_char(
-					"&-RYou've done it now.. the world is really going away!!!&n\n\r",
-					ch);
-				if (GET_LEVEL(ch) < OVERLORD)
-				{
-					send_to_char(
-						"&=RLThe world resists your attempt to destroy it!  You must attain a higher level to do this.&n\n\r",
-						ch);
-					return;
-				}
-				send_to_char(
-					"&=glYou have _five_ minutes to reconsider and cancel the shutdown.&n\n\r",
-					ch);
-				shutdownData.eShutdownType = TimedShutdownData::PWIPE;
-				mins_to_reboot = 5;
-			}
-			else
-			{
-				send_to_char(
-					"&=RWYou must &n&=RL'shutdown pwipe confirm yes'&=RW to do this, as it's going to DELETE everything!!!&n\n\r",
-					ch);
-				return;
-			}
-		}
-		else
-		{
-			send_to_char(
-				"&-rYou must &+W'shutdown pwipe confirm'&n&-r to do this, as it's going to DELETE everything!!!&n\n\r",
-				ch);
-			send_to_char(
-				"&-rNot to be used for a partial wipe, and will wipe files you didn't know you had!!!&n\n\r",
-				ch);
+			send_to_char("Go shut down someone your own size.\n", ch);
 			return;
 		}
 	}
-	else if (!str_cmp(arg, "segfault"))
+
+	cancel_shutdown_ticks(timedShutdown);
+	if (shutdownData.eShutdownType != TimedShutdownData::NONE)
+	{
+		const char *type = scheduled_shutdown_type_name(shutdownData.eShutdownType, false);
+		snprintf(buf, sizeof buf, "&+R*** Scheduled %s cancelled ***&n\n", type);
+		send_to_all(buf);
+		shutdownData.eShutdownType = TimedShutdownData::NONE;
+		wizlog(60, "Scheduled %s cancelled by %s", type, GET_NAME(ch));
+		sql_log(ch, WIZLOG, "Shutdown cancelled by %s", GET_NAME(ch));
+		unlink("logs/shutdown_info.txt");
+	}
+	if (!*arg)
+	{
+		send_to_char(
+			"Syntax: shutdown <ok | reboot | copyover | autoreboot> [minutes] [reason]\r\n"
+			"        shutdown pwipe confirm yes\r\n"
+			"\r\n"
+			"Examples:\r\n"
+			"  shutdown reboot                    - Immediate reboot\r\n"
+			"  shutdown reboot 5 emergency patch  - Reboot in 5 minutes with reason\r\n"
+			"  shutdown copyover fixing bug       - Hot restart with reason\r\n"
+			"  shutdown ok server maintenance     - Stop without restart\r\n"
+			"\r\n"
+			"Manual countdowns cancel when the issuer leaves play, disconnects or loses permission.\r\n"
+			"A plain shutdown cancels; a valid new request replaces the countdown.\r\n"
+			"Invalid requests leave the countdown unchanged. Automatic reboots continue independently.\r\n"
+			"Pwipe requires Overlord permission and MariaDB-primary, with five minutes to cancel.\r\n",
+			ch);
+		return;
+	}
+	if (crash)
 	{
 		sql_log(ch, WIZLOG, "Shutdown - SIGSEGV by %s", GET_NAME(ch));
 		panic_corruption("actwiz", "shutdown segfault requested by %s", GET_NAME(ch));
 	}
-	else
+	shutdownData.eShutdownType = requested;
+	if (pwipe)
 	{
-		send_to_char("Go shut down someone your own size.\n", ch);
-		return;
+		send_to_char("&-RYou've done it now.. the world is really going away!!!&n\n\r", ch);
+		send_to_char(
+			"&=glYou have _five_ minutes to reconsider and cancel the shutdown.&n\n\r",
+			ch);
+		mins_to_reboot = 5;
+		strlcpy(reason, "Confirmed player wipe", sizeof reason);
 	}
-	type = scheduled_shutdown_type_name(shutdownData.eShutdownType, false);
-	strcpy(shutdownData.IssuedBy, GET_NAME(ch));
+	const char *type = scheduled_shutdown_type_name(shutdownData.eShutdownType, false);
+	strlcpy(shutdownData.IssuedBy, GET_NAME(ch), sizeof shutdownData.IssuedBy);
 	strlcpy(shutdownData.Reason, *reason ? reason : "No reason given",
 		sizeof shutdownData.Reason);
 	shutdownData.next_warning = -1;
-	shutdownData.reboot_time = (time(0) + (mins_to_reboot * 60));
-	snprintf(buf, sizeof buf, "Scheduled %s initiated by %s in %d minutes.", type, GET_NAME(ch),
-		 mins_to_reboot);
-	wizlog(60, "%s", buf);
+	shutdownData.reboot_time = time(0) + mins_to_reboot * 60;
+	wizlog(60, "Scheduled %s initiated by %s in %d minutes.", type, GET_NAME(ch),
+	       mins_to_reboot);
 	sql_log(ch, WIZLOG, "%s initiated by %s in %d minutes.", type, GET_NAME(ch),
 		mins_to_reboot);
 	if (*reason)
@@ -4787,7 +4710,6 @@ void do_shutdown(P_char ch, char *argument, int /*cmd*/)
 		send_to_all(reason);
 		send_to_all("&n\r\n");
 	}
-	// calling the event will start the event
 	timedShutdown(NULL, NULL, NULL, NULL);
 }
 
@@ -5792,9 +5714,9 @@ static void do_start_impl(P_char ch, int nomsg, bool grant_newbie_kit)
 
 	clear_title(ch);
 
-	if (grant_newbie_kit && !(GET_CLASS(ch, CLASS_AVENGER | CLASS_DREADLORD)) &&
-	    !((GET_RACE(ch) == RACE_DUERGAR || GET_RACE(ch) == RACE_MOUNTAIN) &&
-	      GET_CLASS(ch, CLASS_BERSERKER)))
+	// Dwarf Berserkers are normal creation choices and receive the same kit
+	// here as in deferred creation and empty-inventory newbie regrants.
+	if (grant_newbie_kit && !(GET_CLASS(ch, CLASS_AVENGER | CLASS_DREADLORD)))
 	{
 		load_obj_to_newbies(ch);
 	}
@@ -8507,51 +8429,40 @@ void do_knock(P_char ch, char *arg, int /*cmd*/)
 	return;
 }
 
-void do_ingame(P_char ch, char *args, int /*cmd*/)
+// Staff command templates accept only their named target token. All other
+// percent sequences are literal text, never printf conversions.
+static bool substitute_staff_target(char *output, size_t capacity, const char *text, char token,
+				    const char *name)
 {
-	char buf1[MAX_STRING_LENGTH], buf2[MAX_STRING_LENGTH], buf3[MAX_STRING_LENGTH];
-	char name[MAX_NAME_LENGTH + 1];
-	P_desc desc;
-	char *pIn, *pOut;
-	int count, i;
-	bool percent;
-
-	count = 0;
-	percent = FALSE;
-	pIn = args;
-	pOut = buf1;
-	while (*pIn != '\0')
+	size_t used = 0;
+	const size_t name_length = strlen(name);
+	for (const char *part = text; *part;)
 	{
-		// Leading %.
-		if (*pIn == '%')
+		if (part[0] == '%' && part[1] == token)
 		{
-			percent = TRUE;
-			*(pOut++) = '%';
-			pIn++;
+			if (name_length >= capacity - used)
+				return false;
+			memcpy(output + used, name, name_length);
+			used += name_length;
+			part += 2;
 		}
-		// %p -> substitute.
-		else if (percent && (*pIn == 'p'))
-		{
-			percent = FALSE;
-			// We have the first % from initial if.
-			// For each additional %p, we need to add %'s to total 2^count.
-			for (i = (1 << (count++)) - 1; i > 0; i--)
-			{
-				*(pOut++) = '%';
-			}
-			*(pOut++) = 's';
-			pIn++;
-		}
-		// Regular character.
 		else
 		{
-			percent = FALSE;
-			*(pOut++) = *(pIn++);
+			if (used + 1 >= capacity)
+				return false;
+			output[used++] = *part++;
 		}
 	}
-	*pOut = '\0';
+	output[used] = '\0';
+	return true;
+}
 
-	if (count == 0)
+void do_ingame(P_char ch, char *args, int /*cmd*/)
+{
+	char command_text[MAX_STRING_LENGTH];
+	char name[MAX_NAME_LENGTH + 1];
+	P_desc desc;
+	if (!strstr(args, "%p"))
 	{
 		send_to_char("Bleah. Try ingame <string>, and include a %p somewhere.\n", ch);
 		return;
@@ -8564,48 +8475,39 @@ void do_ingame(P_char ch, char *args, int /*cmd*/)
 		    CAN_SEE(ch, desc->character) && (GET_LEVEL(desc->character) < GET_LEVEL(ch)))
 		{
 			snprintf(name, sizeof name, "%s", GET_TRUE_NAME(desc->character));
-			// We know there's at least one %s in the string that needs substituting.
-			checked_snprintf_runtime(buf2, MAX_STRING_LENGTH, buf1, name);
-			i = 1;
-			// Substitute the rest if there are any.
-			while (i++ < count)
+			if (!substitute_staff_target(command_text, sizeof command_text, args, 'p',
+						     name))
 			{
-				// Swap back and forth between buffers.
-				if ((i % 2) == 0)
-					checked_snprintf_runtime(buf3, MAX_STRING_LENGTH, buf2,
-								 name);
-				else
-					checked_snprintf_runtime(buf2, MAX_STRING_LENGTH, buf3,
-								 name);
+				send_to_char("That command is too long.\n", ch);
+				return;
 			}
-			// count % 2 tells us which buffer we have the final string.
-			if ((count % 2) == 0)
-			{
-				command_interpreter(ch, buf3);
-			}
-			else
-			{
-				command_interpreter(ch, buf2);
-			}
+			command_interpreter(ch, command_text);
 		}
 	}
 }
 
 void do_inroom(P_char ch, char *args, int /*cmd*/)
 {
-	char buf1[MAX_STRING_LENGTH], buf2[MAX_STRING_LENGTH];
-	char *p;
+	char command_text[MAX_STRING_LENGTH];
 	P_char v, v_next;
 	int target;
+	char token;
 
-	strcpy(buf1, args); /* don't wanna change args directly */
-
-	if ((p = strstr(buf1, " %p")))
+	if (strstr(args, " %p"))
+	{
 		target = 1;
-	else if ((p = strstr(buf1, " %m")))
+		token = 'p';
+	}
+	else if (strstr(args, " %m"))
+	{
 		target = 2;
-	else if ((p = strstr(buf1, " %a")))
+		token = 'm';
+	}
+	else if (strstr(args, " %a"))
+	{
 		target = 3;
+		token = 'a';
+	}
 	else
 	{
 		/* error.. no token provided  */
@@ -8620,16 +8522,6 @@ void do_inroom(P_char ch, char *args, int /*cmd*/)
 		return;
 	}
 
-	/* okay... now we have p pointing to the space before the % token.
-	   move it forward two places, and replace the letter with an 's' for
-	   use in sprintf  */
-
-	p++;
-	p++;
-	*p = 's';
-
-	/* okay.. now buf1 is setup as an arguement for sprintf...   */
-
 	for (v = world[ch->in_room].people; v; v = v_next)
 	{
 		v_next = v->next_in_room;
@@ -8637,19 +8529,13 @@ void do_inroom(P_char ch, char *args, int /*cmd*/)
 		    (IS_NPC(v) && (target == 1)) || (ch == v))
 			continue;
 
-		/*
-		 * Serious flaw in this (and MANY other functions): if the users
-		 * does "inroom grin %pc %s" that extra %s is going to cause
-		 * problems... For now, I'm going to just "hope" that people
-		 * aren't that stupid (considering thats what the code does
-		 * everywhere else)
-		 */
-
-		checked_snprintf_runtime(buf2, MAX_STRING_LENGTH, buf1, FirstWord(GET_NAME(v)));
-
-		/* okay.. now just dump buf2 to the command interpretter  */
-
-		command_interpreter(ch, buf2);
+		if (!substitute_staff_target(command_text, sizeof command_text, args, token,
+					     FirstWord(GET_NAME(v))))
+		{
+			send_to_char("That command is too long.\n", ch);
+			return;
+		}
+		command_interpreter(ch, command_text);
 	}
 }
 
@@ -10148,17 +10034,16 @@ void tranquilize(P_char ch, P_char victim)
 			return;
 	}
 
+	for (P_char tch = world[victim->in_room].people; tch; tch = tch->next_in_room)
+	{
+		if (GET_OPPONENT(tch) == victim)
+		{
+			stop_fighting(tch);
+			clearMemory(tch);
+		}
+	}
 	if (GET_OPPONENT(victim))
 	{
-		for (P_char tch = world[victim->in_room].people; tch; tch = tch->next_in_room)
-		{
-			if (GET_OPPONENT(tch) && (GET_OPPONENT(tch) == victim))
-			{
-				stop_fighting(tch);
-				clearMemory(tch);
-			}
-		}
-
 		stop_fighting(victim);
 		clearMemory(victim);
 	}
@@ -13247,7 +13132,7 @@ void lookup_account(P_char ch, const char * /*arguments*/)
 	send_to_char("Not supported yet.\n", ch);
 }
 
-#define ACCOUNT_SYNTAX ""
+#define ACCOUNT_SYNTAX "Usage: account i <online player> (account lookup/edit unavailable).\n"
 
 void do_account(P_char ch, char *arg, int /*cmd*/)
 {

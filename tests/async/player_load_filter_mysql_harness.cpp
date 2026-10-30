@@ -9,6 +9,9 @@
 #include "player/player_save_worker.h"
 #include "player/player_snapshot_repository.h"
 #include "sql/sql_pool.h"
+#include "combat/combat_outcome_command.h"
+#include "world/zone_touch_command.h"
+#include "world/epic_command.h"
 
 #include <algorithm>
 #include <cstdlib>
@@ -141,7 +144,13 @@ int main()
 				loaded_uids(duplicate_load) ==
 					std::vector<uint64_t>{ stable_uid } &&
 				duplicate_load.snapshot.retained_items.rows.size() == 2,
-			"valid/unreadable duplicate roots were not both retained");
+			"valid/unreadable duplicate roots were not both retained: component=" +
+				std::string(duplicate_load.failed_component ?
+						    duplicate_load.failed_component :
+						    "none") +
+				", outcome=" +
+				std::to_string(static_cast<int>(duplicate_load.outcome)) +
+				", mysql=" + mysql_error(test_connection));
 		auto independent = save_holding(pid, 2, duplicate_load.snapshot.items);
 		independent.retained_items = duplicate_load.snapshot.retained_items;
 		independent.items[0].values[0] = 37;
@@ -391,6 +400,257 @@ int main()
 				player_save_apply_outcome::applied &&
 			progress(11) == std::pair(uint64_t{ 7 }, int64_t{ 54321 }),
 		"discovery checkpoint retry failed");
+
+	// Quest recovery and the associated payment share one status checkpoint.
+	const auto legacy_quest = load(12, 480);
+	require(legacy_quest.outcome == player_load_outcome::applied,
+		"legacy quest fixture could not load");
+	for (auto field :
+	     { player_status_field::quest_origin_room, player_status_field::quest_replacement_due })
+		require(std::any_of(legacy_quest.snapshot.status_integers.begin(),
+				    legacy_quest.snapshot.status_integers.end(),
+				    [field](const auto &row)
+				    { return row.field == field && row.signed_value == 0; }),
+			"legacy SQL quest did not default its recovery state");
+	player_snapshot quest = {};
+	quest.schema_version = PLAYER_SNAPSHOT_SCHEMA_VERSION;
+	quest.pid = 12;
+	quest.revision = 100;
+	quest.components = PLAYER_COMPONENT_STATUS;
+	quest.encoded_size_bound = 4096;
+	quest.wallet_revision = legacy_quest.domains.wallet_revision + 1;
+	quest.quest_values = { 0, 23501, 1, 0, 123, 234, 16553, 11, 0, 2, 4, 7, 12345, 1 };
+	quest.status_integers = {
+		{ player_status_field::quest_origin_room, 16633, 0, false },
+		{ player_status_field::quest_replacement_due, 1, 0, false },
+		{ player_status_field::gold, 123, 0, false },
+	};
+	const auto check_quest = [&](const player_snapshot &expected)
+	{
+		const auto restored = load(12, 481);
+		require(restored.outcome == player_load_outcome::applied &&
+				restored.snapshot.quest_values == expected.quest_values &&
+				restored.domains.wallet_revision == expected.wallet_revision &&
+				restored.domains.wallet[2] ==
+					static_cast<uint64_t>(
+						expected.status_integers[2].signed_value),
+			"quest progress or wallet did not reload together");
+		for (size_t index = 0; index < 2; ++index)
+			require(std::any_of(restored.snapshot.status_integers.begin(),
+					    restored.snapshot.status_integers.end(),
+					    [&](const auto &row)
+					    {
+						    return row.field ==
+								   expected.status_integers[index]
+									   .field &&
+							   row.signed_value ==
+								   expected.status_integers[index]
+									   .signed_value;
+					    }),
+				"quest recovery field did not reload");
+	};
+	require(player_snapshot_repository_apply(test_connection, quest).outcome ==
+			player_save_apply_outcome::applied,
+		"quest recovery checkpoint failed");
+	check_quest(quest);
+	auto quest_languages = quest;
+	quest_languages.components = PLAYER_COMPONENT_LANGUAGES;
+	quest_languages.revision++;
+	require(player_snapshot_repository_apply(test_connection, quest_languages).outcome ==
+			player_save_apply_outcome::applied,
+		"quest unrelated-component checkpoint failed");
+	check_quest(quest);
+	auto replacement = quest;
+	replacement.revision += 2;
+	replacement.wallet_revision++;
+	replacement.status_integers[0].signed_value = 12801;
+	replacement.status_integers[1].signed_value = 0;
+	replacement.status_integers[2].signed_value = 100;
+	execute("CREATE TRIGGER reject_quest_save BEFORE UPDATE ON player_data FOR EACH ROW "
+		"SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT='synthetic quest save failure'");
+	require(player_snapshot_repository_apply(test_connection, replacement).outcome ==
+			player_save_apply_outcome::terminal_failure,
+		"synthetic quest save failure was not reported");
+	check_quest(quest);
+	execute("DROP TRIGGER reject_quest_save");
+	require(player_snapshot_repository_apply(test_connection, replacement).outcome ==
+			player_save_apply_outcome::applied,
+		"quest replacement checkpoint retry failed");
+	check_quest(replacement);
+
+	player_snapshot delivery = discovery;
+	delivery.revision++;
+	delivery.status_integers = { { player_status_field::epics, 450, 0, false },
+				     { player_status_field::divine_boon_delivery_seq, 0, 3,
+				       true } };
+	require(player_snapshot_repository_apply(test_connection, delivery).outcome ==
+			player_save_apply_outcome::applied,
+		"Divine delivery checkpoint failed");
+	const auto delivered = [&]()
+	{
+		const auto result = load(11, 499);
+		require(result.outcome == player_load_outcome::applied &&
+				result.snapshot.status_integers.size() ==
+					PLAYER_STATUS_INTEGER_COUNT,
+			"Divine checkpoint status could not reload");
+		for (const auto &field : result.snapshot.status_integers)
+			if (field.field == player_status_field::divine_boon_delivery_seq)
+			{
+				require(field.is_unsigned, "Divine marker loaded as signed");
+				return std::pair(result.domains.epics, field.unsigned_value);
+			}
+		std::abort();
+	};
+	require(delivered() == std::pair(int64_t{ 450 }, uint64_t{ 3 }),
+		"Divine marker and epic balance did not reload together");
+	execute("CREATE TRIGGER reject_divine_save BEFORE UPDATE ON player_data FOR EACH ROW "
+		"SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT='synthetic delivery failure'");
+	delivery.revision++;
+	delivery.status_integers[0].signed_value = 500;
+	delivery.status_integers[1].unsigned_value = 4;
+	require(player_snapshot_repository_apply(test_connection, delivery).outcome ==
+				player_save_apply_outcome::terminal_failure &&
+			delivered() == std::pair(int64_t{ 450 }, uint64_t{ 3 }),
+		"failed delivery checkpoint changed the balance or applied marker");
+	execute("DROP TRIGGER reject_divine_save");
+
+	// Read an actual prepared parent result through the ordinary login query.
+	combat_outcome_result pending = {};
+	pending.event_id = 1;
+	pending.victim_pid = 12;
+	pending.prepared_at = 150;
+	pending.participant_count = 2;
+	pending.participants[0].pid = 11;
+	pending.participants[0].epic_revision = 4;
+	pending.participants[0].epic_delivery_previous = 3;
+	pending.participants[0].epic_delivery_delta = 30;
+	pending.participants[0].epic_boon_id = 7;
+	pending.participants[0].epic_base = 20;
+	pending.participants[0].epic_delivery_flags = COMBAT_PARTICIPANT_DIVINE_EPIC;
+	pending.participants[1].pid = 12;
+	std::array<uint8_t, COMBAT_OUTCOME_RESULT_BYTES> pending_bytes;
+	require(combat_outcome_command_encode_result(pending, &pending_bytes),
+		"encode prepared parent");
+	std::string parent_hex;
+	static const char digits[] = "0123456789abcdef";
+	for (uint8_t byte : pending_bytes)
+	{
+		parent_hex += digits[byte >> 4];
+		parent_hex += digits[byte & 15];
+	}
+	const std::string operation = "0123456789abcdef0123456789abcdef";
+	execute("INSERT INTO critical_operation_inbox(operation_id,command_hash,keys_hash,command_type,"
+		"schema_version,payload_version,status,result_code,durable_revision,result_payload,committed_at) "
+		"VALUES(UNHEX('" +
+		operation + "'),REPEAT(CHAR(0),32),REPEAT(CHAR(0),32),8,1,5,1,0,4,UNHEX('" +
+		parent_hex + "'),CURRENT_TIMESTAMP(6))");
+	execute("INSERT INTO pkill_event(stamp,room_vnum,room_name) VALUES(NOW(),1,'Divine fixture')");
+	const auto event = mysql_insert_id(test_connection);
+	execute("INSERT INTO combat_outcome(operation_id,pkill_event_id,victim_pid,room_vnum,participant_count,killer_allies) "
+		"VALUES(UNHEX('" +
+		operation + "')," + std::to_string(event) + ",12,1,2,1)");
+	execute("INSERT INTO combat_outcome_participant(operation_id,participant_index,pid,role,flags,frag_delta,"
+		"epic_delta,wallet_delta_copper,frag_after,frag_revision,epic_revision,wallet_revision,bank_revision) "
+		"VALUES(UNHEX('" +
+		operation +
+		"'),0,11,1,9,100,30,0,0,0,4,0,0),"
+		"(UNHEX('" +
+		operation + "'),1,12,3,1,0,0,0,0,0,0,0,0)");
+	const auto owed = load(11, 501);
+	require(owed.outcome == player_load_outcome::applied && owed.domains.epics == 450 &&
+			owed.divine_epic_deliveries.size() == 1 &&
+			owed.divine_epic_deliveries[0].previous == 3 &&
+			owed.divine_epic_deliveries[0].sequence == 4 &&
+			owed.divine_epic_deliveries[0].amount == 30,
+		"login did not retain the unpaid prepared award");
+	execute("UPDATE critical_operation_inbox SET result_payload=CONCAT(CHAR(0),SUBSTRING(result_payload,2)) "
+		"WHERE operation_id=UNHEX('" +
+		operation + "')");
+	const auto corrupt_parent = load(11, 502);
+	require(corrupt_parent.outcome == player_load_outcome::component_failure &&
+			std::string(corrupt_parent.failed_component) == "divine_epic_delivery",
+		"login accepted a corrupt prepared parent");
+	execute("UPDATE critical_operation_inbox SET result_payload=UNHEX('" + parent_hex +
+		"') "
+		"WHERE operation_id=UNHEX('" +
+		operation + "')");
+	delivery.revision++;
+	delivery.status_integers[0].signed_value = 480;
+	require(player_snapshot_repository_apply(test_connection, delivery).outcome ==
+			player_save_apply_outcome::applied,
+		"prepared payout checkpoint failed");
+	const auto paid_parent = load(11, 503);
+	require(paid_parent.outcome == player_load_outcome::applied &&
+			paid_parent.domains.epics == 480 &&
+			paid_parent.divine_epic_deliveries.empty(),
+		"paid parent was offered again after checkpoint");
+
+	zone_touch_result zone;
+	zone.zone_number = 18;
+	zone.toucher_pid = 11;
+	zone.stone_uid = 991;
+	zone.touched_at = 150;
+	zone.group_size = 1;
+	zone.participant_pids[0] = 11;
+	zone.epic_value = 100;
+	zone.awards[0] = { 150, 0, 0, 7, 100 };
+	zone.revisions[0] = 5;
+	zone.previous[0] = 4;
+	zone.prepared_delivery = true;
+	zone.parent_operation.bytes[0] = 67;
+	std::array<uint8_t, ZONE_TOUCH_RESULT_BYTES> zone_bytes;
+	require(zone_touch_command_encode_result(zone, &zone_bytes), "encode zone delivery");
+	std::string zone_hex;
+	for (uint8_t byte : zone_bytes)
+	{
+		zone_hex += digits[byte >> 4];
+		zone_hex += digits[byte & 15];
+	}
+	critical_operation_id child_operation = {};
+	require(critical_operation_id_derive(zone.parent_operation, 0x5a544132, 11,
+					     &child_operation),
+		"derive zone award child");
+	char child_hex[CRITICAL_COMMAND_ID_HEX_SIZE] = {};
+	critical_operation_id_to_hex(child_operation, child_hex, sizeof(child_hex));
+	const std::string child = child_hex;
+	execute("INSERT INTO critical_operation_inbox(operation_id,command_hash,keys_hash,command_type,"
+		"schema_version,payload_version,status,result_code,durable_revision,result_payload,committed_at) "
+		"VALUES(UNHEX('" +
+		child + "'),REPEAT(CHAR(0),32),REPEAT(CHAR(0),32),2,1,1,1,0,5,UNHEX('" + zone_hex +
+		"'),CURRENT_TIMESTAMP(6))");
+	execute("INSERT INTO epic_ledger(operation_id,pid,delta,balance_after,epic_revision,reason_type,reason_id,source_site) "
+		"VALUES(UNHEX('" +
+		child + "'),11,150,630,5," +
+		std::to_string(static_cast<uint16_t>(epic_reason_type::divine_zone_award)) +
+		",18,3)");
+	const auto zone_owed = load(11, 504);
+	require(zone_owed.outcome == player_load_outcome::applied &&
+			zone_owed.divine_epic_deliveries.size() == 1 &&
+			zone_owed.divine_epic_deliveries[0].zone &&
+			zone_owed.divine_epic_deliveries[0].sequence == 5 &&
+			zone_owed.divine_epic_deliveries[0].previous == 4 &&
+			zone_owed.divine_epic_deliveries[0].amount == 150,
+		"login did not recover the prepared zone award");
+	// A fully valid receipt from a different parent must not be accepted as
+	// the child ledger operation for this player.
+	zone.parent_operation.bytes[0] ^= 0x40;
+	std::array<uint8_t, ZONE_TOUCH_RESULT_BYTES> wrong_parent_bytes;
+	require(zone_touch_command_encode_result(zone, &wrong_parent_bytes),
+		"encode mismatched zone receipt");
+	std::string wrong_parent_hex;
+	for (uint8_t byte : wrong_parent_bytes)
+	{
+		wrong_parent_hex += digits[byte >> 4];
+		wrong_parent_hex += digits[byte & 15];
+	}
+	execute("UPDATE critical_operation_inbox SET result_payload=UNHEX('" + wrong_parent_hex +
+		"') WHERE operation_id=UNHEX('" + child + "')");
+	require(load(11, 505).outcome == player_load_outcome::component_failure,
+		"unrelated zone parent receipt was accepted");
+	execute("UPDATE critical_operation_inbox SET result_payload=CONCAT(CHAR(0),SUBSTRING(result_payload,2)) WHERE operation_id=UNHEX('" +
+		child + "')");
+	require(load(11, 506).outcome == player_load_outcome::component_failure,
+		"corrupt zone receipt was accepted");
 
 	mysql_close(test_connection);
 	mysql_library_end();

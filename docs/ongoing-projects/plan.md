@@ -1,504 +1,380 @@
-# Issue #59: fastest useful PostHog delivery
-
-> **DO NOT SCOPE CREEP. WE ARE OUT OF TIME AND TOKENS. DELIVER FAST.**
->
-> Owner directive: finish only the agreed reduced delivery. Reuse existing code
-> and valid evidence. No optional features, refactors, test matrices, new test
-> frameworks, repeated branch syncing, or extra qualification stages. Fix only
-> defects that prevent the agreed outcome; run the smallest relevant checks.
-> Deferred work must never become a condition for closing issue #59.
-> Preserve the agreed correctness and completion requirements; cut extra work.
-
-Status: **all five reduced-delivery criteria pass; ready for review; production disabled.**
-Tracking: [Duris #59](https://github.com/LuminariMUD/Duris/issues/59).
-Working branch: `issue-59-posthog-reports`, based on acceptance PR #262.
-Runtime PR #261 is the preceding dependency.
-The earlier issue-107 plan remains in [plan-issue-107.md](plan-issue-107.md).
-The intervening Assassin plan is preserved byte-for-byte in
-[plan-issue-187.md](plan-issue-187.md).
-
-The owner has authorized a smaller first delivery that retains at least 75% of
-value and has removed the container/network-isolation requirement completely.
-Disposable native tests are the accepted environment. This plan supersedes the
-previous implementation sequence and its extra completion gates. Issue #59
-closes when this reduced delivery meets the completion criteria below. Deferred
-work is outside #59's closure requirements and remains optional follow-up.
-Implementation is active within the agreed reduced scope. The worker HTTPS component is in [PR #260](https://github.com/LuminariMUD/Duris/pull/260); runtime
-integration is ready for review in [PR #261](https://github.com/LuminariMUD/Duris/pull/261).
-Gameplay, failure, reports, volume and the retained performance gate all pass.
-The complete reduced delivery is ready for review. Production export remains disabled.
-
-## Delivery target and estimate
-
-**DO NOT SCOPE CREEP. WE ARE OUT OF TIME AND TOKENS. DELIVER FAST.**
-
-**The repeated 3–5 hour remaining estimate is withdrawn. No replacement ETA
-has been validated.** Do not reset the estimate after time has elapsed or present
-historical passing results as proof for a changed revision. The owner has resumed implementation within the agreed scope.
-
-Implementation and all five acceptance criteria are complete. The final measured
-evidence is recorded below and in PERFORMANCE_GATE.md. Review and separately
-authorized production activation are the remaining external steps; deferred work
-is never a closure condition. Stop adding implementation or qualification work.
-
-No Docker setup, additional machine, database installation, fixed soak period,
-CI wait, or extra qualification stage belongs on this delivery path. Required
-code review still applies.
-
-### What “at least 75%” means here
-
-**DO NOT SCOPE CREEP. WE ARE OUT OF TIME AND TOKENS. DELIVER FAST.**
-
-Retain every analytics domain named in the issue and the controls that make its
-data useful and affordable. The following is an explicit planning value model,
-not a measured user-satisfaction score or a claim that implementation is 85% done.
-
-| Outcome | Value weight | Retained in this delivery |
-| --- | ---: | ---: |
-| Character activity/returns and correctly allocated time | 35 | 35 |
-| Observed XP, attempts, modifiers and level changes | 15 | 15 |
-| Encounter outcomes, participant and separate pet contributions | 15 | 15 |
-| Bounded delivery, privacy, durable quota, useful health and lifecycle correctness | 20 | 20 |
-| Complete removal of legacy SQL boot/schema prerequisites | 10 | 0 — deferred |
-| Broad engine/capacity qualification beyond the release fixture | 5 | 0 — deferred |
-| **Total** | **100** | **85** |
-
-This retains an estimated **85% of the original plan's value**, with all four
-user-facing report domains. The tradeoff is an existing-schema dependency for
-SQL gameplay and narrower capacity evidence. Core correctness, privacy and
-quota limits are acceptance conditions, not optional points to trade away.
-
-## Scope decisions
-
-**DO NOT SCOPE CREEP. WE ARE OUT OF TIME AND TOKENS. DELIVER FAST.**
-The reduced scope below is the delivery boundary. Deferred work stays deferred.
-
-| Keep now | Simplify now | Defer beyond this delivery |
-| --- | --- | --- |
-| All six exported event families and the existing reducers | Reuse the implemented reducer/sender/journal APIs directly in the existing worker | Removing the nine old telemetry tables from the mandatory SQL boot inventory |
-| SQL-backed and flat-file gameplay | One adapted native player journey with backend selection and a fake HTTPS receiver | Regenerating the two engine fingerprints and the absent/drifted legacy-table matrix |
-| Four useful report views and one saved health query | Plain saved insights/tables with captured-dimension filters and exact query definitions | Additional dashboards, presentation polish and historical report parity |
-| Essential lifecycle, storage, retry and arithmetic regressions | Reuse component evidence; add only integration-specific checks | New cross-products of already-covered faults and repeated whole-repository qualification |
-| Measured gameplay/save overhead and a complete event forecast | Paired off/mock-HTTPS runs on one declared representative fixture; one small real-cloud smoke | Full 200-player qualification, all workload ramps and performance runs against real cloud latency |
-| Disable the obsolete SQL writer and replaced live rollup scheduling | Remove the writer from active delivery/linking and obsolete active settings | Bulk removal of historical-only writer/report files and their tests |
-
-The retained SQL boot checks and historical tables remain intact. SQL gameplay
-still requires its existing schema; PostHog must require no telemetry DB account
-or active telemetry SQL connection. Flat-file gameplay has no SQL requirement.
-Do not claim full SQL schema decoupling; it is not required to close issue #59.
-Do not weaken gameplay schema checks to make a fixture start.
-
-No SDK, service, sink framework, second queue, payload spool, new instrumentation,
-backfill, account linkage, paid analytics add-on or balance change is needed.
-No production data, migration history or independent reward tooling is removed.
-
-PR #259 review carry-forward: the native `rollover-season` command preserves
-history and exhausts the current UTC day without changing the sender allocation.
-Failed registration retries reuse one terminal quota archive. The storage guide
-documents both wire versions, witness sizes and recovery. Focused journal, CLI,
-worker and sanitizer regressions passed; integrated PostHog reduction passes 57
-scenarios in each backend after carrying the earlier reducer fixes forward.
-
-Repeated `exhaust-day` and `rollover-season` commands for an already exhausted
-current day/season preserve the generation, ledger/witness bytes and archive count.
-Retries synchronize the directory to finish a prior successful rename; new-day or
-new-season exhaustion still publishes normally. Native, CLI and publication-fault
-regressions verify this follow-up review repair.
-
-## Current state and quick checks
-
-**DO NOT SCOPE CREEP. WE ARE OUT OF TIME AND TOKENS. DELIVER FAST.**
-Reuse valid evidence; repeat checks only for relevant changes or actual failures.
-
-The implemented pieces are on the existing stack. Preserve the current worktree;
-do not restart these components or reimplement their contracts.
-
-| Piece | Existing evidence / location |
-| --- | --- |
-| Setup and percentile correction | PRs [252](https://github.com/LuminariMUD/Duris/pull/252), [253](https://github.com/LuminariMUD/Duris/pull/253); integer per-mille p99/p99.9 regressions already implemented. |
-| Opaque identities, UTC/UUID/integer encodings and volume fixture | [PR 254](https://github.com/LuminariMUD/Duris/pull/254), `telemetry_posthog.*`, `fixtures/telemetry/posthog/{encodings,volume}.json`. |
-| Character, encounter/combat and health reduction | PRs [255](https://github.com/LuminariMUD/Duris/pull/255), [257](https://github.com/LuminariMUD/Duris/pull/257), [258](https://github.com/LuminariMUD/Duris/pull/258). |
-| Durable quota and native state tool | [PR 259](https://github.com/LuminariMUD/Duris/pull/259); existing outage-journal regressions include reservation, restart, corruption and publication failure. |
-| Worker HTTPS sender | PR #260 ready for review; component suite and both full builds pass. Runtime integration is in #261; acceptance work is on this branch. |
-
-Checks completed during this replanning pass on 2026-10-21 UTC:
-
-- Fixed the test-only DNS endpoint to use `stall.invalid`, avoiding libcurl's
-  localhost shortcut. The injected resolver writes a marker proving it ran;
-  the test retains deadline/cancellation/ambiguous-loss assertions and verifies
-  zero received requests. Production endpoint handling is unchanged.
-- `nice -n 10 python3 tests/async/test_telemetry_posthog.py` passed in MariaDB
-  and flat-file build modes under UBSan: **42 reducer scenarios and 29 HTTPS
-  scenarios per mode**, plus encodings and all four volume forecasts. Evidence:
-  `bin/issue59/fast-plan/posthog.log`. This includes the previously unreached
-  monotonic-clock case and the stalled-DNS cancellation case.
-- `env -i PATH="$PATH" LANG=C.UTF-8 ENVIRONMENT=local nice -n 10 python3
-  tests/async/test_player_base_stats_mysql.py` passed using native MariaDB
-  **11.8.6**, disposable socket-only databases and synthetic data. Fresh and
-  upgrade schemas passed migrations, the runtime compatibility verifier and
-  native repository save/readback checks. Evidence: `bin/issue59/fast-plan/native-db.log`.
-  This did not run the optional interactive login journey and does not prove
-  PostHog runtime integration. It establishes that another engine installation
-  is not a prerequisite for the retained-schema native fixture.
-- Full `nice -n 10 make -C src -j1 PERSISTENCE_BACKEND=<backend>
-  BIN_ROOT="$PWD/bin/issue59/<backend>"` builds passed sequentially for
-  `mariadb` and `flatfile`. Evidence: `bin/issue59/fast-plan/build-<backend>.log`.
-  The earlier failed `build-mariadb-http.log` is superseded by these results.
-- `python3 tests/async/test_telemetry_contract_headers.py` passed; evidence:
-  `bin/issue59/fast-plan/headers.log`. Formatting and whitespace checks passed.
-- Read-only PostHog tools confirmed project **678214**, **Duris SBS PostHog**,
-  UTC, admin access, one starter dashboard, `ingested_event=false`, free billing,
-  no active subscription and **0 / 1,000,000** analytics events reported for the
-  current period. This is a readiness snapshot, not ingestion or write proof.
-  Recheck usage before cloud capture. No cloud events or dashboard changes were
-  made during replanning.
-
-The native executable is built but not deployed. Do not use these component
-results to claim real gameplay delivery, production performance or cloud totals.
-
-## Contracts to reuse
-
-**DO NOT SCOPE CREEP. WE ARE OUT OF TIME AND TOKENS. DELIVER FAST.**
-Reuse these contracts; do not redesign or expand them for this delivery.
-
-[CONTRACT.md](../telemetry/CONTRACT.md) is the implementation reference for event
-schemas, identity, reducer bounds, delivery and quota. Keep its completed behavior;
-update only actual integration changes. The old plan's duplicated design prose
-is replaced by that reference and the following integration invariants.
-
-- Existing value-only gameplay capture → bounded queue → existing worker →
-  reducer → immutable output → HTTPS. Each admitted native record is consumed
-  once or explicitly lost. HTTP retries never feed records into reduction again.
-- Keep HMAC character identities scoped by environment/season, logical session
-  identity through reconnect/copyover, distinct run/pet IDs, immutable event UUIDs
-  and lossless integer encodings. No raw PIDs, names, account identifiers, IPs,
-  commands, chat, room locations or secrets leave the game.
-- Time charts sum observed interval deltas. Checkpoints reconcile gaps separately.
-  Preserve captured dimensions, XP attempt/source/modifier and level boundaries,
-  pet/owner separation, and null/unknown coverage. Never invent a zero or fill
-  historical dimensions from current game state.
-- Keep the existing bounds: 256 sessions, 64 configurations, 128 runs with
-  64 combined player/pet identities, 32 time and 32 XP buckets per fragment,
-  128 output events / 512 KiB, 32 KiB per event, 64 events / 256 KiB per HTTP
-  batch, and 120-second retained output/terminal wait limits.
-- Use **30-minute export summaries for the first release**. The reducer already
-  accepts 1,800 seconds. The declared 200-average-character mix forecasts
-  **396,454 submissions/31 days**, versus **706,077** at 15 minutes. This selects
-  the issue's permitted volume fallback before spending time tuning two rollout
-  configurations. It does not change native capture cadence or prove capacity.
-  Lifecycle/level/configuration/day boundaries still flush as required.
-- Keep 1s connect / 2s total HTTP timeouts, nearer lifecycle deadlines, five
-  immutable attempts, bounded Retry-After, paced recovery and permanent-error
-  circuits. TLS and host checks stay enabled; no redirect or environment proxy
-  can carry the token. Keep asynchronous DNS/QUICK_EXIT and owner-safe teardown.
-- Keep normal-load submissions **≤450,000/31 days**, combined Duris attempts
-  **≤20,000/UTC day**, and projected shared account usage **<700,000/billing
-  cycle**. Reserve before every attempt; retries count again. Production gets
-  at most 19,900/day including 100 reserved health events; tagged tests get at
-  most 100 total submissions. Other environments use mocks. No refund after
-  an ambiguous response, no automatic allowance reset and no next-day backlog.
-- Missing/corrupt quota state, failed publication, clock rollback and ownership
-  conflict stop export while gameplay remains available. Preserve journal
-  history and the existing initialization/exhaust-day recovery tool.
-
-## Implementation sequence
-
-**DO NOT SCOPE CREEP. WE ARE OUT OF TIME AND TOKENS. DELIVER FAST.**
-On an authorized resume, finish the existing sequence without adding stages.
-
-### 1. Connect the existing worker and finish lifecycle behavior
-
-**DO NOT SCOPE CREEP. WE ARE OUT OF TIME AND TOKENS. DELIVER FAST.**
-Preserve implemented behavior; change it only for a demonstrated delivery defect.
-
-Change `telemetry_runtime.*`, `telemetry_transport.*`, their private types,
-`telemetry_config.*`, `telemetry_health.*`, `src/Makefile` and the copyover call
-site only as required. Reuse the existing queue and lifecycle coordinator.
-
-Replace the production SQL repository binding with direct reducer/sender calls.
-Remove the old SQL retry/commit interpretation from this path. Keep native
-admission sequence and age; at a timer boundary capture the admitted tail,
-consume through that fence, then seal. A later old observation becomes a partial
-fragment under the existing reducer rules. Pump the sender while draining so
-its output buffer cannot starve behind a terminal burst.
-
-Initialize reducer and sender in the worker after journal ownership. The journal
-outlives sender close. Checkpoint dirty coverage on a 60-second cadence,
-plus required lifecycle/incident boundaries and durable send reservations;
-expose failed checkpoints and pace storage retries. Publish a coherent copied
-health snapshot for `world telemetry` and payload-free local logs. Include
-native admission/consumption, output occupancy/expiry, attempted/acknowledged/
-ambiguous/suppressed events, quota and journal faults; HTTP acknowledgement is
-not a claim of query-visible ingestion.
-
-Enable the PostHog path in both persistence builds. Validate token, the fixed US
-host, dedicated identity key, scope, property catalog and budget without falling
-back to raw IDs or silently generating a new identity key at boot. Retain opt-in
-startup and the existing effective-property catalog. Set 1,800 seconds in runtime
-configuration; the component's 900-second default is not the release setting.
-No new operator tuning API is needed.
-
-Copyover preserves valid logical-session handoff regardless of HTTP outcome.
-Keep the 250ms game-thread flush wait; preserve identity/cumulative counters and
-mark abandoned queue/accumulator/output tails incomplete. No game-thread HTTP,
-fsync or unbounded join. Check successful exec, failed exec, network loss,
-detach/reconnect, shutdown and next-process journal ownership/quota continuity.
-
-Remove SQL telemetry credentials and the writer from the active path and active
-linking. Inventory replaced rollup/report scheduling in the deployment handoff.
-Keep gameplay SQL helpers and historical/reward consumers. Leave `src/sql/sql.c`
-boot inventory, runtime compatibility fingerprints and immutable migrations
-unchanged for this delivery. Do not add a SQL fallback or permanent dual writing.
-
-### 2. Prove the real path with disposable native fixtures
-
-**DO NOT SCOPE CREEP. WE ARE OUT OF TIME AND TOKENS. DELIVER FAST.**
-Use existing fixtures and the agreed checks. Do not add a broader test matrix.
-
-Adapt `tests/async/run_telemetry_player_journey.py` once for both backends and
-fake HTTPS, reusing existing combat, flat-file and copyover clients. Use an
-allowlisted environment, `ENVIRONMENT=local`, synthetic accounts/characters,
-separate runtime/state/journal directories, distinct world IDs >=1000 and
-loopback ports. SQL uses a fresh task-owned native MariaDB database; flat-file
-uses its own files. Never source the host `.env` or copy live player/DB data.
-Docker, namespaces, sudo and another machine are not prerequisites.
-
-One journey per backend covers login, recognized action, idle/linkdead,
-combat/XP and a level transition, groups/pets, save/reload, reconnect, successful
-and failed copyover, and shutdown. Assert received payloads, conservation and
-stable identities. Add one bounded outage/recovery path with a small quota to
-prove gameplay still saves, local health reports loss and copyover cannot reset
-the budget. Exercise journal failure and unknown crash tail in the existing
-native runtime harness rather than duplicating the full storage fault suite in
-every game journey.
-
-Use the existing benchmark/measurement seams for repeated matched telemetry-off
-and telemetry-on/mock-HTTPS runs with ordinary saves. Start with three paired
-runs on the same declared workload and build; record client count, sample count,
-pulse/command/save p99, CPU/RSS, backlog, output bytes/events and journal cost.
-Require no normal-load capture/budget loss or sustained backlog and **≤5% pulse
-and save p99 regression**, with the applicable existing host operating bounds
-(pulse p99 ≤250ms, event p99 ≤25ms, critical oldest ≤1,000ms, zero sustained event
-debt and zero gameplay-thread external I/O). Measure command p99 without adding
-a new independent 5% gate. Do not invent a new save SLA or import the entire
-older 200-player soak manifest. If noise makes a 5% claim unsupported, repeat only
-that comparison or report the gate unresolved; do not call it passed.
-
-Replay the complete declared event mix through the integrated reducer and count
-actual sealed events and attempts, including boundary fragments, lifecycle,
-encounters, health, configuration and retries. Reconcile those counts with the
-volume fixture and project the chosen workload over 31 days. Capacity numbers in
-native record fixtures are not concurrent-player evidence. State the measured
-workload; broad 200-player capacity certification is deferred.
-
-### 3. Publish the minimum useful reports and verify cloud ingestion
-
-**DO NOT SCOPE CREEP. WE ARE OUT OF TIME AND TOKENS. DELIVER FAST.**
-Deliver the specified saved views; no presentation polish or additional reports.
-
-Use existing project **678214** and create one **Duris gameplay telemetry**
-dashboard. Keep the starter dashboard. Deliver four saved views plus the saved
-health/coverage query; a clear table or trend is enough. No custom UI or extra
-cohort/dashboard project is needed.
-
-| View | Minimum useful result and proof |
-| --- | --- |
-| Character activity/returns | Distinct opaque characters and logical entries/returning characters; reconnect/copyover does not create a new logical entry. Label character, not account/player, retention. |
-| Time allocation | Active/idle/unknown/linkdead deltas by captured dimensions, with unknown allocation and reconciliation-only evidence visible. Expand time buckets independently of XP buckets. |
-| XP/levels | Requested/computed/applied XP, attempts/zero-applied count and source/modifier allocation; observed level changes and threshold use separately. Observed XP is not a committed-save ledger. |
-| Encounters | Runs/outcomes/duration and supported participant contribution totals; separate run/participant and pet/owner rows, with missing evidence visible. |
-| Health/coverage | Freshness, suppression/uncertainty, producer/refusal/output limits, quota and journal state. Local health remains authoritative during complete cloud loss. |
-
-Use event-time properties and exact integer conversions already documented in
-the contract. Deduplicate by `duris_event_id` before summing or expanding arrays.
-Production views filter environment `1`, season `1`, schema `1` and exclude test
-traffic. Unknown timestamps are excluded from occurrence-day totals and shown
-as unallocated evidence.
-
-After mock tests pass, recheck project/billing/shared usage and run one tagged
-synthetic cloud fixture, **at most 100 submissions including repeats/retries**.
-Cover all six event families, two logical sessions for one character, reconnect/
-copyover, zero-applied XP and a level boundary, pet/owner separation, an incomplete
-encounter and repeated UUIDs. Query and reconcile all four views and health;
-HTTP 200 alone is insufficient. Poll for ingestion for at most five minutes,
-then report delayed ingestion as unresolved and continue local handoff work.
-Use the same synthetic rows for query development and acceptance; no second
-cloud load campaign. Record saved query definitions/IDs in `REPORTS.md`.
-
-### 4. Finish the handoff and stop at this milestone
-
-**DO NOT SCOPE CREEP. WE ARE OUT OF TIME AND TOKENS. DELIVER FAST.**
-Document what is needed to operate this delivery, publish it, and stop.
-
-Update `.env.example`, `REPORTS.md`, and the affected sections of `CONTRACT.md`,
-`TRANSPORT.md`, `OUTAGE_STORAGE.md`, `CONFIG_CONTEXT.md` and
-`PERFORMANCE_GATE.md`. Mark superseded SQL guidance as historical with short
-links; do not rewrite unrelated telemetry documentation. Record actual fixture
-commands, measured workload, limitations, sender allocations and revision IDs.
-Correct the example's EU-host suggestion to match the implemented US-only sender.
-
-Document dedicated key creation/private backup, reviewed property catalog,
-explicit quota initialization, enable/disable and exhaust-day restore recovery.
-Explain that editing `.env` does not update a running process and that copyover
-may inherit its old environment. Production enablement remains a separately
-authorized operation. Rollback disables export while preserving identity/quota/
-loss evidence; it does not refund attempts or resume the obsolete SQL writer.
-
-Keep the existing PR stack. Package remaining implementation and acceptance work
-in a small number of reviewable commits; do not create a new serial PR stage for
-each test or document. Run required local checks and review the actual diff; do
-not wait for hosted CI. Do not drop other required review checks.
-
-## Verification and completion
-
-**DO NOT SCOPE CREEP. WE ARE OUT OF TIME AND TOKENS. DELIVER FAST.**
-Prove the five existing conditions below. Add no new completion gates.
-
-The initial quick checks are evidence about components only. For integration,
-run directly affected tests after their contracts change:
-
-```sh
-python3 tests/async/test_telemetry_config.py
-python3 tests/async/test_telemetry_transport.py
-python3 tests/async/test_telemetry_runtime_integration.py
-python3 tests/async/test_telemetry_runtime_outage.py
-python3 tests/async/test_telemetry_runtime_exhaustion.py
-python3 tests/async/test_telemetry_copyover_format.py
-python3 tests/async/test_telemetry_health.py
-python3 tests/async/test_telemetry_posthog.py
-python3 tests/async/test_telemetry_contract_headers.py
-./scripts/format.sh --check
-git diff --check
-```
-
-Run the existing gameplay-adapter/progression/encounter/combat/outage regressions
-when their code or integration contracts change. Run both full builds after the
-final C/C++ changes, sequentially with `nice -n 10`, `-j1` and the task-specific
-`BIN_ROOT` paths above. The adapted PostHog gameplay commands are `nice -n 10
-python3 tests/async/run_telemetry_player_journey.py --backend <mariadb|flatfile>`;
-add `--performance` for the paired release fixture. Bounded cloud/query and
-integrated volume assertions pass; do not repeat the cloud campaign.
-No blanket rerun of unaffected repository suites is needed.
-
-This delivery is done only when:
-
-1. Both gameplay backends reach the PostHog path with the old writer inactive,
-   and native records are consumed once without retry double counting.
-2. Real native journeys prove conserved time/XP, captured dimensions, logical
-   identity, bounded lifecycle behavior and useful local failure/coverage health.
-3. Durable quota survives restart/copyover, and critical network/storage failures
-   preserve gameplay. Existing component/fault regressions remain green.
-4. All four report totals plus health reconcile to queried synthetic cloud data,
-   with test exclusion and duplicate handling demonstrated.
-5. The measured release fixture passes the retained performance/volume limits,
-   and the operational handoff is executable and explicit about remaining limits.
-
-Meeting these five criteria completes issue #59. Deferred SQL boot-schema
-cleanup and broader engine/capacity qualification are optional future work,
-not closure conditions. Record the retained schema dependency and measured
-workload honestly; deferral does not permit weaker gameplay schema checks,
-routine quota loss, incorrect totals or an unbounded exporter. Production
-activation is separate and is not a condition for closing this implementation
-ticket.
-
-## Implementation handoff — 2026-10-21 UTC
-
-**DO NOT SCOPE CREEP. WE ARE OUT OF TIME AND TOKENS. DELIVER FAST.**
-
-All five completion conditions pass. Native/cloud reconciliation, failure/quota
-proof, measured performance/volume and the operating handoff are complete.
-No further implementation or qualification stage remains. Production is disabled.
-
-Published review stack (all ready for review, mergeable at last readback):
-
-- #260 (`issue-59-posthog-http`, `d540b778c`): bounded worker sender.
-- #261 (`issue-59-posthog-runtime`, `079537906`): both-backend runtime integration.
-- #262 (`issue-59-posthog-acceptance`, `3ab15c720`): terminal logout/pet adapter
-  fixes, native gameplay fixture and independently witnessed active-request deadline.
-- #263 (`issue-59-posthog-reports`, final evidence commit after `d558e4bdc`): five saved report definitions,
-  cloud reconciliation, emitted-volume proof, resident-scan repair and runbook.
-
-The stack alignment is finished using normal merge commits, with no source
-change, force push or history rewrite. The task-owned alignment worktree was
-removed. Do not chase further moving review bases. Production source is exactly
-repair `18b163a20`; both full native builds and state tools pass in
-`bin/issue59/{mariadb,flatfile}/`. Neither links the old SQL writer.
-
-Current evidence under `bin/issue59/`:
-
-| Required proof | Authoritative result |
-| --- | --- |
-| Both full builds | `fast-plan/slot-scan-build-<backend>.log`: MariaDB and flat-file builds/state tools pass after the final source repair. |
-| State/runtime regression | `fast-plan/slot-scan-state.log`: SQL/no-MySQL, golden and integration suites pass. `slot-scan-runtime.log`: 18/18 HTTPS cases under UBSan. |
-| Reducer/sender components | `fast-plan/posthog-aligned.log`: 57 reducer + 29 HTTPS cases per backend; unchanged component code. Focused ASan/UBSan gameplay adapters also pass. |
-| MariaDB gameplay | `fast-plan/slot-scan-gameplay-mariadb.log`: 38 events / 44 charged attempts; complete native journey passes. |
-| Flat-file gameplay | `fast-plan/slot-scan-gameplay-flatfile.log`: 36 events / 42 charged attempts; complete native journey passes. |
-| Domain/lifecycle assertions | Both journeys conserve time/XP, capture group/level dimensions and separate pet damage/owner links, exclude private values, save during 503, preserve identity/quota across reconnect and real failed/successful exec, and leave old SQL intervals empty. |
-| Integrated emitted volume | `fast-plan/release-mix-volume.log`: 97 emitted rows across all six families, no suppression/refusal; scaled shapes reconcile 396,454 attempts/31 days at 30 minutes. Frequencies/retries remain declared assumptions, not concurrent capacity proof. |
-| Actual cloud campaign | `fast-plan/gameplay-cloud-mariadb.log`: 41 real submissions / 40 unique IDs within 48 native reservations, scope 1002 / season 1 / tag `issue59-cloud-smoke`. Persistent campaign marker forbids another campaign/reset. |
-| Queried reports and health | `acceptance/cloud-smoke/{submitted,expected,query-evidence}.json`: exact reconciliation, repeated UUID, deliberately missing participant, all five doubled-input queries conserve results, all production queries exclude tests. REPORTS.md records totals and IDs. |
-| Saved dashboard | Project 678214, dashboard 2240639, five saved insights 13125342–13125346; readback verifies all five production definitions. |
-| Performance | Historical `fast-plan/slot-scan-performance.log` used a pooled-only check and did not prove each pair. Superseded by the matched-pair review qualification in PERFORMANCE_GATE.md: pulse off/on 1704/897, 695/560, 788/638 usec; every pulse/save pair meets 5%. |
-
-First completed performance comparison FAILED: pulse p99 654 usec on / 557 off
-(+17.4%); save p99 1,759,083 / 1,759,045 usec (passes). Absolute host bounds passed.
-Raw failed evidence remains in `acceptance/performance-before-slot-scan-fix/`.
-The 10–15 minute completion estimate was withdrawn when this failed.
-
-Repair `18b163a20` stops activity/cohort, checkpoint and detached-retirement scans
-after visiting all residents using their existing counts. It retains all 256
-slots and sparse high-index residents. Only telemetry_activity.c,
-telemetry_session.c and telemetry_runtime.c changed; no new state, API, timing
-rule or reduced criterion. State, runtime HTTPS, both native builds and both real
-gameplay journeys pass again. Existing cloud/report/reducer evidence remains
-valid because those data contracts and reduction code did not change.
-
-The historical pooled comparison recorded all three alternating pairs,
-40 saves/run and 120 saves per condition. Individual pulse p99 off/on values
-were 615/725, 504/540 and 631/592 usec. Review established that its pooled-only
-check masked two pair regressions; it is not a matched-pair performance pass.
-The runner now enforces the original 5% pulse/save limit separately on every pair.
-Maximum enabled event pass was 188 usec; all critical oldest-age snapshots were
-0ms, with zero observed event-budget debt, capture loss, refusal or quota errors.
-Enabled game-process CPU was 0.392% of one core and maximum RSS 49,036 KiB.
-Detailed CPU/RSS, command latency, fsync and emitted-body sizes are recorded in
-PERFORMANCE_GATE.md. The fixed world and development build are not 200-player
-capacity certification. The earlier longer collection stopped before a pair and
-is diagnostic only; both complete comparisons remain preserved.
-
-Final verification: both full native builds/state tools, affected state/runtime
-and real gameplay journeys pass on repair `18b163a20`; unaffected component and
-cloud evidence is reused. Formatting, whitespace and final diff review accompany
-the final evidence commit. Existing PRs are published for required review; no CI
-wait, production activation, cloud rerun or broader qualification is required.
-
-The fixture uses a 60-second interval and 64-segment/minute cap. HTTP outage
-recovery is observed before copyover's lossy 250ms deadline. Failed exec uses
-only the private fixture's invalid staged binary (ENOEXEC), restores the binary
-and removes only its disposable handoff image before successful exec.
-
-Do not merge PRs 252–255: the owner's message was a question, not an instruction.
-Deferred SQL boot-schema cleanup and broader capacity qualification remain
-outside closure. Preserve all five agreed completion conditions. Production
-activation remains separately authorized and is not a closure condition.
-
-# Review publication follow-up
-
-PR review corrections are qualified locally. After this stack merges, refresh the
-saved time, XP, encounter and health insights from `docs/telemetry/posthog/` as listed
-in `docs/telemetry/REPORTS.md`, then query the existing synthetic scope read-only.
-The owner chose to finish this review without PostHog access; no new capture,
-saved-view update or production activation is part of this pass. Cloud evidence
-elsewhere in this plan remains dated historical evidence. The paired-performance
-review comparison below is newly executed local evidence.
-
-The merge review corrected XP zone/group grouping and the pooled-only performance
-guard. Local SQL regressions preserve all three independent XP zone/group buckets.
-A new local one-client, three-pair performance run exits 0 with 40 saves/run:
-pulse p99 off/on is 1704/897, 695/560 and 788/638 usec; save changes are -0.022%,
-+0.111% and -0.148%. Each pair independently meets the original 5% limit. There
-are 1,026 off / 1,032 on pulse samples and 120 saves per condition; maximum enabled
-event pass is 905 usec and all twelve sampled critical ages are 0ms. Required
-capture/health fields remain clean. Raw local evidence and limits are documented
-in PERFORMANCE_GATE.md. No new cloud campaign, saved-view update or production
-operation occurred.
+# Issue #420: preserve Shambler capacity while defensive images are active
+
+Status: **implemented; local qualification complete; ready for review**. Updated 2026-10-30.
+Issue: [Duris #420](https://github.com/LuminariMUD/Duris/issues/420).
+Branch: [branch/issue-420-plan](https://github.com/LuminariMUD/Duris/tree/branch/issue-420-plan).
+Source baseline: origin/master at b23ea8c65a467d17683ccd5de91f66b362209d06.
+Worktree: /home/aiwithapex/projects/duris-issue-420.
+
+The previous plan and completed qualification record for #428 are preserved
+byte-for-byte in [plan-issue-428.md](plan-issue-428.md). The owner's follow-up
+authorizes implementation, including the shared Reflection/Mirror Image
+exemption, local qualification, commit/push and a PR linked to #420.
+The later master integration preserves the completed bartender-quest record in
+[plan-issue-437.md](plan-issue-437.md) and updates its codebase-guide reference.
+
+## Outcome and accepted balance decision
+
+At Shambler's admission boundary, exclude linked NPC images whose prototype is
+IMAGE_REFLECTION_VNUM (250) from the ordinary-pet count. Zero or one ordinary
+pet permits a cast, independent of whether zero, one, two, three or four images
+exist. Two or more ordinary pets still reject it. Any existing linked shambling
+mound still rejects another cast, including when it is the only ordinary pet.
+
+The owner accepted this resolution of the issue's open balance question, not a
+claim that the code or existing help already establishes that rule. It is
+specific to admission to Shambler. It does not make images cease to be pets.
+
+**Shared-prototype consequence:** Reflection and Mirror Image both create
+pet-linked NPC 250. The accepted rule intentionally exempts both at this one
+boundary, including Reflection reached through its racial innate or an item.
+A Reflection-only exception that still counts otherwise identical Mirror Image
+pets would require a distinct policy and additional provenance; this plan does
+not silently introduce that distinction.
+
+Keep the explicit Titan-versus-Reflection exclusions, genuine pet caps, mound
+uniqueness, image ownership, duration, replacement and combat behavior. Ordinary
+Displacement remains an affect with no pet-capacity consequence.
+
+## Source findings, checked independently of the issue
+
+All paths and line numbers below refer to the baseline above.
+
+1. **Reflection really creates pet links.**
+   src/classes/sillusionist.c:573-704 checks for an existing Titan, replaces
+   image followers, computes BOUNDED(1, (level - 26) / 5, 4), loads mobile 250,
+   and calls setup_pet(image, ch, 3, PET_NOCASH). Effective levels 31/36/41/46
+   produce 1/2/3/4 images. Images attach to the caster even when the visual
+   target is another player; preserve that existing ownership rule.
+   src/classes/necromancy.c:236-314 creates the LNK_PET through
+   linked_affect_to_char(). count_pets() counts every such link.
+
+2. **Shambler has two separate admission rules.**
+   src/magic/blispells.c:666-742 first rejects an existing linked mobile 100,
+   then rejects count_pets(ch) > 1. Its army-prevention comment supports keeping
+   the ordinary-pet cap, but does not specify how images should count.
+   Terrain then selects 1-2, 2-4 or 3-6 mounds; unsupported sectors reject the
+   cast. The top comment's 1d4+2 is not the rule for every terrain.
+   Success retains setup_pet(..., 15, PET_NOCASH | PET_NOAGGRO), death-event
+   scheduling, following and TAG_CONJURED_PET.
+
+3. **A global counting change would broaden the balance change.**
+   Other actual consumers of count_pets() are bard charm in
+   src/classes/bard.c:827, the pet shop in src/specs/specs.room.c:868, NPC
+   corpse creation in src/mob/mobact.c:1118, and NPC Shambler selection at
+   src/mob/mobact.c:10772. The last independently requires zero total pets
+   before choosing the spell. Keep all four decisions and the generic counter
+   unchanged. Direct Shambler execution uses the corrected admission rule for
+   any caster; NPC autonomous spell selection remains its current separate rule.
+
+4. **The existing image constant is precise enough; the illusion helper is not.**
+   src/core/defines.h:1374 defines IMAGE_REFLECTION_VNUM.
+   src/magic/magic.c:1727-1880 shows Mirror Image calling make_mirror(), which
+   loads the same prototype and calls setup_pet().
+   src/classes/innates.c:2470 also loads mobile 250 for Project Image, but does
+   not create a pet link in that path, so it contributes nothing to either count.
+   is_illusion_char() in src/classes/sillusionist.c:1400 also identifies
+   illusion disguises. Reusing that broader predicate could exempt real pets
+   merely because they are disguised; use the NPC/prototype check instead.
+
+5. **The Reflection entry routes and both Titan exclusions already exist.**
+   src/classes/innates.c:2647-2666 dispatches the racial innate to
+   spell_reflection() after its own Titan check and cooldown handling.
+   src/classes/sillusionist.c:1871-1920 rejects Titan creation while a
+   mobile-250 image follower exists; Reflection independently rejects a linked
+   Titan. Neither restriction should move into a pet-count helper.
+   src/classes/skills.c:2217-2218 registers Shambler as an 11th-circle Scourge
+   specialization spell. A real command journey must satisfy that eligibility,
+   rather than assuming that any level-36 character can cast it.
+
+6. **Displacement and help need careful interpretation.**
+   src/classes/psionics.c:1461-1483 adds an AC affect without creating followers
+   or links; the reported name does not establish a Displacement defect.
+   lib/information/help_index contains the maintained Reflection and Shambler
+   entries (around lines 13489 and 25410). Neither currently explains this
+   image-counting rule. Add concise player wording there with the fix.
+
+## Executable planning evidence
+
+A temporary probe under bin/qualification/issue420/ reused the existing
+Reflection ownership fixture and extracted the current, unmodified production
+bodies of spell_reflection(), setup_pet(), count_pets() and spell_shambler().
+It executed all 20 combinations of 0/1/2/3 ordinary pets and 0/1/2/3/4 actual
+Reflection-created images under ASan/UBSan.
+
+Observed results:
+
+- With no ordinary pets, zero or one image reaches Shambler's mound loader;
+  two, three or four images trigger the exact pet-cap rejection.
+- With one ordinary pet, zero images reaches the loader; even one image rejects.
+- With two or three ordinary pets, every image count rejects.
+- The generic count equals ordinary pets plus images throughout.
+
+The controlled mound loader intentionally returned null. This proves current
+admission behavior, not successful summons, event expiry, command reachability,
+or a booted-world reproduction. Room/link services and RNG were controlled.
+The ignored result is bin/qualification/issue420/baseline.txt; the temporary
+probe source and executable are removed after investigation. The implementation
+regression below must exercise successful mound creation, not stop at this probe.
+
+Existing baseline checks also passed:
+
+- python3 tests/async/test_reflection_image_ownership.py: 409 casts plus Titan
+  rejection under ASan/UBSan, preserving prototypes, ordinary pets, links, combat
+  redirection and private-string cleanup. Extraction/room services are fixtures.
+- python3 tests/async/test_innate_reflection.py: real innate dispatch,
+  race/level eligibility, self targeting, configurable cooldown and Titan
+  rejection. Its Reflection body is stubbed; it does not prove the combined
+  innate-to-Shambler route.
+
+## Non-goals
+
+- No change to count_pets() or its other consumers, no generalized capacity
+  policy, optional parameter, image-origin field, new configuration or service.
+- No change to image links, charm, durations, strings, damage, replacement,
+  Mirror Image creation rules, racial unlocks/cooldowns or Titan restrictions.
+- No change to Shambler terrain yields, lifetime, ordinary-pet limit, existing
+  mound exclusion, class access or NPC autonomous spell selection.
+- No pet persistence migration, old-instance rewrite, production operation,
+  deployment, full burn-in or dependency on hosted CI.
+- Do not fold Conjurer capacity work #215, prior image-ownership work, or
+  unrelated pet/lifetime investigations into this fix.
+
+## Files and ablated implementation sequence
+
+Expected production edit: src/magic/blispells.c only.
+Expected proof/documentation edits: tests/async/test_reflection_image_ownership.py,
+one focused command journey tests/async/test_shambler_reflection_journey.py
+(new), its resource-intensive registration in tests/run_regression_tests.py,
+lib/information/help_index, and this plan's completion record.
+Retain test_innate_reflection.py as an unchanged compatibility test unless the
+new regression exposes a necessary gap.
+
+1. **Extend the existing native regression before changing the guard.**
+   Add the production Shambler body and generic counter to the current Reflection
+   fixture. Model mobile 100, successful materialization and observable
+   scheduling/tagging at the existing controlled service boundaries. Assert
+   returned mounds and unchanged image/ordinary-pet state, not just absence of
+   refusal text. At least image-only 2+ and one ordinary pet plus one image must
+   fail against the current source. Do not create a second harness framework.
+
+2. **Count at the existing Shambler boundary.**
+   In its existing linked-pet traversal, retain the mound rejection and tally
+   only pets that are not NPCs of IMAGE_REFLECTION_VNUM. Use the resulting
+   local count for the existing > 1 guard. Preserve rejection precedence and
+   the terrain/summoning body. Add a short comment explaining this admission
+   policy. No new production helper or header declaration is necessary.
+   Keep all non-image pets counted; do not use flags such as PET_NOCASH,
+   temporary duration, charm status, or the broad illusion predicate.
+
+3. **Drive the real command route in disposable state.**
+   Reuse test_flatfile_combat_journey.py and its server build/world/socket
+   helpers. Follow the staff-controlled fixture setup demonstrated by
+   run_racial_pulse_journey.py, but keep this scenario separate from its
+   unrelated race-stat checks. Supply the image and mound prototypes and a
+   supported outdoor room. Configure synthetic, otherwise eligible Scourge
+   casters with known spell access, mana and preparation; do not change normal
+   race/class rules. Exercise racial "innate reflection" for Gnome and Kobold,
+   then "cast 'shambler'" while at least two images remain. Also cover the normal
+   spell route to Reflection on a prepared test caster and a Mirror Image
+   command control for the shared-prototype policy.
+   Observe image and mound identities/counts plus ownership/following through
+   existing inspection facilities. Synchronize on each command's response and
+   following prompt; an unsolicited prompt alone cannot prove completion.
+   Check a repeated Shambler rejection, ordinary-pet rejection and both
+   Titan/Reflection orders. Recast/cleanup must leave ordinary pets intact.
+
+4. **Document and finish proportional qualification.**
+   Explain in Shambler help that Reflection/Mirror Image images do not consume
+   its ordinary-pet allowance, that at most one other pet may precede the cast,
+   and that an existing mound prevents another cast. Add a brief cross-reference
+   in Reflection help without claiming a global exemption. Run the checks below,
+   reread the entire diff and record exact results and limitations here.
+
+Ablation keeps one local counting decision, the already available image constant,
+an extension of existing native coverage, and one small journey using existing
+helpers. A global counter change would alter four unrelated consumers. A broad
+illusion predicate changes more than image counting. Per-spell provenance adds
+state without serving the proposed shared-image rule. Removing image links
+would disturb ownership and lifecycle. These alternatives are dropped.
+The command journey stays because the existing tests do not execute the combined
+player workflow. No alternative production implementations need to be built.
+
+## Proof and acceptance
+
+- Cross 0/1/2/3/4 images with 0/1/2/3 ordinary pets: casts succeed only with at
+  most one ordinary pet and no existing mound. Include a non-image summoned pet
+  as well as a charmed-pet control; both count. Non-pet links do not count.
+- An existing mound rejects with zero or multiple images, including when that
+  mound is the only ordinary pet. Additional casts cannot accumulate mound groups.
+- In supported terrain, admitted casts create the unchanged yields (1-2, 2-4,
+  3-6) under controlled RNG. Unsupported terrain still rejects without creating
+  anything. New mounds retain pet links/followers, tagging and scheduled lifetime.
+- Image-only and mixed cases leave image identity, strings, links and existing
+  ordinary pets intact. Reflection replacement removes only the previous images;
+  after image cleanup the ordinary-pet decision is the same.
+- The generic count_pets() still counts images. This demonstrates that the
+  shared helper's contract, including its other callers, has not changed.
+- Real Reflection spell and racial routes reach successful Shambler creation;
+  the Mirror Image control follows the explicitly proposed rule. Existing
+  Displacement alone adds no pet restriction.
+- Titan first still blocks Reflection; images first still block Titan.
+  The racial rejection does not spend cooldown or add combat lag.
+- Native and socket results are reported separately. A missing command journey
+  leaves that acceptance item unverified; green helper tests cannot replace it.
+
+Planned commands after implementation, with artifacts confined to bin/:
+
+    python3 tests/async/test_reflection_image_ownership.py
+    python3 tests/async/test_innate_reflection.py
+    make -C src
+    python3 tests/async/test_shambler_reflection_journey.py
+    ./scripts/format.sh --check
+    python3 tests/async/test_documentation_contract.py
+    git diff --check
+
+The proposed journey should build its fresh flat-file executable through the
+existing helper by default, with an optional explicit freshly built binary as
+the nearby journeys support. Confirm local/dev configuration before runtime
+work; use private temporary accounts/world data, never live player state.
+No persistence behavior changes, so restart/database qualification is not a new
+gate. Production/full-world acceptance is outside this implementation estimate.
+
+## Tracking and estimate
+
+GitHub #420 is the work item for this branch. Searches for open PRs referencing
+420 or Shambler/Reflection found none. Targeted max757/duris GitLab searches
+found no matching Shambler work item; the Reflection result was unrelated
+lifetime-qualification item #27. Do not link that item or close related historical
+issues merely because they mention images or pets. Link this branch directly
+in #420's Development section and provide the committed plan link there.
+A planning-only commit must not use an issue-closing keyword.
+
+Estimate: **2-3 hours of my active implementation time** for the documented rule,
+including regression-first work, the small production change, help, the real
+command journey, required build and reviewable commits. Approximately 30-45
+minutes is native regression plus fix, 60-90 minutes is command-fixture setup and
+runtime checks, and 30-45 minutes is documentation, build and final review.
+Allow up to 4 hours if spell preparation or minimal-world fixtures require more
+setup. This excludes a changed balance decision, external review, merge waiting
+and deployment.
+
+## Planning completion checks
+
+Only this plan and preservation of the previous plan are committed. No
+production C/C++ edit, full server build or booted-world reproduction is claimed
+at this planning stage. The focused baseline evidence is recorded above.
+Planning validation completed:
+
+- python3 tests/async/test_documentation_contract.py: all 14 tests passed.
+- git diff --check: passed.
+- The archived #428 plan and baseline plan have identical SHA-256:
+  db2e06ff1afe39dba4629cc840c579b994e04965df0e31995174625eee95fdbf.
+- Only the requested plan and the intact historical archive are tracked changes;
+  the original checkout's branch and files are preserved.
+
+## Implementation and qualification, 2026-10-30
+
+Shambler now counts non-image pets in its existing linked-pet traversal. NPCs
+of IMAGE_REFLECTION_VNUM are exempt at this boundary; the generic counter is
+unchanged. The existing mound rejection remains first, and terrain, summon
+creation, tagging and lifetime code are unchanged. Help now states the shared
+Reflection/Mirror Image exemption and the retained ordinary-pet/mound limits.
+
+The existing ownership regression executes the production Shambler body and
+counter alongside Reflection/setup_pet. All 640 combinations of image count,
+ordinary charmed/summoned pets, terrain endpoints and existing-mound presence
+pass under ASan/UBSan. They check actual fixture mound materialization,
+ownership, unchanged images/pets, non-pet links, generic counting, both lifetime
+scheduling endpoints, tagging, duplicate-cast rejection and admission after
+image removal. The original 409 Reflection casts and Titan rejection still pass.
+Two in-memory negative controls substitute the old production Shambler body:
+two images alone and one image with one ordinary pet each fail at the successful
+mound-creation assertion. No tracked production source is changed by those
+controls.
+
+The new command journey boots a fresh flat-file server with private state and
+drives mortal Gnome/Kobold innates, ordinary Reflection and Mirror Image, then
+real Shambler casts. Every route retains four images and creates three to six
+mounds in forest terrain. Staff inspection checks mobile identities, keywords,
+following and pet links. It also proves duplicate-mound and two-ordinary-pet
+rejection, the one-pet allowance, cleanup without losing ordinary pets, both
+Titan exclusion orders, and the published help. A real Reflection recast
+replaces every image identity while retaining the ordinary companion.
+
+Spell-route fixtures are prepared Illusionists, changed to otherwise eligible
+Scourges after image creation; the Displacement control uses an eligible
+MindFlayer's real WILL command before switching back to Scourge. This does not
+add or claim a playable class combination. Staff edits resolve the PC explicitly
+because images share its name. Commands require their own receipt and following
+prompt and handle paging. No runtime test hooks or production settings are added.
+The journey is registered as resource-intensive in the existing regression runner.
+
+Completed on the planning baseline:
+
+- python3 tests/async/test_reflection_image_ownership.py: passed under ASan/UBSan.
+- python3 tests/async/test_innate_reflection.py: passed under ASan/UBSan, including
+  Titan rejection without cooldown or combat-lag consumption.
+- make -C src -j6: MariaDB development build passed with warnings as errors.
+- make -C src PERSISTENCE_BACKEND=flatfile
+  DMS_BINARY=/home/aiwithapex/projects/duris-issue-420/bin/server/dms_issue420_flatfile
+  -j6: flat-file development build passed.
+- python3 tests/async/test_shambler_reflection_journey.py: passed, including the
+  default fresh-build helper and the explicit live recast case.
+- Changed-line formatting, clang-tidy, Python syntax, regression discovery,
+  documentation contracts and git diff --check passed.
+
+The planning-baseline command log is bin/qualification/issue420/journey-final.log.
+The report at gameplay-report.json in that directory holds the latest full run;
+see the integration record below for its current binary. The planning-baseline
+qualified flat-file binary SHA-256 is
+98bfc2d61aaff7584341bd379bf578f84fd4fff9830c005c4e6dd63151f0f63f.
+Native fixtures control room/link services and scheduled callbacks; the socket
+journey exercises the real parser, spell dispatch, materialization and ownership.
+No full-world, MariaDB socket, restart or production qualification is claimed.
+
+Final ablation retains one production counting decision, one existing native
+test extension, a focused journey using existing build/world/socket helpers,
+its runner registration and the necessary help/plan updates. There is no new
+capacity API, persisted state, configuration, migration or image-lifecycle edit.
+
+### Master integration and final qualification
+
+Master advanced to b352b650c3f05ea0c2e109eaa9abcc3040290952 during this work.
+Its shared plan.md now records completed #437 work. The merge retains this #420
+plan at the requested path and archives the upstream #437 plan byte-for-byte.
+The only overlapping file was the plan; Shambler/Reflection and their admission
+behavior did not change upstream. The archived #437 plan and the upstream file
+have identical SHA-256:
+ec2a89006a68a4540b5b71b325ef51bb7683d568588f35b59b83b76d31ab95b4.
+
+The 640-case sanitizer matrix, original Reflection/innate checks, all 14
+documentation contracts, formatting, diff checks and MariaDB build passed again
+against the integrated source. The default command-journey invocation built a
+fresh flat-file server and passed all four routes, the real Reflection recast,
+ordinary-pet/mound controls, Titan exclusions, Displacement and help.
+Gnome, Kobold, normal Reflection and Mirror Image retained four images each and
+created 5, 4, 3 and 4 forest mounds respectively.
+
+Final runtime evidence: bin/qualification/issue420/gameplay-report.json and
+bin/qualification/issue420/journey-integrated.log.
+The integrated flat-file binary SHA-256 is
+0db6192894c88a7dee08a7b903e9bae473f575cd9cb48fce7a0446af4bafd2c9.
+
+
+## Sequential PR integration, 2026-10-30
+
+Integrated master `cd78dd1a705ac5a41dfadc30b31dee2162a9fac3` after PRs
+#432, #475, #476 and #477. Game code, player help and test discovery merged
+without conflicts. The shared-plan conflict keeps this Shambler record at
+`plan.md` and preserves the completed coin record byte-for-byte at
+[plan-issue-444.md](plan-issue-444.md). The castle, rent-key and quest archives
+remain intact.
+
+The MariaDB server build, 640 Shambler image/pet/terrain/mound combinations,
+409 Reflection casts and innate eligibility/cooldown controls under ASan/UBSan,
+formatting, whitespace, test discovery and all 14 documentation checks pass on
+the combined source. The earlier disposable-server gameplay report remains the
+runtime qualification for racial and spell images, ownership, pet/mound caps,
+Titan exclusions, Displacement and help; that complete journey was not repeated
+in this merge pass. No production operation is included.

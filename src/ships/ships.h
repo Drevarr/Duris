@@ -81,6 +81,8 @@
 #define T_RAM_WEAPONS 6
 #define T_MAINTENANCE 7
 #define T_MINDBLAST 8
+// Time remaining until an idle target lock is released (seconds).
+#define T_TARGET_IDLE 9
 #define MAXTIMERS 10
 
 #define MAXSHIPS 2000
@@ -139,6 +141,7 @@
 #define SUNKBYNPC BIT_11
 #define ATTACKBYNPC BIT_12
 #define FLYING BIT_13
+#define CUSTOMS_PENDING BIT_14
 
 #define UNKNOWNSHIP 0
 #define GOODIESHIP 1
@@ -737,6 +740,7 @@ int load_ship(P_ship shipdata, int to_room);
 
 void delete_ship(P_ship ship, bool npc = false);
 void delete_ship(char *owner_name);
+P_ship find_ship_by_database_id(uint32_t id);
 void delete_ship_runtime(const char *owner_name);
 void clear_references_to_ship(P_ship ship, bool deleting);
 
@@ -842,6 +846,7 @@ void jettison_all(P_ship ship);
 // utilities
 bool getmap(P_ship ship, bool limit_range = FALSE);
 int getcontacts(P_ship ship, bool limit_range = TRUE);
+bool ship_target_in_contact(P_ship ship);
 
 void change_crew(P_ship ship, int crew_index, bool skill_drop);
 void set_crew(P_ship ship, int crew_index, bool reset_skills = true);

@@ -1,3 +1,4 @@
+#include "economy/divine_trade_runtime.h"
 /*****************************************************
  * ship_control.c
  *
@@ -1185,6 +1186,7 @@ int do_lock_target(P_char ch, P_ship ship, char *arg)
 				ship->timer[T_BSTATION] = BSTATION;
 			}
 			ship->target = temp;
+			ship->timer[T_TARGET_IDLE] = 300;
 			act_to_all_in_ship_f(ship, "Locked onto &+W[%s]:&N %s&N\r\n", temp->id,
 					     temp->name);
 			return TRUE;
@@ -1901,6 +1903,13 @@ int ship_panel_proc(P_obj obj, P_char ch, int cmd, char *arg)
 	{
 		if (isname(arg, "coins money"))
 		{
+			if (divine_trade_runtime_busy(ship))
+			{
+				send_to_char(
+					"Your crew is settling a cargo trade. Please try again shortly.\r\n",
+					ch);
+				return TRUE;
+			}
 			return claim_coffer(ch, ship);
 		}
 		return FALSE;
@@ -1924,6 +1933,14 @@ int ship_panel_proc(P_obj obj, P_char ch, int cmd, char *arg)
 		      isname(arg1, "fly") || isname(arg1, "land") || isname(arg1, "signal")))
 		{
 			do_order(ch, arg, cmd);
+			return TRUE;
+		}
+
+		if (divine_trade_runtime_busy(ship))
+		{
+			send_to_char(
+				"Your crew is settling a cargo trade. Please try again shortly.\r\n",
+				ch);
 			return TRUE;
 		}
 

@@ -1659,19 +1659,20 @@ def test_garrison_identity_and_hunts_survive_extraction() -> None:
             r"\s*\|\|\s*!IS_ALIVE\(ch\)\)\s*return;", code) is not None,
               "movement skips membership only without removal and checks death after membership")
 
-    for path, signature, next_work in (
+    for path, signature, admission_guard, next_work in (
         ("src/world/handler.c", r"\bvoid\s+extract_char\s*\(",
-         "world_recovery_capture_forget_character(ch)"),
-        ("src/world/db.c", r"\bvoid\s+free_char\s*\(", "GET_OPPONENT(ch)"),
+         r"if\s*\(!locker_leave_for_extraction\(ch\)\)\s*return;\s*",
+         "item_actions_character_leaving(ch)"),
+        ("src/world/db.c", r"\bvoid\s+free_char\s*\(", "", "GET_OPPONENT(ch)"),
     ):
         bodies = function_bodies(read(path), signature)
         check(len(bodies) == 1, f"{signature} has one invalidation hook owner")
         if bodies:
             code = strip_comments(bodies[0])
             check(re.search(r"if\s*\(!ch\)\s*\{[^{}]*return;\s*\}"
-                            r"\s*\+\+character_removal_generation;", code) is not None
+                            r"\s*" + admission_guard + r"\+\+character_removal_generation;", code) is not None
                   and code.find("++character_removal_generation;") < code.find(next_work),
-                  f"{path} invalidates immediately after its null guard before nested work")
+                  f"{path} invalidates after admission guards before nested cleanup")
 
     hunt_check = function_bodies(read("src/mob/mobact.c"), r"\bvoid\s+MobHuntCheck\s*\(")
     check(len(hunt_check) == 1, "MobHuntCheck is defined once", f"{len(hunt_check)}")
@@ -1893,19 +1894,19 @@ def test_review_fixes_from_the_second_round_hold() -> None:
           f"{claim.count('kingdom_guard_class_ambiguous(')} call sites")
 
     # ------------------------------------------------------------------ #
-    # 2. a weight-reducing container is resynced the moment its load moves #
+    # 2. all enclosing containers are reconciled after load changes       #
     # ------------------------------------------------------------------ #
     handler = read("src/world/handler.c")
-    resync = function_bodies(handler, r"\bstatic\s+void\s+resync_reducing_container\s*\(")
-    check(len(resync) == 1, "resync_reducing_container is defined once", f"{len(resync)}")
+    resync = function_bodies(handler, r"\bstatic\s+void\s+reconcile_container_chain\s*\(")
+    check(len(resync) == 1, "reconcile_container_chain is defined once", f"{len(resync)}")
     if resync:
         code = strip_comments(resync[0])
-        check("container_weight_reduction_pct(cont) > 0" in code,
-              "the resync is gated on the reduction, so a container that reduces "
-              "nothing keeps its cheap incremental path")
-        check("recalc_container_weight(cont)" in code,
-              "the resync recomputes from the shell plus a fresh sum, so it corrects "
-              "the weight in either direction")
+        check("recalc_container_weight(current)" in code,
+              "each container is repaired from its direct contents")
+        check("OBJ_INSIDE(current)" in code and "current = parent" in code,
+              "repair continues through the enclosing container chain")
+        check("top_of_objt + 1" in code,
+              "container chain traversal is bounded")
 
     for signature, argument in ((r"\bvoid\s+obj_to_obj\s*\(", "obj_to"),
                                 (r"\bvoid\s+obj_to_obj_at_end\s*\(", "obj_to"),
@@ -1915,14 +1916,12 @@ def test_review_fixes_from_the_second_round_hold() -> None:
         if not bodies:
             continue
         code = strip_comments(bodies[0])
-        check(f"resync_reducing_container({argument})" in code,
-              f"{argument} is resynced after its load changes, so a gathering bag's "
-              "carrier is billed the reduced weight immediately")
+        check(f"reconcile_container_chain({argument})" in code,
+              f"{argument} and its ancestors are repaired after movement")
         moved = code.find(f"add_weight({argument}")
-        synced = code.find(f"resync_reducing_container({argument})")
+        synced = code.find(f"reconcile_container_chain({argument})")
         check(-1 < moved < synced,
-              f"the resync of {argument} runs after the item has finished moving, so "
-              "the fresh sum is of what is actually inside")
+              "chain is reconciled only after the contents change")
 
     # ------------------------------------------------------------------ #
     # 3. the area-cast depth cannot leak past a non-local exit             #

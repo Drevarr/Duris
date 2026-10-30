@@ -12,6 +12,7 @@
  *
  ****************************************************************************/
 
+#include "combat/trap_legacy.h"
 #include "guild/artifact_admission.h"
 #include "guild/artifact_population_repository.h"
 #include "world/world_recovery_pipeline.h"
@@ -313,6 +314,7 @@ bool capture_item_tree(P_obj object, int room_vnum, uint64_t root_uid, uint64_t 
 	item_ownership_runtime_entry authority = {};
 	if (item_ownership_runtime_lookup(item_uid, &authority))
 	{
+		bool authority_required = true;
 		if (copyover_custody)
 		{
 			// A synchronous hotboot hands off the live ledger. Its logical custody
@@ -335,11 +337,20 @@ bool capture_item_tree(P_obj object, int room_vnum, uint64_t root_uid, uint64_t 
 			    authority.vnum != entry.vnum ||
 			    authority.state != item_custody_state::active)
 			{
-				*skip = true;
-				return true;
+				if (authority.owner.type != item_owner_type::player ||
+				    authority.vnum != entry.vnum ||
+				    authority.state != item_custody_state::active)
+				{
+					*skip = true;
+					return true;
+				}
+				// A drop/save can leave the former player claim behind. Keep
+				// the live floor tree; recovery still excludes saved holdings.
+				authority_required = false;
 			}
 		}
-		entry.flags |= WORLD_RECOVERY_ITEM_AUTHORITY_REQUIRED;
+		if (authority_required)
+			entry.flags |= WORLD_RECOVERY_ITEM_AUTHORITY_REQUIRED;
 	}
 	for (int index = 0; index < NUMB_OBJ_VALS; ++index)
 		entry.values[index] = object->value[index];
@@ -1098,7 +1109,7 @@ bool add_object_record(recovery_plan *plan, const unsigned char *data, size_t si
 }
 
 bool build_recovery_plan(const unsigned char *data, size_t size, int max_age_seconds,
-			 uint64_t minimum_sequence, recovery_plan *plan)
+			 uint64_t minimum_sequence, recovery_plan *plan, bool boot_preflight)
 {
 	if (!plan ||
 	    !world_recovery_validate(data, size, max_age_seconds, minimum_sequence, &plan->header))
@@ -1192,8 +1203,10 @@ bool build_recovery_plan(const unsigned char *data, size_t size, int max_age_sec
 				EX_PICKABLE | EX_SECRET | EX_BLOCKED | EX_PICKPROOF | EX_WALLED |
 				EX_SPIKED | EX_ILLUSION | EX_BREAKABLE;
 			if (room < 0 || room > top_of_world || door.dir < 0 ||
-			    door.dir >= NUM_EXITS || !world[room].dir_option[door.dir] ||
-			    !IS_SET(world[room].dir_option[door.dir]->exit_info, EX_ISDOOR) ||
+			    door.dir >= NUM_EXITS ||
+			    ((!world[room].dir_option[door.dir] ||
+			      !IS_SET(world[room].dir_option[door.dir]->exit_info, EX_ISDOOR)) &&
+			     !(boot_preflight && IS_SHIP_ROOM(room))) ||
 			    !IS_SET(door.state, EX_ISDOOR) || (door.state & ~ALLOWED_DOOR_FLAGS))
 			{
 				logit(LOG_SYS,
@@ -1451,6 +1464,7 @@ P_obj materialize_object(const planned_object &planned)
 		object->weight = item.weight;
 		for (int index = 0; index < NUMB_OBJ_VALS; ++index)
 			object->value[index] = item.values[index];
+		normalize_legacy_trap(object, item.vnum);
 	}
 	if (!planned.detached)
 		obj_to_room(root, planned.room_rnum);
@@ -1567,11 +1581,12 @@ static bool prepare_recovery_plan(const unsigned char *data, size_t size, int ma
 				  uint64_t minimum_sequence,
 				  const unsigned char *const *floor_records,
 				  const size_t *floor_record_sizes, size_t floor_record_count,
-				  recovery_plan *plan)
+				  recovery_plan *plan, bool boot_preflight)
 {
 	if ((!floor_records || !floor_record_sizes) && floor_record_count)
 		return false;
-	if (!build_recovery_plan(data, size, max_age_seconds, minimum_sequence, plan))
+	if (!build_recovery_plan(data, size, max_age_seconds, minimum_sequence, plan,
+				 boot_preflight))
 	{
 		logit(LOG_SYS, "redis: world recovery semantic plan validation failed");
 		return false;
@@ -1609,8 +1624,10 @@ bool world_recovery_validate_with_floor(const unsigned char *data, size_t size, 
 					const size_t *floor_record_sizes, size_t floor_record_count)
 {
 	recovery_plan plan;
+	// Artifact preflight precedes initialize_ships(), which creates ship hatches.
+	// Restore builds the plan again and requires every live door before mutation.
 	return prepare_recovery_plan(data, size, max_age_seconds, minimum_sequence, floor_records,
-				     floor_record_sizes, floor_record_count, &plan);
+				     floor_record_sizes, floor_record_count, &plan, true);
 }
 
 bool world_recovery_restore_with_floor(const unsigned char *data, size_t size, int max_age_seconds,
@@ -1621,7 +1638,7 @@ bool world_recovery_restore_with_floor(const unsigned char *data, size_t size, i
 {
 	recovery_plan plan;
 	if (!prepare_recovery_plan(data, size, max_age_seconds, minimum_sequence, floor_records,
-				   floor_record_sizes, floor_record_count, &plan))
+				   floor_record_sizes, floor_record_count, &plan, false))
 		return false;
 	if (!leave_out_owned_trees(&plan))
 	{

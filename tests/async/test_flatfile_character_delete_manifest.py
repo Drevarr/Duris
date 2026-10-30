@@ -90,7 +90,6 @@ runtime_calls = [
     "sql_delete_ship_statement(deleted.name.c_str())",
     "DELETE FROM player_data WHERE pid=%d",
     "sql_read_work(",
-    "sql_delete_ship(deleted.name.c_str())",
     "done(forget_deleted_character(deleted));",
 ]
 forget_calls = [
@@ -100,6 +99,7 @@ forget_calls = [
     "guild->forget_deleted_member(deleted.name.c_str(), deleted.frags)",
     "remove_char_from_list(d->account, deleted.name.c_str(), false)",
     "delete_ship_runtime(deleted.name.c_str())",
+    "zone_story_quest_runtime::erase_character(static_cast<uint32_t>(deleted.pid)",
 ]
 positions = [delete_body.find(call, delete_body.find("#else")) for call in runtime_calls]
 forget_positions = [forget_body.find(call) for call in forget_calls]

@@ -1,3 +1,4 @@
+#include "economy/divine_trade_runtime.h"
 /*****************************************************
  * ship_utils.c
  *
@@ -1127,6 +1128,24 @@ void setcontact(int i, P_ship target, P_ship ship, int x, int y)
  * contact range (35 rooms plus the crew's scout bonus).  Pass false to
  * enumerate every ship sharing the map patch regardless of distance.
  */
+/* Check only the locked target, without overwriting the global contacts[] buffer.
+ * Use the same map coordinates and 3-D contact range as getcontacts(). */
+bool ship_target_in_contact(P_ship ship)
+{
+	if (ship->target == NULL)
+		return false;
+	if (!SHIP_LOADED(ship->target) || SHIP_SINKING(ship->target) || SHIP_DOCKED(ship->target))
+		return false;
+
+	int x, y;
+	if (!calculate_map_coords(ship->location, ship->target->location, x, y))
+		return false;
+
+	x = 50 + x;
+	y = 50 - y;
+	return ship_range(ship, ship->target, x, y) <= 35 + ship->crew.get_contact_range_mod();
+}
+
 int getcontacts(P_ship ship, bool limit_range)
 {
 	int counter = 0;
@@ -1991,10 +2010,16 @@ void set_chief(P_ship ship, int chief_index)
  */
 void clear_cargo(P_ship ship)
 {
+	if (divine_trade_runtime_busy(ship))
+		return;
 	for (int i = 0; i < MAXSLOTS; i++)
 	{
 		if (ship->slot[i].type == SLOT_CARGO || ship->slot[i].type == SLOT_CONTRABAND)
+		{
+			if (!divine_trade_runtime_loss(ship, i, ship->slot[i].val0))
+				return;
 			ship->slot[i].clear();
+		}
 	}
 }
 
@@ -2493,6 +2518,13 @@ int jettison_crates(P_ship ship, int crates, int index, int type)
  */
 int jettison_cargo(P_char ch, P_ship ship, int left)
 {
+	if (divine_trade_runtime_busy(ship))
+	{
+		send_to_char("Your crew is settling cargo. Please try again shortly.\r\n", ch);
+		return TRUE;
+	}
+	if (divine_trade_runtime_busy(ship))
+		return TRUE;
 	int done = 0;
 
 	for (int i = 0; i < MAXSLOTS; i++)
@@ -2501,6 +2533,8 @@ int jettison_cargo(P_char ch, P_ship ship, int left)
 		{
 			if (ship->slot[i].val0 > left)
 			{
+				if (!divine_trade_runtime_loss(ship, i, left))
+					break;
 				if (ch)
 					send_to_char_f(ch,
 						       "%d units of %s have been jettisoned!\r\n",
@@ -2512,6 +2546,8 @@ int jettison_cargo(P_char ch, P_ship ship, int left)
 			}
 			else
 			{
+				if (!divine_trade_runtime_loss(ship, i, ship->slot[i].val0))
+					break;
 				if (ch)
 					send_to_char_f(ch,
 						       "%d units of %s have been jettisoned!\r\n",
@@ -2548,6 +2584,13 @@ int jettison_cargo(P_char ch, P_ship ship, int left)
  */
 int jettison_contraband(P_char ch, P_ship ship, int left)
 {
+	if (divine_trade_runtime_busy(ship))
+	{
+		send_to_char("Your crew is settling cargo. Please try again shortly.\r\n", ch);
+		return TRUE;
+	}
+	if (divine_trade_runtime_busy(ship))
+		return TRUE;
 	int done = 0;
 
 	for (int i = 0; i < MAXSLOTS; i++)
@@ -2556,6 +2599,8 @@ int jettison_contraband(P_char ch, P_ship ship, int left)
 		{
 			if (ship->slot[i].val0 > left)
 			{
+				if (!divine_trade_runtime_loss(ship, i, left))
+					break;
 				if (ch)
 					send_to_char_f(ch,
 						       "%d units of %s have been jettisoned!\r\n",
@@ -2567,6 +2612,8 @@ int jettison_contraband(P_char ch, P_ship ship, int left)
 			}
 			else
 			{
+				if (!divine_trade_runtime_loss(ship, i, ship->slot[i].val0))
+					break;
 				if (ch)
 					send_to_char_f(ch,
 						       "%d units of %s have been jettisoned!\r\n",
@@ -2711,6 +2758,7 @@ int salvage_cargo(P_char ch, P_ship ship, int crates)
 		send_to_char_f(ch, "Your crew hooks %d crates from the ocean surface.\r\n", i);
 
 	update_ship_status(ship);
+	queue_ship_save(ship, "cargo salvage");
 	return TRUE;
 }
 

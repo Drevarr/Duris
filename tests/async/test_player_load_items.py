@@ -325,6 +325,7 @@ void extract_char(P_char pet)
     if (pet->only.npc->str_mask & STRUNG_KEYS) std::free(pet->player.name);
     if (pet->only.npc->str_mask & STRUNG_DESC1) std::free(pet->player.long_descr);
     if (pet->only.npc->str_mask & STRUNG_DESC2) std::free(pet->player.short_descr);
+    if (pet->only.npc->str_mask & STRUNG_DESC3) std::free(pet->player.description);
     std::free(pet->only.npc);
     std::free(pet);
 }
@@ -409,6 +410,33 @@ void set_obj_affected(P_obj object, int time, sh_int type, sh_int data)
 
 int main()
 {
+    for (const auto &entry : {std::array<int,7>{32820,1536,11,50,512,11,50},
+                             {32831,516,11,50,0,0,0},
+                             {44465,1057,16,80,1089,16,80},
+                             {58404,509,12,0,509,12,25},
+                             {59047,6,15,200,6,15,100},
+                             {142251,1536,12,60,1536,12,60}}) {
+        for (int charge : {-1,0,1,5}) {
+            reset_test_state(); test_character owner(42);
+            auto result=base_result();
+            add_item(result,1,10,entry[0],PLAYER_SNAPSHOT_NO_PARENT,0);
+            auto &saved=result.snapshot.items[0];
+            saved.type=ITEM_CONTAINER;
+            saved.values[3]=7;
+            result.item_identities[0].override_mask |= PLAYER_LOAD_ITEM_OVERRIDE_TYPE;
+            char encoded[128];
+            assert(sql_encode_item_trap_state(entry[1],entry[2],charge,entry[3],encoded,sizeof(encoded)));
+            saved.extra_descriptions.push_back({SQL_ITEM_TRAP_STATE_KEYWORD,encoded,false,{}});
+            player_load_item_materialize_metrics metrics={};
+            assert(materialize_fixture_items(&owner.character,result,&metrics));
+            auto *restored=owner.character.carrying;
+            const int expected_charge=entry[0]==32831 ? 0 : entry[0]==32820 && charge!=0 ? 1 : charge;
+            assert(restored && restored->trap_eff==entry[4] && restored->trap_dam==entry[5]);
+            assert(restored->trap_charge==expected_charge && restored->trap_level==entry[6]);
+            assert(restored->value[3]==7 && restored->value[1]==(entry[0]==142251 ? 1 : 0));
+            release_tree(restored);
+        }
+    }
     for(const bool legacy_pet : {false,true}) {
         reset_test_state(); auto input=base_result(); input.outcome=player_load_outcome::applied;
         player_load_source_item foreign;
@@ -1250,6 +1278,39 @@ int main()
         player_load_pets_commit(&owner.character, &pets, result);
         assert(!owner.character.followers);
     }
+
+    for (bool mephit : {false,true}) for (int vnum : {1100,1110,1111,1112}) {
+        reset_test_state();
+        test_character owner(42);
+        owner.character.player.level=56;
+        owner.character.player.m_class=CLASS_CONJURER;
+        owner.character.player.spec=SPEC_FIRE;
+        player_load_result result=base_result(); result.snapshot.room_vnum=123;
+        pet_restore_state state;
+        state.kind=mephit?summoned_pet_kind::conjured_fire_mephit:summoned_pet_kind::conjured_fire_elemental;
+        state.name=mephit?"fire mephit _owner_":"fire elemental _owner_";
+        state.short_description=mephit?"a fire mephit":"a fire elemental";
+        state.long_description=state.short_description+" waits here.\n";
+        state.level=52; state.race=RACE_F_ELEMENTAL; state.size=SIZE_HUGE;
+        state.primary_class=CLASS_WARRIOR; state.act=ACT_ISNPC;
+        state.base_stats.fill(100); state.base_points={1234,55,150,-123,33,41,0};
+        state.damage_dice={3,8};
+        state.intrinsic_affects[1]=AFF2_FIRE_AURA|(mephit?0:AFF2_FIRESHIELD);
+        state.charm_expires_at=time(nullptr)+600; state.death_expires_at=time(nullptr)+660;
+        add_pet(result,3001,vnum);
+        assert(pet_restore_state_encode(state,&result.snapshot.pets[0].restore_state));
+        std::vector<P_char> pets; player_load_pet_materialize_metrics metrics{};
+        assert(player_load_pets_stage(&owner.character,result,&pets,&metrics));
+        assert(pets.size()==1 && pets[0] && !owner.pc.held_pets);
+        assert(pets[0]->points.base_hit==1234 && GET_RACE(pets[0])==RACE_F_ELEMENTAL);
+        assert(bool(IS_AFFECTED2(pets[0],AFF2_FIRESHIELD))==!mephit);
+        assert(!strcmp(pets[0]->player.name,state.name.c_str()));
+        if(mephit) assert(strstr(pets[0]->player.description,"compact being"));
+        summoned_pet_restore_lifetime(pets[0],&owner.character,state);
+        assert(pets[0]->only.npc->pet_charm_expires_at==state.charm_expires_at);
+        assert(pets[0]->only.npc->pet_death_expires_at==state.death_expires_at);
+        player_load_pets_discard(&pets);
+    }
     {
         reset_test_state();
         test_character owner(42);
@@ -1330,7 +1391,7 @@ void prepare_valid_status(player_load_result &result) {
  result.snapshot.schema_version=PLAYER_SNAPSHOT_SCHEMA_VERSION; result.snapshot.pid=result.pid;
  result.snapshot.components=PLAYER_LOAD_SESSION02_COMPONENTS;
  result.snapshot.status_integers.clear(); result.snapshot.status_strings.clear();
- for(unsigned field=0;field<=static_cast<unsigned>(player_status_field::learned_flight_stops);++field)
+ for(unsigned field=0;field<PLAYER_STATUS_INTEGER_COUNT;++field)
   result.snapshot.status_integers.push_back({static_cast<player_status_field>(field),0,0,true});
  for(unsigned field=0;field<=static_cast<unsigned>(player_status_string_field::last_read_news_hash);++field)
   result.snapshot.status_strings.push_back({static_cast<player_status_string_field>(field),""});
@@ -1358,6 +1419,7 @@ with tempfile.TemporaryDirectory(prefix="duris-player-load-items-") as temp_dir:
             "-Isrc",
             str(source),
             rel("player_load_items.c"),
+            "src/combat/trap_legacy.c",
             rel("player_load_topology.c"),
             rel("player_load_pets.c"),
             "src/player/pet_restore_state.c",

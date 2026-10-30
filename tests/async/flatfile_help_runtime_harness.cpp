@@ -55,6 +55,77 @@ int main()
 	       "person operating the panel", "bonus will not persist", "10% more proceeds" })
 		require(seadog.find(meaning) != string::npos,
 			"Seadog did not render its owner/panel and cargo-sale rules");
+	for (const char *query : { "boon", "divine boons" })
+	{
+		const string boons = wiki_help(query);
+		for (const char *rule : { "200%", "+25%", "three times", "FIRST qualifying ship",
+					  "Spill Blood", "220", "160", "automatic" })
+			require(boons.find(rule) != string::npos,
+				"Divine help omitted a required rule");
+		require(boons.find("boon shop stat") == string::npos,
+			"Legacy shop directions survived");
+		for (const char *rule :
+		     { "three Experience", "three Epic", "Good and Evil", "one", "shared" })
+			require(boons.find(rule) != string::npos,
+				"Canonical Divine help still describes faction-specific targets");
+		require(boons.find("six for zone EXP") == string::npos &&
+				boons.find("Good-side objectives") == string::npos,
+			"Overridden Divine Boon help still describes the old rotation");
+	}
+	require(wiki_help("divineboon").find("unconsumed hourly opportunity") != string::npos &&
+			wiki_help("divineboon").find("shared") != string::npos,
+		"Canonical staff help missing the shared rotation or force timing");
+
+	for (const char *topic : { "air affinity", "water affinity", "fire affinity",
+				   "earth affinity", "astral affinity" })
+	{
+		const string affinity = wiki_help(topic);
+		for (const char *rule : { "level 51", "remember", "Groupmates, pets", "VNUMs" })
+			require(affinity.find(rule) != string::npos,
+				"Planar affinity lookup omitted its level, memory or personal limits");
+	}
+	require(wiki_help("planar affinity").find("19826-19886") != string::npos,
+		"Planar affinity overview omitted the excluded astral side rooms");
+	for (const char *topic : { "air form", "earth form", "fire form", "water form" })
+	{
+		const string form = wiki_help(topic);
+		for (const char *rule : { "Self only", "circle-10", "8 affect-duration units",
+					  "Ice Aura", "dispelled" })
+			require(form.find(rule) != string::npos,
+				"Elemental form lookup omitted its duration, targets or conflicts");
+	}
+
+	require(wiki_help("stone skin").find("newest layer only") != string::npos,
+		"Stone Skin did not render the dedicated parsed layering topic");
+	require(wiki_help("earthen maul").find("including Druids") != string::npos,
+		"Earthen Maul did not render shared terrain-independent access");
+	require(wiki_help("ethereal recharge").find("100 actual HP") != string::npos,
+		"Ethereal Recharge omitted its final Air self-healing cap");
+	require(wiki_help("dimension door").find("3 seconds") != string::npos &&
+			wiki_help("relocate").find("5 seconds") != string::npos,
+		"Air travel help omitted its post-cast waits");
+	require(wiki_help("conjure water").find("5-minute cooldown") != string::npos,
+		"Conjure Water omitted its successful-use cooldown");
+	require(wiki_help("water to life").find("232 at") != string::npos,
+		"Water to Life did not render the dedicated parsed formula topic");
+	require(wiki_help("water form").find("5 seconds BEFORE") != string::npos &&
+			wiki_help("water form").find("25% less") != string::npos,
+		"Water Form omitted its shoreline timing and movement discount");
+	require(wiki_help("fireball").find("100%") != string::npos &&
+			wiki_help("solar flare").find("exactly 10%") != string::npos,
+		"Fire spell help omitted the approved unlock or damage increase");
+	for (const char *topic : { "conjure elemental", "conjure greater elemental" })
+		require(wiki_help(topic).find("no Fireshield") != string::npos,
+			"Elemental summon help omitted the optional mephit behavior");
+
+	for (const char *topic : { "immortals", "immortals gods" })
+	{
+		const string staff = wiki_help(topic);
+		require(staff.find("such as a quest") != string::npos &&
+				staff.find("discussed with other immortals") != string::npos,
+			"Immortal help disagrees about approved quest equipment awards");
+	}
+
 	cout << "flat-file help runtime passed\n";
 	return 0;
 }

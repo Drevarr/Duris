@@ -34,6 +34,7 @@
 #include "guild/assocs.h"
 #include "core/files.h"
 #include "item/item_ownership_runtime.h"
+#include "item/item_claim.h"
 #include "magic/spells.h"
 #include "item/trophy.h"
 
@@ -203,6 +204,9 @@ bool capture_status(P_char ch, player_snapshot &snapshot, capture_budget &budget
 	ADD_STATUS(screen_length, ch->only.pc->screen_length);
 	ADD_STATUS(last_ip, ch->only.pc->last_ip);
 	ADD_STATUS(learned_flight_stops, ch->only.pc->learned_flight_stops);
+	ADD_STATUS(divine_boon_delivery_seq, ch->only.pc->divine_boon_delivery_seq);
+	ADD_STATUS(quest_origin_room, ch->only.pc->quest_origin_room);
+	ADD_STATUS(quest_replacement_due, ch->only.pc->quest_replacement_due);
 #undef ADD_STATUS
 
 	for (size_t index = 0; index < snapshot.conditions.size(); ++index)
@@ -297,13 +301,19 @@ player_snapshot_capture_result capture_affects(P_char ch, player_snapshot &snaps
 					       capture_budget &budget)
 {
 	std::unordered_set<const affected_type *> seen;
+	bool cargo_count_seen = false;
 	for (const affected_type *affect = ch->affected; affect; affect = affect->next)
 	{
 		if (!seen.insert(affect).second)
 			return player_snapshot_capture_result::object_cycle;
 		if (IS_SET(affect->flags, AFFTYPE_NOSAVE))
 			continue;
-		if (!budget.add(sizeof(player_affect_snapshot), 1))
+		const bool cargo_count = affect->type == PLAYER_TRADE_CARGO_AFFECT;
+		if (cargo_count && cargo_count_seen)
+			return player_snapshot_capture_result::malformed_source;
+		cargo_count_seen = cargo_count_seen || cargo_count;
+		// Match the codec's one protected cargo row across later checkpoints.
+		if (!budget.add(sizeof(player_affect_snapshot), cargo_count ? 0 : 1))
 			return player_snapshot_capture_result::limit_exceeded;
 		player_affect_snapshot row = {};
 		row.type = affect->type;
@@ -349,7 +359,7 @@ player_snapshot_capture_result
 capture_item_tree(const obj_data *object, int parent_index, int equipment_slot,
 		  std::vector<player_item_snapshot> &target, capture_budget &budget,
 		  std::unordered_set<const obj_data *> &seen, size_t depth, bool omit_norent,
-		  bool audit_ownership)
+		  bool audit_ownership, bool rent_keys = false, bool keys_only = false)
 {
 	if (!object)
 		return player_snapshot_capture_result::ok;
@@ -358,7 +368,12 @@ capture_item_tree(const obj_data *object, int parent_index, int equipment_slot,
 				      item_ownership_runtime_lookup(object->obj_uid, &ownership);
 	const bool active_durable_custody = ownership_loaded &&
 					    ownership.state == item_custody_state::active;
-	if (omit_norent && IS_SET(object->extra_flags, ITEM_NORENT) && !active_durable_custody)
+	const bool rent_key = rent_keys &&
+			      item_claim_is_norent_key(object->type, object->extra_flags);
+	const bool omitted = keys_only ||
+			     (omit_norent && IS_SET(object->extra_flags, ITEM_NORENT) &&
+			      !active_durable_custody);
+	if (omitted && !rent_keys)
 		return player_snapshot_capture_result::ok;
 	if (depth > PLAYER_SNAPSHOT_MAX_DEPTH)
 		return player_snapshot_capture_result::limit_exceeded;
@@ -370,6 +385,23 @@ capture_item_tree(const obj_data *object, int parent_index, int equipment_slot,
 	    !budget.add(sizeof(player_item_snapshot), 1))
 		return player_snapshot_capture_result::limit_exceeded;
 	++budget.objects;
+	if (omitted && !rent_key)
+	{
+		// Preserve the old omitted subtree, but carry its keys to the rent writer.
+		for (const obj_data *content = object->contains; content;
+		     content = content->next_content)
+		{
+			const auto result = capture_item_tree(content, PLAYER_SNAPSHOT_NO_PARENT, 0,
+							      target, budget, seen, depth + 1,
+							      omit_norent, audit_ownership, true,
+							      true);
+			if (result != player_snapshot_capture_result::ok)
+				return result;
+		}
+		return player_snapshot_capture_result::ok;
+	}
+	if (rent_key && !object->obj_uid)
+		return player_snapshot_capture_result::malformed_source;
 
 	// Under the claim model an item with no entry in the in-memory ledger is the normal
 	// state of anything picked up since the last login: the first save inserts its row
@@ -384,7 +416,7 @@ capture_item_tree(const obj_data *object, int parent_index, int equipment_slot,
 			      (unsigned long long)object->obj_uid,
 			      obj_index[object->R_num].virtual_number);
 		else if (omit_norent && IS_SET(object->extra_flags, ITEM_NORENT) &&
-			 active_durable_custody)
+			 active_durable_custody && !rent_key)
 			logit(LOG_DEBUG,
 			      "player_snapshot_capture: component=items "
 			      "outcome=durable_norent_included uid=%llu vnum=%d "
@@ -516,7 +548,8 @@ capture_item_tree(const obj_data *object, int parent_index, int equipment_slot,
 	for (const obj_data *content = object->contains; content; content = content->next_content)
 	{
 		const auto result = capture_item_tree(content, row_index, 0, target, budget, seen,
-						      depth + 1, omit_norent, audit_ownership);
+						      depth + 1, omit_norent, audit_ownership,
+						      rent_keys, keys_only);
 		if (result != player_snapshot_capture_result::ok)
 			return result;
 	}
@@ -526,7 +559,8 @@ capture_item_tree(const obj_data *object, int parent_index, int equipment_slot,
 player_snapshot_capture_result capture_items(P_char owner,
 					     std::vector<player_item_snapshot> &target,
 					     capture_budget &budget, bool equipment, bool inventory,
-					     bool omit_norent, bool audit_ownership)
+					     bool omit_norent, bool audit_ownership,
+					     bool rent_keys = false)
 {
 	std::unordered_set<const obj_data *> seen;
 	if (equipment)
@@ -536,7 +570,7 @@ player_snapshot_capture_result capture_items(P_char owner,
 			const auto result = capture_item_tree(owner->equipment[slot],
 							      PLAYER_SNAPSHOT_NO_PARENT, slot + 1,
 							      target, budget, seen, 1, omit_norent,
-							      audit_ownership);
+							      audit_ownership, rent_keys);
 			if (result != player_snapshot_capture_result::ok)
 				return result;
 		}
@@ -548,7 +582,7 @@ player_snapshot_capture_result capture_items(P_char owner,
 		{
 			const auto result = capture_item_tree(object, PLAYER_SNAPSHOT_NO_PARENT, 0,
 							      target, budget, seen, 1, omit_norent,
-							      audit_ownership);
+							      audit_ownership, rent_keys);
 			if (result != player_snapshot_capture_result::ok)
 				return result;
 		}
@@ -779,6 +813,7 @@ player_snapshot_capture_result player_snapshot_capture(P_char ch, player_revisio
 		snapshot.save_intent = save_intent;
 		snapshot.room_vnum = save_room_vnum(ch, room_vnum);
 		snapshot.recipes_are_external = true;
+		snapshot.wallet_revision = ch->only.pc->wallet_revision;
 		capture_budget budget;
 		if ((components & PLAYER_COMPONENT_STATUS) &&
 		    !capture_status(ch, snapshot, budget, save_intent))
@@ -816,7 +851,7 @@ player_snapshot_capture_result player_snapshot_capture(P_char ch, player_revisio
 			const auto result = capture_items(ch, snapshot.items, budget,
 							  components & PLAYER_COMPONENT_EQUIPMENT,
 							  components & PLAYER_COMPONENT_INVENTORY,
-							  true, true);
+							  true, true, save_intent == RENT_INN);
 			if (result != player_snapshot_capture_result::ok)
 				return result;
 		}

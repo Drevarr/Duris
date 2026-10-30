@@ -37,14 +37,18 @@ static const int thrikreen_good_eq[] = { 677, 283, 285, 1112, 286,  288, 290,
 static const int thrikreen_evil_eq[] = { 677, 283, 285, 1112, 286, 288, 290, 613, 1170, 1173, -1 };
 
 /*Minotaur Basics*/
-static const int minotaur_good_eq[] = { 677,  283,  285,  1112, 286, 288, 290, 398, 398,
-					1176, 1167, 1182, 603,	108, 109, 111, -1 };
+// Shaman totems belong to the class kit, not the racial basics.
+static const int minotaur_good_eq[] = { 677, 283, 285,	1112, 286,  288, 290,
+					398, 398, 1176, 1167, 1182, 603, -1 };
 
-static const int minotaur_evil_eq[] = { 677,  283,  285, 1112, 286, 288, 290, 1170,
-					1173, 1182, 603, 108,  109, 111, -1 };
+static const int minotaur_evil_eq[] = { 677, 283,  285,	 1112, 286, 288,
+					290, 1170, 1173, 1182, 603, -1 };
 
 static const int blighter_stuff[] = { 1109, 1108, 1113, 1112, 1140, 677, 239, 618,
 				      679,  680,  729,	729,  452,  437, -1 };
+
+static const int archery_stuff[] = { 1116, 1117, 1117, 1117, 1117, 1117, 1117,
+				     1117, 1117, 1117, 1117, 1118, -1 };
 
 using kit_table = std::array<std::array<const int *, CLASS_COUNT + 1>, LAST_RACE + 1>;
 const kit_table &legacy_kits()
@@ -534,9 +538,8 @@ const kit_table &legacy_kits()
 			   PROTECT({ 1114, 1115, 1143, 706, 735, 731, 731, -1 }));
 
 		CREATE_KIT(RACE_HALFELF, CLASS_RANGER,
-			   PROTECT({ 1101, 1102, 1103, 1104, 1105, 1105, 1106, 1107, 1113,
-				     1113, 1114, 1115, 1116, 1117, 1117, 1117, 1117, 1117,
-				     1117, 1117, 1117, 1117, 1117, 1118, -1 }));
+			   PROTECT({ 1101, 1102, 1103, 1104, 1105, 1105, 1106, 1107, 1113, 1113,
+				     1114, 1115, -1 }));
 
 		CREATE_KIT(RACE_HALFELF, CLASS_DRUID,
 			   PROTECT({ 1135, 1136, 1137, 1138, 1139, 1140, -1 }));
@@ -1601,9 +1604,8 @@ const kit_table &legacy_kits()
 				     -1 }));
 
 		CREATE_KIT(RACE_WOODELF, CLASS_RANGER,
-			   PROTECT({ 1101, 1102, 1103, 1104, 1105, 1105, 1106, 1107, 1113,
-				     1113, 1114, 1115, 1116, 1117, 1117, 1117, 1117, 1117,
-				     1117, 1117, 1117, 1117, 1117, 1118, -1 }));
+			   PROTECT({ 1101, 1102, 1103, 1104, 1105, 1105, 1106, 1107, 1113, 1113,
+				     1114, 1115, -1 }));
 
 		CREATE_KIT(RACE_WOODELF, CLASS_CLERIC,
 			   PROTECT({ 1119, 1120, 1121, 1122, 1124, 1126, 1127, -1 }));
@@ -1676,6 +1678,12 @@ std::vector<newbie_kit_item> make_newbie_kit_plan(const newbie_kit_input &input)
 	}
 
 	class_kit = newbie_kits[input.race][flag2idx(input.main_class)];
+	// These normally playable classes lack race-specific legacy kit rows.
+	// Reuse their established class gear, without enabling the all-classes override.
+	if (!class_kit && input.main_class == CLASS_BERSERKER)
+		class_kit = newbie_kits[RACE_ORC][flag2idx(CLASS_BERSERKER)];
+	else if (!class_kit && input.main_class == CLASS_PSIONICIST)
+		class_kit = newbie_kits[RACE_PILLITHID][flag2idx(CLASS_PSIONICIST)];
 	if (!class_kit && input.all_classes)
 	{
 		int cls = flag2idx(input.main_class);
@@ -1730,8 +1738,13 @@ std::vector<newbie_kit_item> make_newbie_kit_plan(const newbie_kit_input &input)
 		append(blighter_stuff);
 	}
 
+	if (input.main_class == CLASS_RANGER || input.main_class == CLASS_ROGUE)
+		append(archery_stuff);
+
 	if (input.ailvio)
 		result.push_back({ 29319, false });
+	else if (input.wutvr)
+		result.push_back({ 91519, false });
 	if (input.bandages)
 		for (int i = 0; i < 4; ++i)
 			result.push_back({ 393, false });
@@ -1742,7 +1755,7 @@ std::vector<newbie_kit_item> make_newbie_kit_plan(const newbie_kit_input &input)
 
 std::vector<int> newbie_kit_template_vnums()
 {
-	std::vector<int> result = { 29319, 393, 458 };
+	std::vector<int> result = { 29319, 91519, 393, 458 };
 	const auto append = [&result](const int *items)
 	{
 		for (int i = 0; items && items[i] != -1; ++i)
@@ -1756,6 +1769,7 @@ std::vector<int> newbie_kit_template_vnums()
 	append(minotaur_good_eq);
 	append(minotaur_evil_eq);
 	append(blighter_stuff);
+	append(archery_stuff);
 	std::sort(result.begin(), result.end());
 	result.erase(std::unique(result.begin(), result.end()), result.end());
 	return result;

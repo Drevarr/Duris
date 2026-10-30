@@ -7434,7 +7434,7 @@ quiver small~
 &N&+ga small quiver&N~
 &N&+ga small quiver lays here in the dust.&N~
 ~
-30 42 3 1 7 0 525320 1048577 0 2097154 0
+30 42 3 1 7 0 525320 1048577 0 2101250 0
 10 1 1 0 0 0 0 0
 1 1 100
 #1117
@@ -7442,7 +7442,7 @@ thin arrow~
 &N&+ga thin arrow&N~
 &N&+ga thin arrow has been left on the ground here&N~
 ~
-7 6 3 1 7 0 1032 16385 0 2097154 0
+7 6 3 1 7 0 1032 16385 0 2101250 0
 0 1 4 1 0 0 0 0
 1 1 100
 #1118
@@ -8455,7 +8455,7 @@ wooden lyre instrument~
 &+ya plain wooden lyre&N~
 &+ya small wooden lyre is here.&N~
 ~
-32 6 3 0 7 0 1024 16385 0 8421376 0
+32 6 3 0 7 0 1024 8404993 0 8421376 0
 185 1 1 1 0 0 0 0
 0 1 100
 E
@@ -8467,7 +8467,7 @@ wooden horn instrument~
 &+ya small wooden horn&N~
 &+ya small wooden horn has been left here.&N~
 ~
-32 6 3 0 7 0 1024 16385 0 8421376 0
+32 6 3 0 7 0 1024 8404993 0 8421376 0
 189 1 1 1 0 0 0 0
 1 1 100
 E
@@ -8479,7 +8479,7 @@ drum drums instrument~
 &+ya small wooden drum&N~
 &+ya small wooden drum has been left here.&N~
 ~
-32 6 3 0 7 0 1024 16385 0 8421376 0
+32 6 3 0 7 0 1024 8404993 0 8421376 0
 188 1 1 1 0 0 0 0
 1 1 100
 E
@@ -8491,7 +8491,7 @@ small wooden mandolin instrument~
 &+ya small wooden mandolin&N~
 &+ya small wooden mandolin has been left here.&N~
 ~
-32 6 3 0 7 0 1024 16385 0 8421376 0
+32 6 3 0 7 0 1024 8404993 0 8421376 0
 186 1 1 1 0 0 0 0
 1 1 100
 E
@@ -8503,7 +8503,7 @@ small wooden harp instrument~
 &+ya small wooden harp&N~
 &+ya small wooden harp has been left here.&N~
 ~
-32 6 3 0 7 0 1024 16385 0 8421376 0
+32 6 3 0 7 0 1024 8404993 0 8421376 0
 187 1 1 1 0 0 0 0
 1 1 100
 E
@@ -8515,7 +8515,7 @@ small wooden flute instrument~
 &+ya small wooden flute&N~
 &+ya small wooden flute has been left here.&N~
 ~
-32 6 3 0 7 0 1024 16385 0 8421376 0
+32 6 3 0 7 0 1024 8404993 0 8421376 0
 184 1 1 1 0 0 0 0
 1 1 100
 E

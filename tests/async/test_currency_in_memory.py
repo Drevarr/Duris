@@ -13,107 +13,7 @@ from _paths import ROOT, rel
 
 
 HARNESS = r'''
-#include "core/utils.h"
-#include "economy/currency_transaction.h"
-#include "persistence/persistence_mode.h"
-#include "player/player_save_pipeline.h"
-#include "player/player_snapshot_repository.h"
-#include "flatfile/flatfile_player_repository.h"
-#include "sql/sql_player.h"
-
-#include <cassert>
-#include <cerrno>
-#include <cstdlib>
-#include <string>
-#include <vector>
-
-P_room world = nullptr;
-// Everything queued, in order: "save:<pid>" and "bank:<copper delta>", plus
-// "completion" when a completion runs.
-static std::vector<std::string> order;
-static int dirty = 0;
-
-[[noreturn]] int panic_corruption_int(const char *, const char *, ...) { abort(); }
-void logit(const char *, const char *, ...) {}
-void persistence_alert(int, const char *, const char *, const char *, const char *,
-                       const char *, const char *, ...) {}
-void gmcp_char_vitals(P_char) {}
-void mark_player_dirty_components(int, player_component_mask_t) { ++dirty; }
-const char *get_account_name_safe(P_char ch)
-{
-    return ch && GET_PID(ch) == 45 ? "other_account" : "money_account";
-}
-persistence_mode persistence_mode_get(void) { return PERSISTENCE_MODE_MARIADB_PRIMARY; }
-const char *persistence_mode_flatfile_root(void) { return nullptr; }
-player_save_apply_result flatfile_bank_delta_apply(const std::string &, const std::string &,
-                                                   int8_t, const std::array<int64_t, 4> &,
-                                                   flatfile_authority_operation *, std::string *)
-{
-    return {player_save_apply_outcome::applied, 0, 0};
-}
-player_save_apply_result bank_delta_repository_apply_from_pool(const bank_delta_snapshot &)
-{
-    return {player_save_apply_outcome::applied, 0, 0};
-}
-player_save_submit_result persistence_writer_submit(persistence_job_kind kind, uint64_t, size_t,
-                                                    persistence_job_write_fn)
-{
-    assert(kind == persistence_job_kind::bank);
-    order.push_back("bank");
-    return player_save_submit_result::accepted;
-}
-player_save_pipeline_result player_save_pipeline_request(P_char ch, player_component_mask_t,
-                                                         int, int)
-{
-    order.push_back("save:" + std::to_string(GET_PID(ch)));
-    return player_save_pipeline_result::queued;
-}
-
-// The online characters of one account and side share the bank.
-static P_char online[2] = {};
-void publish_account_bank_balances_revision(const char *account, int racewar,
-                                            const AccountBankBalances *balances,
-                                            uint64_t revision)
-{
-    for (P_char ch : online)
-        if (ch && std::string(get_account_name_safe(ch)) == account &&
-            GET_RACEWAR(ch) == racewar)
-        {
-            GET_BALANCE_COPPER(ch) = balances->copper;
-            GET_BALANCE_SILVER(ch) = balances->silver;
-            GET_BALANCE_GOLD(ch) = balances->gold;
-            GET_BALANCE_PLATINUM(ch) = balances->platinum;
-            ch->only.pc->bank_revision = revision;
-        }
-}
-
-struct player
-{
-    char_data ch = {};
-    pc_only_data pc = {};
-    explicit player(int pid)
-    {
-        ch.only.pc = &pc;
-        pc.pid = pid;
-        ch.player.racewar = 1;
-        ch.in_room = NOWHERE;
-    }
-};
-
-static bool last_committed = false;
-static unsigned int last_error = 0;
-static void completion(P_char, bool committed, const currency_command_result &,
-                       unsigned int error_code, const uint8_t *, size_t)
-{
-    last_committed = committed;
-    last_error = error_code;
-    order.push_back("completion");
-}
-
-static std::array<int64_t, 4> wallet(P_char ch)
-{
-    return {GET_COPPER(ch), GET_SILVER(ch), GET_GOLD(ch), GET_PLATINUM(ch)};
-}
+#include "currency_test_support.h"
 
 int main()
 {
@@ -207,12 +107,79 @@ int main()
     assert(last_committed && GET_PLATINUM(&alice.ch) == 0);
     const currency_transaction_health health = currency_transaction_health_copy();
     assert(health.committed == 5 && health.rejected == 3 && health.bank_deltas == 3);
+    // A trade reserves its future debit without moving money. Ordinary
+    // callers still complete synchronously, but cannot spend the reserved value.
+    GET_COPPER(&alice.ch)=100;GET_SILVER(&alice.ch)=0;
+    GET_GOLD(&alice.ch)=0;GET_PLATINUM(&alice.ch)=0;
+    const auto reserved_revision=alice.pc.wallet_revision;
+    assert(currency_transaction_reserve_trade(&alice.ch,-80));
+    assert(wallet(&alice.ch)[0]==100 && alice.pc.wallet_revision==reserved_revision);
+    assert(!currency_transaction_reserve_trade(&twin.ch,1));
+    assert(currency_transaction_submit_wallet_value(&alice.ch,-30,
+      currency_reason_type::wallet_spend,0,critical_source_site::command,
+      critical_deadline_class::interactive,completion,nullptr,0));
+    assert(!last_committed && last_error==ENOSPC && wallet(&alice.ch)[0]==100);
+    assert(currency_transaction_submit_wallet_value(&alice.ch,-20,
+      currency_reason_type::wallet_spend,0,critical_source_site::command,
+      critical_deadline_class::interactive,completion,nullptr,0));
+    assert(last_committed && wallet(&alice.ch)==(std::array<int64_t,4>{0,8,0,0}));
+    currency_transaction_release_trade(999); // another player cannot release it
+    assert(!currency_transaction_reserve_trade(&twin.ch,1));
+    currency_transaction_release_trade(44);
+    assert(currency_transaction_submit_wallet_value(&alice.ch,-80,
+      currency_reason_type::wallet_spend,0,critical_source_site::command,
+      critical_deadline_class::interactive,completion,nullptr,0));
+    assert(last_committed && wallet(&alice.ch)==(std::array<int64_t,4>{0,0,0,0}));
+    // A pending credit also reserves denomination space.
+    GET_PLATINUM(&alice.ch)=INT_MAX-1;
+    assert(currency_transaction_reserve_trade(&alice.ch,1000));
+    assert(currency_transaction_submit_wallet_value(&alice.ch,1000,
+      currency_reason_type::wallet_reward,0,critical_source_site::command,
+      critical_deadline_class::interactive,completion,nullptr,0));
+    assert(!last_committed && last_error==ENOSPC && GET_PLATINUM(&alice.ch)==INT_MAX-1);
+    currency_transaction_reset_for_tests();
+    assert(currency_transaction_reserve_trade(&twin.ch,0));
+    currency_transaction_release_trade(46);
+    // A chest receipt holds both the purchaser and every account/side peer.
+    for (P_char *busy : {&fixture_auction_pending, &fixture_collector_pending, &fixture_shop_pending}) {
+        *busy=&alice.ch;
+        assert(!currency_transaction_reserve_chest(&alice.ch));
+        *busy=nullptr;
+    }
+    assert(currency_transaction_reserve_chest(&alice.ch));
+    assert(currency_transaction_chest_busy(&alice.ch));
+    assert(currency_transaction_chest_busy(&twin.ch));
+    assert(!currency_transaction_chest_busy(&stranger.ch));
+    const auto peer_wallet=wallet(&twin.ch);
+    assert(currency_transaction_submit_wallet_value(&twin.ch,1,
+      currency_reason_type::auction_pickup,0,critical_source_site::command,
+      critical_deadline_class::interactive,completion,nullptr,0));
+    assert(last_committed && GET_COPPER(&twin.ch)==peer_wallet[0]+1);
+    currency_vector bank_credit{};bank_credit.amount[0]=1;
+    assert(!currency_transaction_submit(&twin.ch,{},bank_credit,currency_reason_type::bank_reward,0,
+      critical_source_site::command,critical_deadline_class::interactive,completion,nullptr,0));
+    assert(!currency_transaction_reserve_trade(&alice.ch,0));
+    currency_transaction_release_chest(999);
+    assert(currency_transaction_chest_busy(&alice.ch));
+    currency_command_result chest_result{};
+    chest_result.wallet.amount={1,2,3,4};
+    chest_result.wallet_revision=alice.pc.wallet_revision+1;
+    chest_result.bank.amount={5,6,7,8};
+    chest_result.bank_revision=alice.pc.bank_revision+1;
+    currency_transaction_publish_chest(&alice.ch,chest_result,true);
+    assert(wallet(&alice.ch)==chest_result.wallet.amount);
+    assert(alice.pc.wallet_revision==chest_result.wallet_revision);
+    assert(GET_BALANCE_PLATINUM(&twin.ch)==8);
+    assert(GET_COPPER(&twin.ch)==peer_wallet[0]+1);
+    currency_transaction_release_chest(44);
+    assert(!currency_transaction_chest_busy(&twin.ch));
     return 0;
 }
 '''
 
 
-with tempfile.TemporaryDirectory(prefix="duris-currency-in-memory-") as temporary:
+(ROOT / "bin/tests").mkdir(parents=True, exist_ok=True)
+with tempfile.TemporaryDirectory(prefix="currency-in-memory-", dir=ROOT / "bin/tests") as temporary:
     source = Path(temporary) / "harness.cpp"
     binary = Path(temporary) / "harness"
     source.write_text(HARNESS)
@@ -220,7 +187,7 @@ with tempfile.TemporaryDirectory(prefix="duris-currency-in-memory-") as temporar
         [
             "g++", "-std=c++20", "-Wall", "-Wextra", "-Werror", "-Wno-unused-parameter",
             "-Wno-missing-field-initializers", "-g", "-O1", "-fsanitize=address,undefined",
-            "-ffunction-sections", "-fdata-sections", "-Isrc", "-I/usr/include/mysql",
+            "-ffunction-sections", "-fdata-sections", "-Isrc", "-Itests/async", "-I/usr/include/mysql",
             str(source), rel("currency_transaction.c"), rel("currency_command.c"),
             rel("critical_command.c"), "-Wl,--gc-sections", "-lcrypto", "-o", str(binary),
         ],
@@ -232,3 +199,5 @@ print("[PASS] a reward and a spend change the wallet before the submit returns")
 print("[PASS] a spend or debit the balance cannot cover, or a credit it cannot hold, is refused")
 print("[PASS] a deposit saves the player before the bank credit; a withdrawal debits first")
 print("[PASS] the bank of every online character of the account and side changes together")
+
+print("[PASS] pending trades reserve spending and coin capacity without delaying ordinary completions")

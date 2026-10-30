@@ -4,8 +4,10 @@ No real token, external receiver, host environment or live journal is used.
 """
 from __future__ import annotations
 
+from datetime import datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
+import errno
 from pathlib import Path
 import socket
 import ssl
@@ -51,10 +53,12 @@ def http_tests(binary: Path, root: Path, environment: dict[str, str]) -> None:
              "retry-after", "retry-date", "long-retry", "overflow-retry", "exhaustion",
              "400", "401", "403", "413", "redirect", "oversized", "headers",
              "tls", "quota", "quota-retry", "storage", "clock", "rollback",
-             "expire", "deadline", "dns", "mono")
+             "expire", "deadline", "dns", "mono", "health-pacing",
+             "health-pacing-retry", "health-pacing-retry-spare", "health-pacing-coalesce")
     for case in cases:
         received: list[bytes] = []
         reserved: list[tuple[int, int]] = []
+        quota_days: list[int] = []
         journal = root / case
         journal.mkdir(mode=0o700)
 
@@ -74,6 +78,7 @@ def http_tests(binary: Path, root: Path, environment: dict[str, str]) -> None:
                 frame = (journal / "outages.ledger").read_bytes()
                 words = struct.unpack_from(">10Q", frame, 32)
                 reserved.append((words[-2], words[-1]))
+                quota_days.append(words[7])
                 attempt = len(received)
                 status, headers, body = 200, {}, b"{}"
                 if case == "lost-response" and attempt == 1:
@@ -81,7 +86,9 @@ def http_tests(binary: Path, root: Path, environment: dict[str, str]) -> None:
                     self.connection.close()
                     return
                 if ((case in {"retry", "pin", "expire", "quota-retry"} and attempt == 1)
-                        or (case == "exhaustion" and attempt <= 6)):
+                        or (case == "exhaustion" and attempt <= 6)
+                        or (case in {"health-pacing-retry", "health-pacing-retry-spare"}
+                            and attempt == 1)):
                     status = 503
                 if case in {"retry-after", "retry-date", "long-retry", "overflow-retry"} and attempt == 1:
                     status = 429
@@ -131,6 +138,42 @@ def http_tests(binary: Path, root: Path, environment: dict[str, str]) -> None:
             thread.join(timeout=1)
         assert result.returncode == 0 and not result.stderr, (case, result)
         health = json.loads(result.stdout)
+        if case.startswith("health-pacing"):
+            assert health == {"pacing_verified": True}, (case, health)
+            batches = [json.loads(raw) for raw in received]
+            assert all(batch["api_key"] == "phc_fixture" for batch in batches)
+            rows = [row for batch in batches for row in batch["batch"]]
+            health_rows = [row for row in rows if row["event"] == "duris_telemetry_health"]
+            assert all(normal <= 19800 and health <= 100 for normal, health in reserved)
+            # Independently check pre-send reservations and UTC pacing at the
+            # receiver. Retry receipts count too; rollover starts a new day.
+            submitted_by_day: dict[int, int] = {}
+            for batch, day, quota in zip(batches, quota_days, reserved):
+                submitted_by_day[day] = submitted_by_day.get(day, 0) + len(batch["batch"])
+                assert sum(quota) >= submitted_by_day[day], (case, quota)
+                if batch["batch"][0]["event"] == "duris_telemetry_health":
+                    stamp = datetime.fromisoformat(batch["batch"][0]["timestamp"].replace("Z", "+00:00"))
+                    elapsed = ((stamp.hour * 60 + stamp.minute) * 60 + stamp.second) * 1_000_000 + stamp.microsecond
+                    assert quota[1] <= min(100, 1 + elapsed * 100 // 86_400_000_000), (case, quota)
+            if case == "health-pacing":
+                assert len(health_rows) == 102 and len(rows) == 104
+                assert len(submitted_by_day) == 2 and reserved[-1] == (0, 100)
+                assert health_rows[1]["properties"]["coalesced_reason_mask"] != 0
+                assert health_rows[1]["properties"]["active_reason_mask"] == 0
+            elif case == "health-pacing-retry-spare":
+                assert len(received) == 2 and received[0] == received[1]
+                assert reserved == [(0, 1), (0, 2)]
+            elif case == "health-pacing-retry":
+                assert len(received) == 3 and len(health_rows) == 2 and len(rows) == 4
+                assert reserved == [(0, 1), (2, 1), (2, 2)]
+                assert health_rows[0]["uuid"] != health_rows[1]["uuid"]
+                assert health_rows[1]["properties"]["coalesced_reason_mask"] != 0
+            else:
+                assert len(received) == 2 and reserved == [(2, 2), (2, 3)]
+                assert len(health_rows) == 1
+                assert health_rows[0]["properties"]["health_trigger"] == "initial"
+                assert health_rows[0]["properties"]["coalesced_reason_mask"] == 0
+            continue
         assert health["cleanup_usec"] < 100_000, (case, health)
         assert health["longest_pulse_usec"] < 250_000, (case, health)
         assert health["attempted_batches"] == (1 if case in {"tls", "dns", "deadline", "mono"} else len(received)), (case, health, len(received))
@@ -203,7 +246,76 @@ def http_tests(binary: Path, root: Path, environment: dict[str, str]) -> None:
     print(f"PostHog HTTPS: {len(cases)} loopback delivery/quota/cancellation scenarios PASS")
 
 
-def runtime_tests(binary: Path, root: Path) -> None:
+def season_rollover_tests(binary: Path, tool: Path, journal: Path,
+                          env: dict[str, str], received: list[dict]) -> None:
+    import sys
+    sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "scripts/telemetry"))
+    from outage import decode
+
+    env = dict(env, TELEMETRY_ENABLED="true", TELEMETRY_BACKEND="posthog", TELEMETRY_SEASON_ID="1")
+    command = [str(tool), "rollover-season", str(journal), "678214", "99", "1000", "2", "100", "90", "10"]
+    old = subprocess.Popen([str(binary), "season-before", str(journal)], env=env,
+                           text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    try:
+        deadline = time.monotonic() + 5
+        while not (journal / "cutover-ready").exists():
+            if old.poll() is not None:
+                stdout, stderr = old.communicate()
+                raise AssertionError(("old sender exited before cutover", old.returncode, stdout, stderr))
+            assert time.monotonic() < deadline, "old sender did not start"
+            time.sleep(.01)
+        refused = subprocess.run(command, env=env, capture_output=True, text=True, timeout=5)
+        assert refused.returncode == 2 and json.loads(refused.stdout)["error_code"] == errno.EWOULDBLOCK, refused
+        (journal / "cutover-release").touch()
+        stdout, stderr = old.communicate(timeout=10)
+        assert old.returncode == 0 and not stderr, (stdout, stderr)
+    finally:
+        if old.poll() is None:
+            old.kill(); old.wait(timeout=5)
+    assert "telemetry PostHog runtime path passed" in stdout
+    before = (journal / "outages.ledger").read_bytes()
+    historical = decode(before)["observations"]
+    assert historical and all(row["season_id"] == 1 for row in historical)
+    assert historical[-1]["phase"] == "unknown_tail"  # HTTP acknowledgment cannot close an evidence tail.
+    old_identity = next(json.loads(line) for line in stdout.splitlines() if line.startswith('{"character"'))
+    assert received and all(int(row["properties"]["duris_season_id"]) == 1 for row in received)
+    sessions = [row["properties"] for row in received if row["event"] == "duris_session"]
+    assert any(row["distinct_id"] == old_identity["character"] and
+               row["duris_session_id"] == old_identity["session"] for row in sessions)
+    old_http = list(received)
+
+    rolled = subprocess.run(command, env=env, capture_output=True, text=True, check=True, timeout=5)
+    assert not rolled.stderr
+    quota = json.loads(rolled.stdout)
+    assert quota["normal_reserved"] == 90 and quota["health_reserved"] == 10
+    assert any(path.read_bytes() == before for path in journal.glob("outages.ledger.recovery.*"))
+    after = decode((journal / "outages.ledger").read_bytes())
+    assert after["observations"] == historical and after["quota"]["season_id"] == 2
+    durable = {path.name: path.read_bytes() for path in journal.iterdir() if path.is_file()}
+    retry = subprocess.run(command, env=env, capture_output=True, text=True, check=True, timeout=5)
+    assert json.loads(retry.stdout) == quota and not retry.stderr
+    assert {path.name: path.read_bytes() for path in journal.iterdir() if path.is_file()} == durable
+
+    for case, season in (("season-stale", "1"), ("season-after", "2")):
+        result = subprocess.run([str(binary), case, str(journal)], env=dict(env, TELEMETRY_SEASON_ID=season),
+                                text=True, capture_output=True, timeout=10)
+        assert result.returncode == 0 and not result.stderr, (case, result)
+        assert "telemetry PostHog runtime path passed" in result.stdout
+        assert received == old_http, "season change or stale binding created fresh same-day HTTP allowance"
+        if case == "season-after":
+            new_identity = next(json.loads(line) for line in result.stdout.splitlines() if line.startswith('{"character"'))
+            assert new_identity["season"] == 2 and old_identity["season"] == 1
+            assert new_identity["character"] != old_identity["character"]
+            assert new_identity["session"] != old_identity["session"]
+    final = decode((journal / "outages.ledger").read_bytes())
+    assert final["observations"][:len(historical)] == historical
+    assert final["observations"][-1]["season_id"] == 2
+    assert final["quota"]["normal_reserved"] == 90 and final["quota"]["health_reserved"] == 10
+    assert received == old_http  # Old receiver history was neither relabeled nor replayed.
+    print("PostHog native runtime season rollover: active-owner refusal, drain/reap, real CLI archive/retry, stale refusal, environment rebind, distinct identities and same-day quota conserved PASS")
+
+
+def runtime_tests(binary: Path, root: Path, tool: Path) -> None:
     import os
     # Never inherit project tokens, telemetry settings or host database targets.
     environment = {"PATH": os.environ["PATH"], "LANG": "C.UTF-8", "ENVIRONMENT": "local"}
@@ -214,7 +326,7 @@ def runtime_tests(binary: Path, root: Path) -> None:
         "-subj", "/CN=localhost", "-addext", "subjectAltName=DNS:localhost,IP:127.0.0.1",
         "-keyout", str(key), "-out", str(cert),
     ], env=environment, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    for case in ("success", "restart", "deadline", "quota", "storage", "rollback",
+    for case in ("season-rollover", "success", "restart", "deadline", "quota", "storage", "rollback",
                  "missing-key", "missing-token", "missing-host", "missing-sender",
                  "invalid-host", "invalid-project", "invalid-scope", "missing-scope", "production-scope",
                  "missing-quota", "quota-mismatch", "owner", "400", "401", "403", "503"):
@@ -249,6 +361,9 @@ def runtime_tests(binary: Path, root: Path) -> None:
                    TELEMETRY_IDENTITY_KEY="01" * 32, DURIS_TEST_POSTHOG_PORT=str(server.server_port),
                    DURIS_TEST_POSTHOG_CA=str(cert))
         try:
+            if case == "season-rollover":
+                season_rollover_tests(binary, tool, journal, env, received)
+                continue
             result = subprocess.run([str(binary), case, str(journal)], env=env,
                                     text=True, capture_output=True, timeout=15)
         finally:
