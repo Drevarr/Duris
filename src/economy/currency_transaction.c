@@ -35,7 +35,9 @@
 #include <climits>
 #include <cerrno>
 #include <cstring>
+#include <new>
 #include <string>
+#include <unordered_map>
 
 extern P_room world;
 
@@ -45,6 +47,7 @@ currency_transaction_health health = {};
 
 uint32_t reserved_trade_pid;
 int64_t reserved_trade_payment;
+std::unordered_map<uint32_t, int64_t> reserved_world_quests;
 uint32_t reserved_chest_pid = 0;
 std::string reserved_chest_account;
 int reserved_chest_racewar = 0;
@@ -156,6 +159,10 @@ bool apply(P_char character, const currency_command_payload &payload,
 	    (payload.pid == reserved_chest_pid ||
 	     std::any_of(payload.bank_delta.amount.begin(), payload.bank_delta.amount.end(),
 			 [](int64_t delta) { return delta != 0; })))
+		return false;
+	if (reserved_world_quests.count(payload.pid) &&
+	    std::any_of(payload.wallet_delta.amount.begin(), payload.wallet_delta.amount.end(),
+			[](int64_t delta) { return delta < 0; }))
 		return false;
 	std::string account;
 	if (!player_account(character, &account) ||
@@ -373,6 +380,7 @@ void currency_transaction_reset_for_tests(void)
 {
 	reserved_trade_pid = 0;
 	reserved_trade_payment = 0;
+	reserved_world_quests.clear();
 	reserved_chest_pid = 0;
 	reserved_chest_account.clear();
 	health = {};
@@ -381,7 +389,7 @@ void currency_transaction_reset_for_tests(void)
 bool currency_transaction_reserve_trade(P_char character, int64_t payment)
 {
 	if (!character || IS_NPC(character) || GET_PID(character) <= 0 || reserved_trade_pid ||
-	    currency_transaction_chest_busy(character))
+	    currency_transaction_wallet_busy(character))
 		return false;
 	const currency_vector before{ { GET_COPPER(character), GET_SILVER(character),
 					GET_GOLD(character), GET_PLATINUM(character) } };
@@ -423,18 +431,84 @@ bool currency_transaction_publish_trade(P_char character, int64_t payment)
 	return true;
 }
 
+bool currency_transaction_reserve_world_quest(P_char character, int64_t fee)
+try
+{
+	if (!character || IS_NPC(character) || !character->only.pc || GET_PID(character) <= 0 ||
+	    fee <= 0 || character->only.pc->wallet_revision == UINT64_MAX ||
+	    currency_transaction_wallet_busy(character) ||
+	    reserved_trade_pid == static_cast<uint32_t>(GET_PID(character)) ||
+	    auction_transaction_player_busy(character) ||
+	    collector_transaction_player_busy(character) ||
+	    shop_trade_transaction_player_busy(character))
+		return false;
+	const currency_vector before{ { GET_COPPER(character), GET_SILVER(character),
+					GET_GOLD(character), GET_PLATINUM(character) } };
+	currency_vector after;
+	return currency_wallet_after_value(before, -fee, &after) &&
+	       reserved_world_quests.emplace(static_cast<uint32_t>(GET_PID(character)), fee).second;
+}
+catch (const std::bad_alloc &)
+{
+	return false;
+}
+
+void currency_transaction_release_world_quest(uint32_t pid)
+{
+	reserved_world_quests.erase(pid);
+}
+
+bool currency_transaction_publish_world_quest(P_char character, int64_t fee)
+{
+	if (!character || IS_NPC(character) || !character->only.pc || GET_PID(character) <= 0 ||
+	    character->only.pc->wallet_revision == UINT64_MAX ||
+	    currency_transaction_chest_busy(character))
+		return false;
+	auto reserved = reserved_world_quests.find(static_cast<uint32_t>(GET_PID(character)));
+	if (reserved == reserved_world_quests.end() || reserved->second != fee)
+		return false;
+	const currency_vector before{ { GET_COPPER(character), GET_SILVER(character),
+					GET_GOLD(character), GET_PLATINUM(character) } };
+	currency_vector after;
+	if (!currency_wallet_after_value(before, -fee, &after))
+		return false;
+	GET_COPPER(character) = static_cast<int>(after.amount[0]);
+	GET_SILVER(character) = static_cast<int>(after.amount[1]);
+	GET_GOLD(character) = static_cast<int>(after.amount[2]);
+	GET_PLATINUM(character) = static_cast<int>(after.amount[3]);
+	++character->only.pc->wallet_revision;
+	reserved_world_quests.erase(reserved);
+	mark_player_dirty_components(GET_PID(character), PLAYER_COMPONENT_STATUS);
+	gmcp_char_vitals(character);
+	return true;
+}
+
+bool currency_transaction_wallet_busy(P_char character)
+{
+	return currency_transaction_chest_busy(character) ||
+	       (character && IS_PC(character) && GET_PID(character) > 0 &&
+		reserved_world_quests.count(static_cast<uint32_t>(GET_PID(character))));
+}
+
+bool currency_transaction_chest_account_busy(const char *account_name)
+{
+	return reserved_chest_pid && account_name &&
+	       !strcasecmp(account_name, reserved_chest_account.c_str());
+}
+
 bool currency_transaction_chest_busy(P_char character)
 {
 	return reserved_chest_pid && character && !IS_NPC(character) &&
 	       (static_cast<uint32_t>(GET_PID(character)) == reserved_chest_pid ||
 		(GET_RACEWAR(character) == reserved_chest_racewar &&
-		 !strcasecmp(get_account_name_safe(character), reserved_chest_account.c_str())));
+		 currency_transaction_chest_account_busy(get_account_name_safe(character))));
 }
 
 bool currency_transaction_reserve_chest(P_char character)
 {
 	std::string account;
 	if (reserved_chest_pid || reserved_trade_pid || !player_account(character, &account) ||
+	    currency_transaction_wallet_busy(character) ||
 	    auction_transaction_player_busy(character) ||
 	    collector_transaction_player_busy(character) ||
 	    shop_trade_transaction_player_busy(character))
@@ -466,6 +540,15 @@ void currency_transaction_publish_chest(P_char character, const currency_command
 		GET_GOLD(character) = static_cast<int>(result.wallet.amount[2]);
 		GET_PLATINUM(character) = static_cast<int>(result.wallet.amount[3]);
 		character->only.pc->wallet_revision = result.wallet_revision;
+		// A disconnected purchaser has no descriptor for shared-bank publication.
+		if (bank_changes && result.bank_revision >= character->only.pc->bank_revision)
+		{
+			GET_BALANCE_COPPER(character) = static_cast<int>(result.bank.amount[0]);
+			GET_BALANCE_SILVER(character) = static_cast<int>(result.bank.amount[1]);
+			GET_BALANCE_GOLD(character) = static_cast<int>(result.bank.amount[2]);
+			GET_BALANCE_PLATINUM(character) = static_cast<int>(result.bank.amount[3]);
+			character->only.pc->bank_revision = result.bank_revision;
+		}
 		mark_player_dirty_components(reserved_chest_pid, PLAYER_COMPONENT_STATUS);
 		gmcp_char_vitals(character);
 	}

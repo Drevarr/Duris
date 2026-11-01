@@ -27,11 +27,31 @@ bool locker_container_access_allowed(P_char actor, P_obj container);
 bool locker_object_is_private_chest(P_obj object);
 void locker_invalidate_chest_access(P_char actor);
 void locker_chest_changes_pulse(void);
+// An item checkpoint inside a locker waits until private destination payloads are durable.
+bool locker_private_contents_durable(P_char actor);
 
 int guild_locker_room_hook(int room, P_char ch, int cmd, char *arg);
 /* The statement that removes every locker grant `name` holds (a character deletion). */
 std::string remove_all_locker_access_statement(const char *name);
 /* Remove them inside the caller's transaction (a character deletion). */
+
+struct sql_chest_log_entry;
+// Reserve the required audit records before moving; abandoned attempts cancel them.
+class LockerMovementAudit
+{
+    public:
+	LockerMovementAudit(P_char actor, P_obj source, P_obj target, P_obj item,
+			    const char *description = NULL);
+	~LockerMovementAudit();
+	LockerMovementAudit(const LockerMovementAudit &) = delete;
+	LockerMovementAudit &operator=(const LockerMovementAudit &) = delete;
+	bool Ready(void) const { return m_ready; }
+	void Commit(void);
+
+    private:
+	bool m_ready = true;
+	std::vector<std::shared_ptr<sql_chest_log_entry>> m_entries;
+};
 
 class LockerChest;
 class ComboChest;
@@ -344,7 +364,7 @@ class PrivateChest : public LockerChest
 	const char *GetName(void) { return m_chestName; };
 	// Memory holds the chest's password: empty for none.
 	const std::string &GetPasswordHash(void) { return m_passwordHash; };
-	void SetPasswordHash(const char *hash) { m_passwordHash = hash ? hash : ""; };
+	void SetPasswordHash(const char *hash);
 	bool SaveContents(StorageLocker *locker, bool durable);
 	// Submit/acknowledge retained captures; true while work remains.
 	bool FlushContents(void);

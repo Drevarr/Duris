@@ -570,6 +570,12 @@ static StorageLocker *locker_current(P_char ch)
 	return GetChestList(ch->in_room);
 }
 
+bool locker_private_contents_durable(P_char actor)
+{
+	StorageLocker *locker = locker_current(actor);
+	return !locker || !locker->LockerUserMatches(actor) || locker->PrivateContentsDurable();
+}
+
 static StorageLocker *locker_current_or_error(P_char ch, const char *message)
 {
 	StorageLocker *pLocker = locker_current(ch);
@@ -683,29 +689,59 @@ static bool locker_private_chests_available(P_char ch)
 	return true;
 }
 
-void locker_record_movement(P_char actor, P_obj container, P_obj item, bool deposit,
-			    const char *description)
+LockerMovementAudit::LockerMovementAudit(P_char actor, P_obj source, P_obj target, P_obj item,
+					 const char *description)
 {
-	if (!container)
+	if (!actor || persistence_mode_get() == PERSISTENCE_MODE_FLATFILE_PRIMARY)
 		return;
-	while (OBJ_INSIDE(container))
-		container = container->loc.inside;
-	StorageLocker *locker = locker_for_room_object(container);
-	LockerChest *chest = locker ? locker->FindChestForObject(container) : NULL;
-	if (!actor || !chest)
+	P_obj containers[] = { source, target };
+	for (size_t i = 0; i < 2; ++i)
+	{
+		P_obj container = containers[i];
+		if (!container)
+			continue;
+		while (OBJ_INSIDE(container))
+			container = container->loc.inside;
+		StorageLocker *locker = locker_for_room_object(container);
+		LockerChest *chest = locker ? locker->FindChestForObject(container) : NULL;
+		if (!chest)
+			continue;
+		std::string text = description ? description :
+						 (item && item->short_description ?
+							  item->short_description :
+							  "item");
+		if (item && !description && item->type == ITEM_MONEY)
+			text = coins_to_string(item->value[3], item->value[2], item->value[1],
+					       item->value[0], "");
+		if (item && !description)
+			text = "[uid " + std::to_string(item->obj_uid) + "] " + text;
+		auto entry = sql_prepare_chest_activity(
+			locker->GetLockerId(),
+			chest->IsPrivateChest() ? chest->GetChestId() : locker->GetPublicChestId(),
+			GET_NAME(actor), i == 0 ? CHEST_ACTION_GET : CHEST_ACTION_PUT,
+			text.c_str());
+		if (!entry)
+		{
+			m_ready = false;
+			return;
+		}
+		m_entries.push_back(std::move(entry));
+	}
+}
+
+LockerMovementAudit::~LockerMovementAudit()
+{
+	for (const auto &entry : m_entries)
+		sql_finish_chest_activity(entry, false);
+}
+
+void LockerMovementAudit::Commit(void)
+{
+	if (!m_ready)
 		return;
-	std::string text =
-		description ? description :
-			      (item && item->short_description ? item->short_description : "item");
-	if (item && !description && item->type == ITEM_MONEY)
-		text = coins_to_string(item->value[3], item->value[2], item->value[1],
-				       item->value[0], "");
-	if (item && !description)
-		text += " [uid " + std::to_string(item->obj_uid) + "]";
-	sql_log_chest_activity(
-		locker->GetLockerId(),
-		chest->IsPrivateChest() ? chest->GetChestId() : locker->GetPublicChestId(),
-		GET_NAME(actor), deposit ? CHEST_ACTION_PUT : CHEST_ACTION_GET, text.c_str());
+	for (const auto &entry : m_entries)
+		sql_finish_chest_activity(entry, true);
+	m_entries.clear();
 }
 
 static P_char locker_char_or_error(StorageLocker *pLocker, P_char ch, const char *message)
@@ -1798,7 +1834,6 @@ bool ComboChest::ItemFits(P_obj obj)
 PrivateChest::PrivateChest(int chest_id, const char *name, const char *password_hash)
 	: LockerChest(name, "in your private chest")
 	, m_chestId(chest_id)
-	, m_passwordHash(password_hash ? password_hash : "")
 {
 	strlcpy(m_chestName, name, sizeof(m_chestName));
 	m_chestKeyword = m_chestName;
@@ -1814,16 +1849,27 @@ PrivateChest::PrivateChest(int chest_id, const char *name, const char *password_
 		m_pChestObject->value[0] = -1;
 		m_pChestObject->value[1] = m_pChestObject->value[2] = m_pChestObject->value[3] = 0;
 		m_pChestObject->type = ITEM_CONTAINER;
-		m_pChestObject->str_mask |= (STRUNG_KEYS | STRUNG_DESC1);
+		m_pChestObject->str_mask |= STRUNG_KEYS;
 
 		char buf[MAX_STRING_LENGTH];
 		snprintf(buf, sizeof(buf), "chest %s private", name);
 		m_pChestObject->name = str_dup(buf);
-
-		snprintf(buf, sizeof(buf), "&+cA private chest labeled '&+W%s&+c'%s.&n", name,
-			 m_passwordHash.empty() ? "" : " &+Y(locked)&n");
-		m_pChestObject->description = str_dup(buf);
 	}
+	SetPasswordHash(password_hash);
+}
+
+void PrivateChest::SetPasswordHash(const char *hash)
+{
+	m_passwordHash = hash ? hash : "";
+	if (!m_pChestObject)
+		return;
+	char buf[MAX_STRING_LENGTH];
+	snprintf(buf, sizeof(buf), "&+cA private chest labeled '&+W%s&+c'%s.&n", m_chestName,
+		 m_passwordHash.empty() ? "" : " &+Y(locked)&n");
+	if (m_pChestObject->str_mask & STRUNG_DESC1)
+		str_free(m_pChestObject->description);
+	m_pChestObject->description = str_dup(buf);
+	m_pChestObject->str_mask |= STRUNG_DESC1;
 }
 
 bool PrivateChest::SaveContents(StorageLocker *locker, bool durable)
@@ -4223,6 +4269,22 @@ static void locker_access_transferAccess(P_char chLocker, P_char ch)
 // private chest commands
 // ============================================================================
 
+// Keep management names literal instead of skipping words such as "from".
+static char *locker_chest_argument(char *arg, char *word)
+{
+	while (isspace(static_cast<unsigned char>(*arg)))
+		++arg;
+	while (*arg && !isspace(static_cast<unsigned char>(*arg)))
+	{
+		*word++ = LOWER(*arg);
+		++arg;
+	}
+	*word = '\0';
+	while (isspace(static_cast<unsigned char>(*arg)))
+		++arg;
+	return arg;
+}
+
 /* The id of the chest `name` names in the locker: a private chest, or "public". */
 static int locker_chest_id(StorageLocker *pLocker, const char *name)
 {
@@ -4365,9 +4427,8 @@ static void locker_change_chest(P_char actor, StorageLocker *locker, PrivateChes
 	chest_changes.push_back(std::move(change));
 }
 
-/* Private chests live in memory while their locker is open: each change is made there
- * at once and queued on the persistence writer. A new chest's id comes from its row,
- * created on the writer. */
+/* Private chests live in memory while their locker is open. Publish a metadata change
+ * only after its write/readback resolves; a purchase supplies its committed row ID. */
 static int locker_chestcmd(P_char ch, char *arg)
 {
 	if (!ch || !ch->desc)
@@ -4395,8 +4456,8 @@ static int locker_chestcmd(P_char ch, char *arg)
 	}
 
 	char arg1[MAX_INPUT_LENGTH], arg2[MAX_INPUT_LENGTH], arg3[MAX_INPUT_LENGTH];
-	arg = one_argument(arg, arg1);
-	arg = one_argument(arg, arg2);
+	arg = locker_chest_argument(arg, arg1);
+	arg = locker_chest_argument(arg, arg2);
 	strcpy(arg3, arg);
 
 	if (is_abbrev(arg1, "list") || !arg1[0])
@@ -4427,12 +4488,12 @@ static int locker_chestcmd(P_char ch, char *arg)
 			return TRUE;
 		}
 		if (strlen(arg2) > 32 || !str_cmp(arg2, "public") || !str_cmp(arg2, "chest") ||
-		    !str_cmp(arg2, "private") ||
+		    !str_cmp(arg2, "private") || fill_word(arg2) ||
 		    !std::all_of(arg2, arg2 + strlen(arg2), [](unsigned char c)
 				 { return isalpha(c) || isdigit(c) || c == '_' || c == '-'; }))
 		{
 			send_to_char(
-				"Chest names must use 1-32 letters, digits, underscores or hyphens, and cannot be public, chest or private.\r\n",
+				"Chest names must use 1-32 letters, digits, underscores or hyphens, and cannot be public, chest, private, in, from, with, the, on, at or to.\r\n",
 				ch);
 			return TRUE;
 		}
@@ -4683,22 +4744,34 @@ static int locker_opencmd(P_char ch, char *arg)
 			return;
 		if (!valid)
 		{
-			send_to_char("Wrong password.\r\n", actor);
-			sql_log_chest_activity(locker_id, chest_id, GET_NAME(actor),
-					       CHEST_ACTION_FAIL, NULL);
+			if (!sql_log_chest_activity(locker_id, chest_id, GET_NAME(actor),
+						    CHEST_ACTION_FAIL, NULL))
+				send_to_char(
+					"Chest activity is unavailable. Please try again later.\r\n",
+					actor);
+			else
+				send_to_char("Wrong password.\r\n", actor);
+			return;
+		}
+		if (!sql_log_chest_activity(locker_id, chest_id, GET_NAME(actor), CHEST_ACTION_OPEN,
+					    NULL))
+		{
+			send_to_char("Chest activity is unavailable. Please try again later.\r\n",
+				     actor);
 			return;
 		}
 		locker->SetCurrentChestId(is_public ? 0 : chest_id, manager);
 		send_to_char_f(actor, "You open the '%s' chest.\r\n", name.c_str());
-		sql_log_chest_activity(locker_id, chest_id, GET_NAME(actor), CHEST_ACTION_OPEN,
-				       NULL);
 	};
 	if (manager)
 	{
 		finish(ch->desc, 1, nullptr);
 		return TRUE;
 	}
-	if (strlen(arg2) > BCRYPT_PASSWORD_MAX_BYTES)
+	const char *password = arg2;
+	while (isspace(static_cast<unsigned char>(*password)))
+		++password;
+	if (strlen(password) > BCRYPT_PASSWORD_MAX_BYTES)
 	{
 		finish(ch->desc, 0, nullptr);
 		return TRUE;
@@ -4706,7 +4779,7 @@ static int locker_opencmd(P_char ch, char *arg)
 	const std::string hash = chest ? chest->GetPasswordHash() : std::string();
 	if (hash.empty() || !arg2[0])
 	{
-		finish(ch->desc, hash.empty() && !arg2[0], nullptr);
+		finish(ch->desc, hash.empty() && !*password, nullptr);
 		return TRUE;
 	}
 	bool submitted = password_async_start(
@@ -4779,9 +4852,12 @@ static int locker_closecmd(P_char ch, char *arg)
 	pLocker->InvalidateChestAccess();
 	if (!chest_id)
 		return FALSE;
-	sql_log_chest_activity(pLocker->GetLockerId(), chest_id, GET_NAME(ch), CHEST_ACTION_CLOSE,
-			       NULL);
-	send_to_char("You close the chest.\r\n", ch);
+	if (!sql_log_chest_activity(pLocker->GetLockerId(), chest_id, GET_NAME(ch),
+				    CHEST_ACTION_CLOSE, NULL))
+		send_to_char("You close the chest, but its activity could not be recorded.\r\n",
+			     ch);
+	else
+		send_to_char("You close the chest.\r\n", ch);
 	return TRUE;
 }
 
@@ -4817,7 +4893,7 @@ static int locker_logcmd(P_char ch, char * /*arg*/)
 			    "FROM private_chest_log l "
 			    "LEFT JOIN private_chests c ON l.chest_id = c.id "
 			    "WHERE l.locker_id=%d "
-			    "ORDER BY l.logged_at DESC LIMIT 50",
+			    "ORDER BY l.logged_at DESC, l.id DESC LIMIT 50",
 			    locker_id),
 		    [locker_id, visit](P_char viewer, const sql_rows &rows)
 		    {
