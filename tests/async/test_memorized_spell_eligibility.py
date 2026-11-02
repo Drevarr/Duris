@@ -9,8 +9,11 @@ import tempfile
 from _paths import ROOT, HARNESS_STUBS, extract_function, source
 
 
-registration = source("skills.c").read_text().split(
-    'SPELL_CREATE_MSG("freedom of movement",', 1)[1].split("SKILL_CREATE(", 1)[0]
+registration = re.split(
+    r"\b(?:SPELL|SKILL)_CREATE(?:_MSG|_WITH_MESSAGES)?\(",
+    source("skills.c").read_text().split('SPELL_CREATE_MSG("freedom of movement",', 1)[1],
+    maxsplit=1,
+)[0]
 classes = re.findall(r"SPELL_ADD\((CLASS_\w+), (\d+)\)", registration)
 assert len(classes) == 6 and all(circle == "11" for _, circle in classes)
 
