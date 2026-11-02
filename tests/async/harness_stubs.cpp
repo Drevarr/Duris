@@ -51,6 +51,11 @@ HARNESS_STUB bool save_account_character_departure(P_char)
 {
 	return true;
 }
+// Extraction fixtures without locker authority have no departure to refuse.
+HARNESS_STUB bool locker_leave_for_extraction(P_char)
+{
+	return true;
+}
 // Ordinary NPC fixtures use their own race. Tutorial profile/parity coverage
 // links the real lookup, including the full-world read_mobile_probe comparison.
 HARNESS_STUB int tutorial_mobile_mechanics_race(char_data *ch)

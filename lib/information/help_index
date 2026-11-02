@@ -27439,13 +27439,14 @@ Syntax: leaderboard
 
 The main leaderboard ranks the top 20 mortal characters (levels 1-56).
 Staff characters are excluded. It shows rank, level, score, player frags,
-ship reputation, total earned epics and deaths. Ties sort by name.
+ship reputation and total earned epics. Ties sort by name.
 
 With the default scoring settings, the displayed score is:
   10 per level + experience / 1,000,000 + 100 per full player frag
-  + 1 per ship-reputation point + 1 per earned epic - 0.25 per death.
+  + 1 per ship-reputation point + 1 per earned epic.
 Experience is counted in complete blocks of 10,000 before scaling the
 score. Scores use the latest saved character and ship data.
+Recorded deaths do not affect leaderboard scores.
 
 Player frags are displayed as full frags, including hundredths. Negative
 frags lower your score. Invalid stored frag totals contribute zero without

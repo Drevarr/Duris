@@ -10,6 +10,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import re
 import shutil
 import signal
 import subprocess
@@ -142,6 +143,27 @@ def run(binary, backend, inspector, evidence_dir):
                 assert "golden key" in command(client, "inventory").lower()
                 return None
 
+            def copyover():
+                # A full-world handoff can leave background artifact writes pending.
+                # Qualify key retention after those writers settle, without weakening
+                # the production handoff's bounded durability drain.
+                deadline = time.monotonic() + 180
+                while True:
+                    status = command(client, "world persistence")
+                    artifact = next(line for line in status.splitlines()
+                                    if line.startswith("artifact_guild "))
+                    counts = dict(re.findall(r"(\w+)=(\d+)", artifact))
+                    if (all(counts[name] == "0" for name in
+                            ("dirty_artifacts", "dirty_guilds", "history_pending")) and
+                            "critical_commands state=ready " in status):
+                        break
+                    assert time.monotonic() < deadline, status
+                    time.sleep(.1)
+                process.send_signal(signal.SIGUSR1)
+                result, output_text = client.expect_any(
+                    ("Copyover complete!", "Copyover FAILED", "Copyover cancelled"), timeout=180)
+                assert result == "Copyover complete!", output_text + journey.runtime_logs(runtime)
+
             try:
                 boot()
                 client = journey.MudClient(plain)
@@ -204,8 +226,7 @@ def run(binary, backend, inspector, evidence_dir):
                 boot()
                 login()
                 assert any(row[0] == active_uid for row in save()["items"]), "active key lost on crash"
-                process.send_signal(signal.SIGUSR1)
-                client.expect("Copyover complete!", timeout=180)
+                copyover()
                 assert "golden key" in command(client, "inventory").lower()
                 assert any(row[0] == active_uid for row in save()["items"]), "active key lost on copyover"
                 evidence["checks"].append("active key survives checkpoint, SIGKILL/relogin and copyover")
@@ -215,8 +236,7 @@ def run(binary, backend, inspector, evidence_dir):
                 # Fresh NORENT keys have always been omitted from crash snapshots.
                 # PC inventory is not part of copyover's separate world/NPC trees.
                 grant_key(False)
-                process.send_signal(signal.SIGUSR1)
-                client.expect("Copyover complete!", timeout=180)
+                copyover()
                 assert "golden key" not in command(client, "inventory").lower()
                 assert not any(row[1] == KEY for row in save()["items"])
                 grant_key(False)

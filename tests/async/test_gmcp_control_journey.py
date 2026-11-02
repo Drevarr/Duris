@@ -417,6 +417,11 @@ def run(binary, evidence):
                     combat[-1]["bodyRevision"] == returned["character"]["bodyRevision"],
                     "combat event crossed the current lifecycle/body boundary")
             items = item_journey(client)
+            # The clock deduplicates unchanged hours. Establish a different start
+            # so the first phase assertion requires an actual time transition.
+            client.send("time 2")
+            client.expect("You set the time.")
+            drain(client)
             phases = []
             for hour, expected, phase in ((-1,23,"night"),(4,4,"dawn"),(9,9,"day"),(16,16,"dusk"),(0,0,"night")):
                 before = len(telnet_packets(client))
