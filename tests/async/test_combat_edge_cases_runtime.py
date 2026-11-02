@@ -22,6 +22,7 @@ PRELUDE = r'''
 #include "combat/forced_movement.h"
 #include "magic/spells.h"
 #include "net/comm.h"
+#include "net/gmcp.h"
 #include <algorithm>
 #include <cassert>
 #include <cstdio>
