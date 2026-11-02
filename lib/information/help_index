@@ -12881,8 +12881,9 @@ An asterisk marks a race disabled in character creation. Special and legacy
 races appear separately, with their normal restrictions or descent paths.
 
 Race info shows the race's description, racewar side, creation availability,
-valid classes, racial stat factors and combat/spell speed. Its class list uses
-the current character creation restrictions, including enabled classes.
+valid classes and their available specializations, racial stat factors and
+combat/spell speed. Its class list uses the current character creation
+restrictions, including enabled classes.
 
 Race innates lists only that race's abilities, including abilities gained at
 later levels. An asterisk marks a passive ability. Use help <ability name> for

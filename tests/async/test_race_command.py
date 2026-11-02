@@ -66,7 +66,7 @@ static void check_classes(int race) {
     int expected = 0;
     for (int cls = 1; cls <= CLASS_COUNT; ++cls) {
         bool allowed = creation_class_enabled(cls) && creation_class_align(race, cls) != 5;
-        assert((classes.find("    " + plain(class_names_table[cls].ansi) + "\n") !=
+        assert((classes.find("    " + plain(class_names_table[cls].ansi)) !=
                 std::string::npos) == allowed);
         expected += allowed;
     }
@@ -115,27 +115,42 @@ int main() {
         run("innates " + std::string(race_names_table[race].normal));
         assert(innate_race == race);
     }
-    assert(run("info human").find("    Paladin\n") != std::string::npos);
-    assert(run("info human").find("    Anti-Paladin\n") == std::string::npos);
-    assert(run("info human").find("    Dragoon\n") == std::string::npos);
+    auto goblin = run("info goblin");
+    assert(goblin.find("    Warrior     : Swordsman, Guardian\n") != std::string::npos);
+    assert(goblin.find("    Rogue       : Assassin, Thief\n") != std::string::npos);
+    assert(goblin.find("    Summoner    : Controller, Mentalist, Naturalist\n") != std::string::npos);
+    assert(goblin.find("Swashbuckler") == std::string::npos);
+    assert(goblin.find("Shadow Archer") == std::string::npos);
+    assert(goblin.find("Not Used") == std::string::npos);
+    assert(run("info human").find("    Warrior     : Swordsman, Guardian, Swashbuckler\n") !=
+           std::string::npos);
+    assert(run("info thri-kreen").find("    Warrior     : Swordsman\n") != std::string::npos);
+    assert(run("info revenant").find("    Warrior\n") != std::string::npos);
+    assert(run("info human").find("    Paladin") != std::string::npos);
+    assert(run("info human").find("    Anti-Paladin") == std::string::npos);
+    assert(run("info human").find("    Dragoon") == std::string::npos);
     setenv("CREATION_ALL_CLASSES", "TRUE", 1);
     for (int race = 1; race <= RACE_PLAYER_MAX; ++race) check_classes(race);
-    assert(run("info human").find("    Dragoon\n") != std::string::npos);
+    assert(run("info human").find("    Dragoon") != std::string::npos);
+    goblin = run("info goblin");
+    assert(goblin.find("    Warrior     : Swordsman, Guardian, Swashbuckler\n") !=
+           std::string::npos);
+    assert(goblin.find("    Rogue       : Assassin, Thief, Shadow Archer\n") != std::string::npos);
     setenv("CREATION_ALL_RACES", "TRUE", 1);
     for (int race = 1; race <= RACE_PLAYER_MAX; ++race) check_classes(race);
     unsetenv("CREATION_ALL_CLASSES");
-    assert(run("info lich").find("    Necromancer\n") != std::string::npos);
+    assert(run("info lich").find("    Necromancer") != std::string::npos);
     assert(run("info lich").find("normally restricted") != std::string::npos);
     unsetenv("CREATION_ALL_RACES");
     assert(run("info lich").find("descend: necromancer") != std::string::npos);
     std::ofstream("lib/creation_availability.cfg") << "creation.class.warrior.enabled=false\n"
         "creation.race.gnome.enabled=false\n";
     boot_creation_availability_config();
-    assert(run("info human").find("    Warrior\n") == std::string::npos);
+    assert(run("info human").find("    Warrior") == std::string::npos);
     assert(run("info gnome").find("Disabled in character creation") != std::string::npos);
     assert(run("list").find("*Gnome") != std::string::npos);
-    puts("PASS: all 37 race profiles/innate routes, creation restrictions and overrides, "
-         "faction colors, ASCII panels and name resolution");
+    puts("PASS: all 37 race profiles/innate routes, race-specific specializations, "
+         "creation restrictions and overrides, faction colors, ASCII panels and name resolution");
 }
 '''
 
@@ -166,7 +181,7 @@ def main():
                             "-fsanitize=undefined", "-fno-sanitize-recover=undefined", "-Isrc",
                             "-I/usr/include/mysql", "-I/usr/include/libxml2", *flags,
                             str(harness), "src/cmd/race.c", "src/core/common.c", "src/core/constant.c",
-                            "src/account/creation_availability_config.c",
+                            "src/account/creation_availability_config.c", "src/classes/specializations.c",
                             "-o", str(binary)], cwd=ROOT, check=True)
             subprocess.run([str(binary)], cwd=directory, check=True)
 

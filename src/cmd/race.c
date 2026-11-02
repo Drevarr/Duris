@@ -3,6 +3,7 @@
 #include "core/utility.h"
 #include "core/utils.h"
 #include "account/creation_availability_config.h"
+#include "classes/specializations.h"
 #include "cmd/race.h"
 #include "cmd/wikihelp.h"
 
@@ -158,7 +159,11 @@ static void show_race_info(P_char ch, int race)
 	{
 		if (!creation_class_enabled(cls) || creation_class_align(race, cls) == 5)
 			continue;
-		send_to_char_f(ch, "    %s&n\n", class_names_table[cls].ansi);
+		string name = class_names_table[cls].ansi;
+		string specs = single_spec_list(race, cls);
+		if (!specs.empty())
+			name = pad_ansi(name.c_str(), 12) + "&n: " + specs;
+		send_to_char_f(ch, "    %s&n\n", name.c_str());
 		++shown;
 	}
 	if (!shown)

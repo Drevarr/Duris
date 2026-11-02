@@ -65,7 +65,17 @@ def run(binary, backend):
                 classes = classes.split("Racial stat factors", 1)[0]
                 assert "Warrior" in classes and "Paladin" in classes
                 assert "Anti-Paladin" not in classes and "Dragoon" not in classes
+                assert "Warrior     : Swordsman, Guardian, Swashbuckler" in classes
                 assert "100% is the baseline" in human
+                goblin = command(client, "race info goblin")
+                assert "Warrior     : Swordsman, Guardian" in goblin
+                assert "Rogue       : Assassin, Thief" in goblin
+                assert "Summoner    : Controller, Mentalist, Naturalist" in goblin
+                assert "Swashbuckler" not in goblin and "Shadow Archer" not in goblin
+                assert "Not Used" not in goblin
+                thri_kreen = command(client, "race info thri-kreen")
+                assert "Warrior     : Swordsman\r\n" in thri_kreen
+                assert "Guardian" not in thri_kreen
                 assert "Grey Elf" in command(client, "race info GrEy ElF")
                 assert "Mountain Dwarf" in command(client, "race info mountaindwarf")
                 drow = command(client, "race info drow elf")
@@ -85,8 +95,9 @@ def run(binary, backend):
                 assert "race innates <race name>" in help_text and "valid classes" in help_text
                 # Keep a reviewable terminal transcript outside the disposable authority.
                 (ROOT / "bin/tests" / ("race-roster-" + backend + ".txt")).write_text(roster)
+                (ROOT / "bin/tests" / ("race-info-goblin-" + backend + ".txt")).write_text(goblin)
                 print("PASS: " + backend + " mortal command dispatch, faction roster/colors, live lore, "
-                      "race/class restrictions, future/passive racial innates and command help", flush=True)
+                      "race/class/spec restrictions, future/passive racial innates and command help", flush=True)
             except Exception:
                 print(output_path.read_text(errors="replace")[-5000:])
                 if client:
