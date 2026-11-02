@@ -355,6 +355,33 @@ int calculate_map_distance(int room1, int room2)
 	return dx * dx + dy * dy;
 }
 
+// Observer refreshes must use the wrapped tiles and footprint drawn by display_map_room().
+// Keep gameplay/ship distance calculations on their existing coordinate semantics.
+bool map_view_contains(int from_room, int room, int view_distance)
+{
+	if (world[from_room].zone != world[room].zone || !IS_MAP_ROOM(from_room) ||
+	    view_distance <= 1 || view_distance > 500)
+		return false;
+
+	const zone_data &zone = zone_table[world[from_room].zone];
+	const int start = world[zone.real_bottom].number;
+	const int from_offset = world[from_room].number - start;
+	const int offset = world[room].number - start;
+	// Tail rooms have a center, but are not folded back into the coordinate grid.
+	if (zone.mapx <= 0 || zone.mapy <= 0 || from_offset < 0 || offset < 0 ||
+	    from_offset / zone.mapx >= zone.mapy || offset / zone.mapx >= zone.mapy)
+		return from_room == room;
+
+	int x = abs(from_offset % zone.mapx - offset % zone.mapx);
+	int y = abs(from_offset / zone.mapx - offset / zone.mapx);
+	x = MIN(x, zone.mapx - x);
+	y = MIN(y, zone.mapy - y);
+	return x <= view_distance && y <= static_cast<int>(0.6 * view_distance) &&
+	       get_property("map.horizontalFactor", 0.6) * y * y +
+			       get_property("map.verticalFactor", 1.2) * x * x <=
+		       view_distance * view_distance * 0.6;
+}
+
 /*
  * return relative coords from room1 to room2
  */

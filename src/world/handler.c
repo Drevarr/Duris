@@ -1431,8 +1431,6 @@ bool char_to_room(P_char ch, int room, int dir)
 				continue; // Not in map room or ship room
 			}
 
-			if (!CAN_SEE_Z_CORD(who, ch))
-				continue;
 			if (ch == who)
 				continue;
 			if (who->desc->last_map_update) // performance saving!
@@ -1446,16 +1444,12 @@ bool char_to_room(P_char ch, int room, int dir)
 					continue;
 			}
 
-			int dist = IS_MAP_ROOM(ch->in_room) ?
-					   calculate_map_distance(ch->in_room, observer_map_room) :
-					   -1;
-			int old_dist = IS_MAP_ROOM(was_in) ?
-					       calculate_map_distance(was_in, observer_map_room) :
-					       -1;
 			int view_dist = map_view_distance(who, observer_map_room);
-
-			if ((dist >= 0 && dist <= (view_dist * view_dist)) ||
-			    (old_dist >= 0 && old_dist <= (view_dist * view_dist)))
+			// Destination visibility cannot tell us whether the old glyph was visible.
+			// Refresh old tiles conservatively; rendering filters their current occupants.
+			if (map_view_contains(observer_map_room, was_in, view_dist) ||
+			    (CAN_SEE_Z_CORD(who, ch) &&
+			     map_view_contains(observer_map_room, ch->in_room, view_dist)))
 			{
 				who->desc->last_map_update = 1;
 				continue;
