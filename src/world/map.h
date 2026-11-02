@@ -114,5 +114,6 @@ void display_map_room(struct char_data *ch, int from_room, int n, int show_map_r
 		      int gmcp_pkg_type);
 void display_map(struct char_data *ch, int n, int show_map_regardless);
 int map_view_distance(struct char_data *ch, int room);
+bool map_view_contains(int from_room, int room, int view_distance);
 
 #endif // __MAP_H__

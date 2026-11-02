@@ -1431,37 +1431,25 @@ bool char_to_room(P_char ch, int room, int dir)
 				continue; // Not in map room or ship room
 			}
 
-			if (!CAN_SEE_Z_CORD(who, ch))
-				continue;
-			// Don't show if people move off the map? :(
-			if (!IS_MAP_ROOM(ch->in_room))
-				continue;
 			if (ch == who)
 				continue;
 			if (who->desc->last_map_update) // performance saving!
 				continue;
 
-			// If who is going to follow ch, then don't update map.
-			if (ch == who->following && was_in == who->in_room &&
-			    GET_STAT(who) == STAT_NORMAL && GET_POS(who) == POS_STANDING &&
-			    CAN_ACT(who))
-				continue;
-			// If ch is in the act of following someone.
-			if (IS_AFFECTED5(ch, AFF5_FOLLOWING))
+			// Suppress a follower's intermediate arrival only for observers that
+			// already reached the destination. Other followers may fail to move.
+			if (IS_AFFECTED5(ch, AFF5_FOLLOWING) && who->in_room == ch->in_room)
 			{
-				// If the person they're following is who, don't update who's automap.
-				if (ch->following == who)
-					continue;
-				// If they're following the same person (ie same group) and moving together.
-				if (ch->following == who->following &&
-				    (who->in_room == was_in || who->in_room == ch->in_room))
+				if (ch->following == who || ch->following == who->following)
 					continue;
 			}
 
-			int dist = calculate_map_distance(ch->in_room, observer_map_room);
 			int view_dist = map_view_distance(who, observer_map_room);
-
-			if (dist >= 0 && dist <= (view_dist * view_dist))
+			// Destination visibility cannot tell us whether the old glyph was visible.
+			// Refresh old tiles conservatively; rendering filters their current occupants.
+			if (map_view_contains(observer_map_room, was_in, view_dist) ||
+			    (CAN_SEE_Z_CORD(who, ch) &&
+			     map_view_contains(observer_map_room, ch->in_room, view_dist)))
 			{
 				who->desc->last_map_update = 1;
 				continue;
