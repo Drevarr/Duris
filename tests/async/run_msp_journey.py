@@ -29,6 +29,10 @@ def configure(root):
         rooms += f'#{number}\nMSP Map {number}~\nA quiet map test field.\n~\n5000 0 2\nS\n'
     path = mini / 'mini.wld'
     path.write_text(path.read_text().replace('$~', rooms + '$~'))
+    path = mini / 'mini.obj'
+    vest = ('#22850\nmspvest vest~\na plain MSP test vest~\nA plain MSP test vest lies here.~\n~\n'
+            '9 13 3 0 11 0 0 9 0 0 0\n0 0 0 0 0 0 0 0\n1 0 100\nA\n13 40\n')
+    path.write_text(path.read_text().replace('$~', vest + '$~'))
     (root / 'areas').unlink()  # Only the disposable fixture symlink.
     (root / 'areas').mkdir()
     for suffix in ('wld', 'mob', 'obj', 'zon'):
@@ -85,12 +89,30 @@ def run(binary):
             command(member, 'goto 22800')
             received = drain(observer, 1)
             assert '<automap>' in received, received
+            for observer_room, member_room in ((500010, 500014), (500002, 500022)):
+                command(observer, f'goto {observer_room}')
+                command(member, f'goto {member_room}')
+                drain(observer, .5)
+                command(member, 'goto 22800')
+                received = drain(observer, 1)
+                assert '<automap>' in received, received
+            command(observer, 'goto 500012')
             command(member, 'goto 500012')
             command(member, 'consent Mspwarden')
             grouped = command(observer, 'group Mspmember')
             assert 'member of your group' in grouped, grouped
             initial = command(observer, 'group')
             assert '<group>' in initial and 'Mspmember' in initial and 'Mspwarden' in initial, initial
+            command(member, 'remove all')
+            assert 'created' in command(member, 'load obj 22850')
+            worn = command(member, 'wear mspvest')
+            worn_hp = int(re.search(r'Hit points: -?\d+\((\d+)\)', worn)[1])
+            command(observer, 'group'); drain(observer, .5)
+            removed = command(member, 'remove mspvest')
+            bare_hp = int(re.search(r'Hit points: -?\d+\((\d+)\)', removed)[1])
+            assert worn_hp > bare_hp, (worn, removed)
+            updated = drain(observer, 1)
+            assert '<group>' in updated and f'/{bare_hp}H' in updated, updated
             command(observer, 'toggle terminal msp quiet')
             command(observer, 'group'); drain(observer, .2)
             command(member, 'setbit char Mspmember hit 10')
@@ -107,7 +129,7 @@ def run(binary):
             command(member, 'stand')
             automatic = drain(observer, 1)
             assert '<group>' in automatic and '</group>' in automatic, automatic
-            print('PASS: Telnet MSP map departure, manual/automatic group selection and prompt/map compatibility', flush=True)
+            print('PASS: Telnet MSP wrapped map departures, derived equipment HP, quiet/manual groups and prompt/map compatibility', flush=True)
         except Exception:
             print(server.output_path.read_text(errors='replace')[-6000:])
             for c in clients: print(bytes(c.transcript[-3000:]).decode(errors='replace'))

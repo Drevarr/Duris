@@ -1632,6 +1632,9 @@ char affect_total(P_char ch, int kill_ch)
 		return FALSE;
 	}
 
+	const int old_hit = GET_HIT(ch), old_max_hit = GET_MAX_HIT(ch);
+	const int old_vitality = GET_VITALITY(ch), old_max_vitality = GET_MAX_VITALITY(ch);
+
 	all_affects(ch, FALSE); /*
 	                         * effectively resets character to a state
 	                         * with NO affects
@@ -1783,6 +1786,12 @@ char affect_total(P_char ch, int kill_ch)
 			StartRegen(ch, regen_resource::ward);
 	}
 
+	if (old_hit != GET_HIT(ch) || old_max_hit != GET_MAX_HIT(ch) ||
+	    old_vitality != GET_VITALITY(ch) || old_max_vitality != GET_MAX_VITALITY(ch))
+	{
+		update_group_vitals(ch);
+		gmcp_char_vitals(ch);
+	}
 	return FALSE;
 }
 
