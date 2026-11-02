@@ -22,6 +22,19 @@ the investigation driver, and result logs remain ignored under `bin/`.
 
 ## Implementation handoff
 
+**Paused at the user's request on November 2, 2026.** Runtime implementation is
+committed/pushed in the review-ready stack below. The latest checkpoint is
+`branch/issue-583-final-qualification`, based on
+[PR #603](https://github.com/LuminariMUD/Duris/pull/603). It contains the final
+qualification tests and this handoff. No implementation or validation work should
+resume until the user resumes the goal. All started checks have completed.
+
+Resume at the final review/acceptance audit: inspect the aggregate changes against
+the criteria at the end of this document, address any review findings, and confirm
+the PR stack and checkout are ready for handoff. Do not repeat the passing checks
+below unless a relevant change or finding requires it. No merge, release tag,
+deployment, or production data operation has been performed.
+
 Use the newest branch in the PR stack for continued work. Keep completed chunks
 ready for review; do not merge or tag a release as part of this task.
 
@@ -130,8 +143,9 @@ ready for review; do not merge or tag a release as part of this task.
    both matching/misleading single-item cache entries with committed revision 9.
    `test_item_ownership_runtime.py`, `test_shop_trade_transaction.py`,
    `test_item_movement_input_queue.py`, and `make -C src -j4` passed.
-10. **Read refresh and serving handoffs:** implemented on
-    `branch/issue-583-memory-acceptance`, stacked on #597. Both maintained server
+10. **Read refresh and serving handoffs:** review-ready in
+    [PR #603](https://github.com/LuminariMUD/Duris/pull/603), stacked on #597.
+    Both maintained server
     backends build. Private serving journeys found that an unrelated login write
     could invalidate a valid artifact read and bounce its player. Delivery now
     resubmits the original request through the existing queue, preserving the
@@ -157,11 +171,25 @@ ready for review; do not merge or tag a release as part of this task.
     Final disposable MariaDB save/load claims and flat-file ownership repository
     tests passed; `test_artifact_mana_game.py` passed UID/owner, conservation and
     reload controls. Logs are under `bin/tests/memory-authority-583/`.
-11. **Remaining acceptance:** finish exact-revision shop handoff/sale/buyback and
-    pet restart journeys, plus the focused backend payload/retention checks;
-    record final links/results here. The initial MariaDB shop attempt selected a
-    resident merchant after restart; the fixture now uses the established
-    merchant-free room 45016, also used by shop stock-reboot tests.
+11. **Final qualification checkpoint:** `branch/issue-583-final-qualification`,
+    stacked on #603. Both backends passed real shop handoff/save claims followed
+    by sale and buyback with the same UID and exactly two committed revision
+    advances, then cold restart with all 108 purchased ration UIDs, nesting and
+    wallet preserved. The flat-file inspector now exposes exact item revisions.
+    The fixture uses the established merchant-free room 45016 so a resident
+    merchant cannot intercept commands after restart; the stock-reboot journey
+    already uses that room. The pet restart journey passed two restart cycles,
+    identity/base stats/equipment/deadline preservation, finite-pet expiry,
+    permanent-pet survival, and held equipment through quit/restart/save.
+    Expanded rent/pet tests preserve explicit durable-custody exceptions with
+    unknown revision zero. Focused MariaDB payload loading and flat-file player
+    repository checks passed, including affects/descriptions, pet state,
+    topology, retained evidence and rollback controls.
+
+Remaining work is the final review/acceptance audit described in the pause note;
+there are no running checks or known unresolved test failures. The proof below
+distinguishes full serving journeys from native harness and storage coverage;
+it is not a claim of a production rollout or a serving Redis/copyover exercise.
 
 Serving artifact commands passed with both builds:
 
@@ -175,6 +203,29 @@ Both server builds used `make -C src -j4`; the flat-file build additionally used
 Evidence: `bin/tests/memory-authority-583/serving-{mariadb,flatfile}.log` and
 `bin/analysis/artifact-owner/{mariadb,flatfile}.json`. Those private servers have
 stopped; the shared local development server was not changed.
+
+Additional final checks passed:
+
+```sh
+bash tests/async/with_disposable_mariadb.sh python3 tests/async/test_shop_multi_buy_journey.py --backend mariadb --server bin/server/dms_new --report bin/tests/memory-authority-583/shop-mariadb.json
+python3 tests/async/test_shop_multi_buy_journey.py --backend flatfile --server bin/memory-authority-flat/server/dms_new --report bin/tests/memory-authority-583/shop-flatfile.json
+python3 tests/async/test_pet_restart_journey.py "$PWD/bin/memory-authority-flat/server/dms_new"
+python3 tests/async/test_player_snapshot_capture.py
+python3 tests/async/test_pet_control_drop.py
+bash tests/async/run_player_load_repository_mysql.sh
+python3 tests/async/test_flatfile_player_repository.py
+bash tests/async/run_player_save_claim_mysql.sh
+python3 tests/async/test_flatfile_item_repository.py
+python3 tests/async/test_artifact_mana_game.py
+```
+
+The SQL wrappers created their own disposable loopback MariaDB containers and
+schemas. Temp output was kept under ignored `bin/tests`. Result logs are
+`shop-{mariadb,flatfile}-run.log`, `pet-restart.log`, `norent-unknown.log`,
+`pet-unknown.log`, `final-mysql-payloads.log`, `final-flat-payloads.log`,
+`final-mysql-save-load.log`, `final-flat-items.log`, and `final-mana.log` under
+`bin/tests/memory-authority-583/`. The final native admission, offline-load and
+reader-pipeline checks also passed after the read-refresh and pet-cut changes.
 
 ### Existing staff recovery path
 
