@@ -70,8 +70,15 @@
 #include "player/player_snapshot_capture.h"
 #include "player/player_snapshot_codec.h"
 #include "player/player_snapshot_repository.h"
+#include "persistence/locker_recovery.h"
+#include "core/files.h"
 #include "item/private_chest_purchase.h"
 #include "item/item_movement_transaction.h"
+#include "economy/shop_trade_transaction.h"
+#include "economy/auction_transaction.h"
+#include "economy/collector_transaction.h"
+#include "player/player_save_pipeline.h"
+#include <unordered_set>
 
 extern P_index obj_index;
 extern P_index mob_index;
@@ -915,6 +922,14 @@ std::vector<PrivateChest *> StorageLocker::GetPrivateChests(void)
 		if (p->IsPrivateChest())
 			chests.push_back(static_cast<PrivateChest *>(p));
 	return chests;
+}
+
+bool StorageLocker::ChestObjectsPresent(void) const
+{
+	for (LockerChest *chest = m_pChestList; chest; chest = chest->m_pNextInChain)
+		if (!chest->GetChestObj())
+			return false;
+	return true;
 }
 
 void StorageLocker::RemovePrivateChest(PrivateChest *chest)
@@ -2089,6 +2104,202 @@ static StorageLocker *active_locker_for(P_char locker)
 			return active;
 	}
 	return NULL;
+}
+
+// Combine independently captured roots without changing their containment graph.
+static bool locker_recovery_append(P_obj object, std::vector<player_item_snapshot> *items)
+{
+	std::vector<player_item_snapshot> tree;
+	size_t bytes = 0;
+	if (player_item_snapshot_tree_capture(object, &tree, &bytes) !=
+		    player_snapshot_capture_result::ok ||
+	    tree.size() > PLAYER_SNAPSHOT_MAX_OBJECTS - items->size())
+		return false;
+	const int32_t offset = static_cast<int32_t>(items->size());
+	for (auto &item : tree)
+	{
+		if (item.parent_index != PLAYER_SNAPSHOT_NO_PARENT)
+			item.parent_index += offset;
+		item.equipment_slot = -1;
+		items->push_back(std::move(item));
+	}
+	return true;
+}
+
+bool locker_shutdown_capture(std::vector<locker_recovery_entry> *entries,
+			     std::vector<player_snapshot> *players)
+{
+	bool complete = true;
+	// Occupied lockers may have no dirty slot at all: departure/save preparation
+	// can refuse before mark_dirty(). Capture the room representation directly.
+	for (int vnum = LOCKERS_START + 1; vnum < LOCKERS_START + LOCKERS_MAX; ++vnum)
+	{
+		const int room = real_room0(vnum);
+		if (room == NOWHERE || world[room].funct != storage_locker)
+			continue;
+		StorageLocker *locker = GetChestList(room);
+		if (!locker)
+		{
+			logit(LOG_FILE, "UNRECOVERED locker shutdown: room=%d wrapper_missing=1",
+			      vnum);
+			complete = false;
+			continue;
+		}
+		locker_recovery_entry entry;
+		entry.locker_id = locker->GetLockerId();
+		// The room keeps the locker name even if its holder is missing.
+		entry.contents.locker_name = world[room].ex_description->keyword;
+		if (!locker->ChestObjectsPresent())
+		{
+			logit(LOG_FILE,
+			      "UNRECOVERED locker shutdown: locker=%s chest_object_missing=1",
+			      entry.contents.locker_name.c_str());
+			complete = false;
+		}
+		P_char holder = locker->GetLockerChar();
+		std::unordered_set<P_obj> seen;
+		if (!holder || !char_in_list(holder))
+		{
+			logit(LOG_FILE,
+			      "UNRECOVERED locker shutdown: locker=%s holder_missing=1; room evidence retained",
+			      entry.contents.locker_name.c_str());
+			complete = false;
+		}
+		else
+		{
+			entry.contents.racewar = GET_RACEWAR(holder);
+			entry.contents.race = GET_RACE(holder);
+			for (P_obj object = holder->carrying; object; object = object->next_content)
+			{
+				if (!seen.insert(object).second)
+				{
+					complete = false;
+					break;
+				}
+				if (!locker_recovery_append(object, &entry.contents.items))
+					complete = false;
+			}
+		}
+		for (P_obj object = world[room].contents; object; object = object->next_content)
+		{
+			if (!seen.insert(object).second)
+			{
+				complete = false;
+				break;
+			}
+			if (object->type == ITEM_CORPSE)
+				continue; // corpses have their own persistence path
+			LockerChest *chest = locker->FindChestForObject(object);
+			if (!chest)
+			{
+				if (!locker_recovery_append(object, &entry.contents.items))
+					complete = false;
+			}
+			else if (!chest->IsPrivateChest())
+			{
+				for (P_obj item = object->contains; item; item = item->next_content)
+				{
+					if (!seen.insert(item).second)
+					{
+						complete = false;
+						break;
+					}
+					if (!locker_recovery_append(item, &entry.contents.items))
+						complete = false;
+				}
+			}
+		}
+		entries->push_back(std::move(entry));
+		for (PrivateChest *chest : locker->GetPrivateChests())
+		{
+			locker_recovery_entry private_entry;
+			private_entry.contents.locker_name = entries->back().contents.locker_name;
+			private_entry.locker_id = locker->GetLockerId();
+			private_entry.chest_id = chest->GetChestId();
+			if (private_entry.locker_id <= 0 || private_entry.chest_id <= 0 ||
+			    !chest->GetChestObj() ||
+			    player_item_snapshot_contents_capture(chest->GetChestObj(),
+								  &private_entry.contents.items) !=
+				    player_snapshot_capture_result::ok)
+				complete = false;
+			entries->push_back(std::move(private_entry));
+		}
+		// Taking an item out of a private chest can leave its player checkpoint
+		// waiting on that chest's durability. Preserve both sides of that move,
+		// without replaying wallet/purchase state or unrelated player components.
+		std::unordered_set<P_char> occupants;
+		for (P_char occupant = world[room].people; occupant;
+		     occupant = occupant->next_in_room)
+		{
+			if (!occupants.insert(occupant).second)
+			{
+				complete = false;
+				break;
+			}
+			if (IS_NPC(occupant) || GET_PID(occupant) <= 0)
+				continue;
+			if (item_movement_transaction_player_busy(occupant) ||
+			    shop_trade_transaction_player_busy(occupant) ||
+			    auction_transaction_player_busy(occupant) ||
+			    collector_transaction_player_busy(occupant) ||
+			    player_save_pipeline_world_quest_pending(GET_PID(occupant)) ||
+			    critical_command_coordinator_is_fenced(
+				    { critical_entity_type::player,
+				      static_cast<uint64_t>(GET_PID(occupant)) },
+				    nullptr))
+			{
+				// An unresolved operation may have installed a detached item that
+				// is absent from this inventory. Preserve evidence, never erase
+				// that durable payload with an incomplete replacement on boot.
+				logit(LOG_FILE,
+				      "UNRECOVERED locker shutdown: player_pid=%d item_outcome_unresolved=1",
+				      GET_PID(occupant));
+				complete = false;
+			}
+			player_snapshot player;
+			if (player_snapshot_capture(occupant, 1,
+						    PLAYER_COMPONENT_EQUIPMENT |
+							    PLAYER_COMPONENT_INVENTORY,
+						    RENT_CRASH, vnum,
+						    &player) != player_snapshot_capture_result::ok)
+				complete = false;
+			else
+				players->push_back(std::move(player));
+		}
+		logit(LOG_FILE,
+		      "Locker shutdown capture: locker=%s locker_id=%d item_movement_pending=%d chest_write_pending=%d purchase_pending=%d audit_pending=%d; captures items only, not unfinished operations",
+		      world[room].ex_description->keyword, locker->GetLockerId(),
+		      item_movement_transaction_player_busy(locker->GetLockerUser()) ? 1 : 0,
+		      locker->ChestWritePending() ? 1 : 0,
+		      private_chest_purchase_locker_busy(locker->GetLockerId()) ? 1 : 0,
+		      sql_chest_log_pending(locker->GetLockerId()) ? 1 : 0);
+	}
+	// Successful departure can release the room while its holder waits on a
+	// refused/failed terminal capture. Such holders must also survive process exit.
+	for (P_char holder = character_list; holder; holder = holder->next)
+	{
+		const char *name = GET_NAME(holder);
+		if (holder->desc || !name || !std::string(name).ends_with(".locker") ||
+		    active_locker_for(holder))
+			continue;
+		locker_recovery_entry entry;
+		entry.contents.locker_name = name;
+		entry.contents.racewar = GET_RACEWAR(holder);
+		entry.contents.race = GET_RACE(holder);
+		std::unordered_set<P_obj> seen;
+		for (P_obj object = holder->carrying; object; object = object->next_content)
+		{
+			if (!seen.insert(object).second)
+			{
+				complete = false;
+				break;
+			}
+			if (!locker_recovery_append(object, &entry.contents.items))
+				complete = false;
+		}
+		entries->push_back(std::move(entry));
+	}
+	return complete;
 }
 
 static int locker_grantcmd(P_char ch, char *arg);
