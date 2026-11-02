@@ -15891,7 +15891,7 @@ Riposte, Immolure, Doomlure,
 #0
 
 Lyre
-Lyre - Last Edited: 2014-08-20 21:42:19 by lohrr
+Lyre - Last Edited: 2026-11-02
 ================================================
 Improvement in this skill will lower the chances of stuttering the songs that use this instrument; though, skill in the song also helps.
 
@@ -15901,7 +15901,8 @@ Improvement in this skill will lower the chances of stuttering the songs that us
 
 ==Songs==
 
-; 36th level:  Song of Harming, Song of Healing
+; 31st level:  Song of Healing
+; 36th level:  Song of Harming
 
 ==See also==
 
@@ -25170,7 +25171,7 @@ skill in the song and instrument.
 #0
 
 Songs
-Songs - Last Edited: 2015-10-02 03:52:20 by lohrr
+Songs - Last Edited: 2026-11-02
 =================================================
 These are the basic skills of the bard, and each has various magical properties.
 6th level:      song of sleep (Flute)
@@ -25183,8 +25184,8 @@ These are the basic skills of the bard, and each has various magical properties.
 26th level:     song of peace (Harp)
                 song of dissonance (Horn)
 31st level:     song of flight (Horn)
-36th level:     song of healing (Lyre)
-                song of dragons (Horn)
+                song of healing (Lyre)
+36th level:     song of dragons (Horn)
                 song of harming (Lyre)
 41st level:     song of storms (Drums)
 46th level:     song of heroism (Drums)
