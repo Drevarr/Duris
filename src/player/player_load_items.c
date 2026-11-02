@@ -994,7 +994,7 @@ unsigned int player_load_items_qualify(player_load_result *result)
 		for (const auto &source : sources)
 			connect(source.row_id, source.parent_row_id);
 		// Repository filtering omits foreign payloads before the materialized
-		// list exists. Qualify those raw sources too, preserving artifact roots.
+		// list exists. Preserve damaged artifact sources, not proven old-holder copies.
 		const item_owner_identity player = { item_owner_type::player,
 						     static_cast<uint64_t>(result->pid), 0 };
 		for (auto &source : sources)
@@ -1006,6 +1006,11 @@ unsigned int player_load_items_qualify(player_load_result *result)
 			projection.domain = artifact_payload_domain::player;
 			projection.row_id = source.row_id;
 			projection.parent_row_id = source.parent_row_id;
+			const auto parent = source_by_id.find(source.parent_row_id);
+			projection.parent_missing = source.parent_row_id &&
+						    parent == source_by_id.end();
+			projection.parent_item_uid =
+				parent == source_by_id.end() ? 0 : sources[parent->second].item_uid;
 			projection.item_uid = source.item_uid;
 			projection.vnum = source.vnum;
 			projection.extra_flags = source.extra_flags;
@@ -1020,11 +1025,11 @@ unsigned int player_load_items_qualify(player_load_result *result)
 				source.custody_owner_revision_found;
 			projection.custody = source.custody;
 			const unsigned int error = artifact_player_source_error(projection);
-			if (error && error != EIDRM)
+			if (error && error != EIDRM && error != EXDEV)
 				source.retain = true;
 		}
 		std::vector<artifact_payload_projection> projections(items.size());
-		std::vector<bool> retired(items.size(), false);
+		std::vector<bool> omitted(items.size(), false);
 		std::vector<size_t> withheld;
 		bool alerted = false;
 		for (size_t index = 0; index < items.size(); ++index)
@@ -1084,11 +1089,11 @@ unsigned int player_load_items_qualify(player_load_result *result)
 							  "fresh_read_required");
 				return error; // Fresh login/read; never turn a delayed reply into retention.
 			}
-			if (error == EIDRM)
+			if (error == EIDRM || error == EXDEV)
 			{
-				// Durable retirement proves this copy cannot return. Omit it from
-				// the next save; the normal topology recovery preserves its contents.
-				retired[index] = true;
+				// Retirement or another saved holder proves this copy cannot return.
+				// Normal topology recovery preserves any independently owned contents.
+				omitted[index] = true;
 			}
 			else if (error)
 			{
@@ -1135,7 +1140,7 @@ unsigned int player_load_items_qualify(player_load_result *result)
 		for (size_t index = 0; index < items.size(); ++index)
 		{
 			const auto raw = source_by_id.find(identities[index].database_id);
-			if (retired[index] || (raw != source_by_id.end() && held[raw->second]))
+			if (omitted[index] || (raw != source_by_id.end() && held[raw->second]))
 				continue;
 			kept.push_back(items[index]);
 			kept_identities.push_back(identities[index]);

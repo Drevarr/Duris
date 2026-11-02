@@ -92,8 +92,9 @@ ready for review; do not merge or tag a release as part of this task.
    does not replace the required backend or serving-MUD journeys.
    `test_artifact_creation_admission.py` (ASan/UBSan),
    `test_player_load_pipeline.py`, and `make -C src -j4` passed.
-7. **Refusal diagnostics:** implemented on `branch/issue-583-artifact-diagnostics`,
-   stacked on #594. Qualification and construction share specific reasons for
+7. **Refusal diagnostics:** review-ready in
+   [PR #595](https://github.com/LuminariMUD/Duris/pull/595), stacked on #594.
+   Qualification and construction share specific reasons for
    source, captured-custody, canonical identity and writer-overlap refusals.
    Restricted artifact logs include source/captured/cache fields and read/current
    writer tokens; the staff alert remains bounded. `artifact hunt` shows paired
@@ -102,9 +103,21 @@ ready for review; do not merge or tag a release as part of this task.
    does not construct, repair or mutate objects or cache entries.
    `test_artifact_hunt_inspection.py`, `test_artifact_creation_admission.py`
    (ASan/UBSan), `test_player_load_items.py`, and `make -C src -j4` passed.
-8. **Remaining:**
-   old-holder source cleanup versus damaged-component retention; generic repair
-   revision publication;
+8. **Old-holder source cleanup:** implemented on
+   `branch/issue-583-stale-source-retention`, stacked on #595. The shared service
+   returns `EXDEV` for a known canonical UID with valid active custody belonging
+   to another memory-held owner and qualified population/live evidence. It still
+   refuses construction, but qualification omits the obsolete saved copy instead
+   of retaining its bag. Missing/contradictory identity, unqualified population,
+   invalid custody, source ancestry and repository-retained damage remain held.
+   Raw foreign sources do not need the recipient's aggregate revision: that
+   field remains mandatory for admission into this player's live graph.
+   The sanitizer harness tests repeated cleanup of a bag/artifact/sibling source,
+   preserved bag/sibling nesting, and whole-component retention for unresolved
+   identity, missing trustworthy payload proof and damaged custody.
+   `test_artifact_creation_admission.py`, `test_player_load_items.py`, and
+   `make -C src -j4` passed.
+9. **Remaining:** generic repair revision publication;
    pet/NORENT compatibility review; backend and end-to-end acceptance journeys
    listed below.
 
