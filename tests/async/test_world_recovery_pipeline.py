@@ -208,12 +208,14 @@ bool sql_persistence_reconcile_world_recovery_items(
 }
 
 std::unordered_set<uint64_t> owned_items;
-bool sql_persistence_world_recovery_items_owned(const std::vector<uint64_t> &item_uids,
+bool sql_persistence_world_recovery_items_owned(const std::vector<world_recovery_authority_item> &items,
                                                 std::unordered_set<uint64_t> *owned)
 {
-    for (uint64_t item_uid : item_uids)
-        if (owned_items.count(item_uid))
-            owned->insert(item_uid);
+    for (const auto &item : items) {
+        assert(item.room_vnum>0 && item.vnum>0 && item.root_item_uid);
+        if (owned_items.count(item.item_uid))
+            owned->insert(item.item_uid);
+    }
     return reconcile_succeeds;
 }
 

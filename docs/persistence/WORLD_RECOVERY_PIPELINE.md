@@ -26,8 +26,9 @@ Restore looks up saved holdings to exclude a copy already held elsewhere. Legacy
 records still require complete custody reconciliation before materialization.
 Native file copyover may also carry cached metadata that matches the actual domain and
 topology, including logical roots inside player corpses; stale former-holder metadata
-is omitted without withholding the physical tree. When an ownership record
-names an owner for it, other than a character whose save no longer has the item, it was
+is omitted without withholding the physical tree. An active room claim matching the
+captured room, vnum and topology also permits recovery. When an ownership record
+names another owner for it, other than a character whose save no longer has the item, it was
 taken and saved after the capture: its tree is left out, since the holder has the item and
 a second one would take the uid from them at the next taker's save. A record that names a
 character whose save does not have the item (nor, on flat-file, a delivery still pending to
