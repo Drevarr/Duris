@@ -2,13 +2,18 @@
 
 [Issue #583](https://github.com/LuminariMUD/Duris/issues/583).
 Worktree: `/home/aiwithapex/projects/duris-issue-583-memory-authority-plan`.
-Current branch: `branch/issue-583-final-qualification`,
+Current branch: `branch/issue-583-retained-source-diagnostics`, stacked on
 [PR #604](https://github.com/LuminariMUD/Duris/pull/604).
 
-**Status:** implementation through `98bd39f2d` is committed and pushed.
-Implementation remains paused; this update reviews and simplifies the plan only.
-The remaining implementation task is the final acceptance review and any concrete
-findings it exposes. No merge, release, deployment or production repair is included.
+**Status:** final acceptance review is in progress. Damaged foreign artifact rows
+now log their refusal through the existing diagnostic function before retaining
+the component. The regression failed before the fix and passes afterward;
+`test_player_load_items.py` and both server builds also pass. Evidence:
+`bin/tests/memory-authority-583/review-retained-source{,-before}.log` and
+`review-load-items.log`. Existing PR feedback still needs two checks: matching-room
+claims during recovery and unknown revisions on repaired batch destinations.
+The pet-only delayed-read finding is covered by the whole-load guard in #603.
+No merge, release, deployment or production repair is included.
 
 ## Outcome and limits
 
@@ -75,7 +80,7 @@ These are the acceptance contract and the owning files, not another work queue.
 
 ## Shortest remaining path
 
-When implementation is explicitly resumed:
+Final acceptance review:
 
 1. Review the aggregate diff from `5708e269974ab070ea224f720e7e2e787e2d6671`
    against the contract above and the proof below. Remove only task-owned

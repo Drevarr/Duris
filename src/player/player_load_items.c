@@ -1045,9 +1045,15 @@ unsigned int player_load_items_qualify(player_load_result *result)
 			projection.custody_owner_revision_found =
 				source.custody_owner_revision_found;
 			projection.custody = source.custody;
-			const unsigned int error = artifact_player_source_error(projection);
+			const char *reason = nullptr;
+			const unsigned int error =
+				artifact_player_source_error(projection, nullptr, &reason);
 			if (error && error != EIDRM && error != EXDEV)
+			{
 				source.retain = true;
+				artifact_log_source_error(projection, error, reason,
+							  "source_retained");
+			}
 		}
 		std::vector<artifact_payload_projection> projections(items.size());
 		std::vector<bool> omitted(items.size(), false);
