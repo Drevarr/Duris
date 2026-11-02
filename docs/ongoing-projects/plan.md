@@ -1,401 +1,286 @@
-# Issue #500: bartender eligibility without travel proof
+# Issue #584: flight transport implementation plan
 
-Status: **implementation and local qualification complete**. Updated 2026-10-31.
+Status: implementation, review follow-up and local acceptance complete. [PR #586](https://github.com/LuminariMUD/Duris/pull/586) and [PR #587](https://github.com/LuminariMUD/Duris/pull/587) were squash-merged in order; [PR #588](https://github.com/LuminariMUD/Duris/pull/588) is rebased directly onto the resulting master and ready to merge. Updated 2026-11-02. No deployment has been performed.
 
-- Work item: [Duris #500](https://github.com/LuminariMUD/Duris/issues/500).
-- Integration review: [PR #522](https://github.com/LuminariMUD/Duris/pull/522), targeting master; source branch `branch/issue-500-geography`.
-- Qualified source: `4572474ac`, including settled master `964cd61cd` and the inherited #520/#526 repairs.
-- Qualification checkout: `/home/aiwithapex/projects/duris-pr522-fixes`. The earlier implementation checkout and its evidence remain at `/home/aiwithapex/projects/duris-worktrees/issue-500-eligibility`.
-- Original planning baseline: `807c6d8dce8be4102d43c91950c80548a58f7f02`, then the head of [PR #513](https://github.com/LuminariMUD/Duris/pull/513).
-- Method: the repository's [ablation skill](../../.agents/skills/ablation/SKILL.md).
-
-The #513 prerequisites and ASK chunk landed through #520 (`809cfe0e8`). The follow-up #526 (`d6582ec27`) preserves unrelated player changes through failed history writes and credits final-kill XP before calculating the remaining reward. This branch includes both repairs and settled master `964cd61cd`. All three #500 behavior changes and their local acceptance checks are complete; #506 is already completed. The intermediate planning and qualification checkpoints below are historical and are superseded by the final record at the end.
-
-The previous shared plan is already preserved byte-for-byte in [plan-issue-420.md](plan-issue-420.md); comparison passed before replacement. The separate [#500/#506 qualification record](plan-issues-500-506.md) remains intact. Its former geography decisions and the issue's archived investigation are historical evidence, not the current task list.
+- Work item: [Duris #584](https://github.com/LuminariMUD/Duris/issues/584).
+- Linked development branch: [branch/issue-584-flight-transport](https://github.com/LuminariMUD/Duris/tree/branch/issue-584-flight-transport).
+- Local worktree: `/home/aiwithapex/projects/duris-issue-584`.
+- Inspected base: `5708e269974ab070ea224f720e7e2e787e2d6671` (`origin/master` when created).
+- Method: [ablation](../../.agents/skills/ablation/SKILL.md), applied to the code and acceptance criteria below.
 
 ## Outcome
 
-Implement all three decisions in the current issue body:
+An interrupted paid flight must leave its surviving carrier either serving its configured pad or scheduled to return there. Once home, the carrier must be at altitude zero, WAITING, unoccupied, and able to handle `list`, stop discovery, ticket purchase, and another departure. A paid flight carries exactly one eligible player; linked mounts or additional riders cannot bypass ticket/access checks. Paid passengers retain correct altitude and command restrictions, and entering combat without mounted-combat skill must not automatically eject them from the transport.
 
-1. New ASK/KILL assignments at every supported quest level, shares, accepted-task validation and replacement selection do not depend on an outward route, a return route, obstacles, travel capabilities, unknown travel scripts, or route-search budgets. Normal movement rules continue to govern travel.
-2. At accepted levels 11–29, eligible targets may belong to either the origin's attached surface region or its connected Underdark map component. Quietus room 1734 and Bloodstone room 74339 must support both. Keep unrelated regions excluded. Level 30 removes this local-region restriction while other zone/target rules still apply.
-3. ASK admits otherwise suitable targets with authored and live levels below `MAXLVL` (currently 62), without the KILL band. KILL retains inclusive `[L - 4, L + 5]` checks on both levels. Preserve the strict zone-average window and target-interaction checks.
-
-Update the [bartender reference](../reference/BARTENDER_QUESTS.md), including assignment, maps, sharing, recovery and verification wording. A broader pool does not guarantee selection of a particular NPC or an otherwise eligible target at every player level in every zone.
+Preserve ordinary occupied trips, empty returns, ordinary ground mounting/combat, fares, discovery and destination access rules, dedicated extra destinations, and existing copyover/restart compatibility.
 
 ## Non-goals
 
-- No reward, cost, wallet-publication, daily-allowance, completion-history, sharing-limit, quota, XP or random-selection balance changes in the three-rule eligibility chunk. Preserve #513's midnight/abandonment repair. Separately authorized review repairs inherited from #520 are recorded below rather than reverted or duplicated.
-- Keep the existing level-11 minimum, ASK/KILL purchases at 11–49, KILL-only purchases at 50+, and mapless-zone minimum of 41.
-- Keep routine-reset/birthplace provenance, actual destination zone, live supply, speech, visibility, aggression, ASK interception, safe-room KILL restrictions, controlled/summoned exclusions and target history. Route-only checks must not become disguised target restrictions.
-- Retain genuine non-route replacement causes, earned progress, accepted level/type/quota, receiver, start time, purchased-map entitlement and legacy origin/replacement persistence. Do not resurrect already persisted replacement entitlements: saved state does not identify whether a past route rejection caused them.
-- No movement changes, script/transport execution, travel abilities granted to players, schema migration, content balancing, new runtime configuration, general graph service, production operation, deployment or full burn-in.
+No production intervention, deployment, restart, migrations, player-data changes, refunds, new multi-passenger fare model, global riding/combat redesign, or new scheduler/reconciliation service. No claim that a socket disconnect, NPC horse, or ground melee caused the reported live incident without evidence. #584 remains open until implementation and its acceptance checks are complete. #40 and merged #51 are historical context, not additional work items to close.
 
-## Source findings
+## What the current code establishes
 
-These findings come from the checked-out source, not from accepting the issue's diagnosis. Line references describe the pinned baseline.
+The issue cites an older master, `f636c9b19b8f61ec69c810810be8f40fd7dd3726`. Comparison with the inspected base shows no changes to transport, event scheduling, mounting, or mob-combat source. Changes in `fight.c`, `affects.c`, and `handler.c` concern group/GMCP updates and map refreshes; the paths below remain present. Line numbers refer to the inspected base.
 
-1. **Route gating is active in several paths.** In [world_quest_policy.c](../../src/world/world_quest_policy.c), `quest_target_request` (944–1019) builds routes before indexing candidates. Empty/exhausted routes prevent selection; `common()` requires `reachable()` for reset and live rooms. `world_quest_policy_check_target()` (1161–1278) uses current/capable/potential route passes for accepted work. A missing return can produce `unavailable`, not just temporary refusal.
+1. **Service identity and eligibility are already centralized.** [transport.c](../../src/world/transport.c):82 binds carrier 47020 to pad 582084. `transport_service()` identifies catalog services and excludes mastered mobs. `transport_waiting()` at 429 requires a usable, unoccupied carrier at its configured pad in WAITING state. `flights` intentionally lists learned stops; first discovery occurs through `list`. Neither command needs redesign.
+2. **Outbound continuation is coupled to passenger lifetime.** `flying_transport_cmd_give()` at 686, continuation at 884, and recovery at 412 pass the passenger as the event victim. [new_events.c](../../src/world/new_events.c):910 creates an `LNK_EVENT`; `event_broken()` at 2480 cancels an active event when that link disappears. [handler.c](../../src/world/handler.c):3859 calls `clear_all_links()` during extraction. Cancellation is correct scheduler behavior; transport currently loses its only continuation as a consequence.
+3. **The movement callback also loses continuation without extraction.** `event_flying_transport_move()` at 777 returns for a missing/different-room victim and never checks that this victim is still its rider. A same-room unlink can therefore be followed by one solo carrier movement and then an unrecovered early return. These are source-verified paths, not a fresh reproduction of the production incident.
+4. **Recovery mechanisms already exist.** `transport_land_at_home()` at 214 cancels flight callbacks, unlinks/lands a rider, resets route/step, and restores service. `event_flying_transport_return()` at 889 follows the existing route backwards. Empty returns deliberately use state MOVING; `TRANSPORT_STATE_RETURNING` is defined but unused. `initialize_transport()` resumes validated recovered flights and otherwise lands them; its only production call is post-recovery boot in [comm.c](../../src/net/comm.c):2802. It is not a periodic runtime repair, and calling it again does not by itself repair an ordinary orphan without recovery-pending state.
+5. **Boarding checks only the outgoing riding link.** `flying_transport_cmd_give()` at 681 checks `IS_RIDING(ch)` but not `GET_RIDER(ch)`. [affects.c](../../src/magic/affects.c):2809 and 2994 clear outgoing exclusive links only. [handler.c](../../src/world/handler.c):1477 recursively places linked mounts and riders. An incoming rider therefore survives current boarding; only the direct passenger receives altitude 10 and the command lock. NPC redemption is already rejected at transport.c:645, and a player riding a horse is already rejected at 681.
+6. **Boarding-time validation alone is incomplete.** [mount.c](../../src/classes/mount.c):117 checks whether the actor is mounted and whether the target already has a rider, but does not reject a target that is itself a paid-flight passenger. Preserve the single-passenger invariant at this later link-creation boundary too, including a same-altitude actor who can otherwise see and mount the passenger. This is a source-backed gap; command reachability still needs an executable test.
+7. **Skill-based ejection is separate from attack reachability.** [fight.c](../../src/combat/fight.c):7929 calls `stop_riding()` for any rider without mounted-combat skill. [mount.c](../../src/classes/mount.c):399 only unlinks. However, `MobStartFight()` in [mobact.c](../../src/mob/mobact.c):6792 and `hit()` in fight.c:6819 already reject different altitudes. Exempting a paid passenger from automatic skill-based dismount does not require granting combat immunity or changing all altitude checks.
+8. **Real room entry matters.** Flight movement calls `char_to_room()` with a direction. That path recursively moves riders, executes room specials, can extract/relocate characters, normalizes altitude indoors, and dispatches aggression. `VALID_FLYING_EDGE` in [graph.h](../../src/world/graph.h):122 does not filter indoor rooms. These are specific things to inspect in a real flight/attack journey, not proof of the reported ground attack. Surface data confirms room 536087 leads north to 535687, but does not establish a shared incident.
+9. **Existing test seams leave an integration gap.** [test_flight_network.py](../../tests/async/test_flight_network.py) compiles production transport code, but [world_singletons_harness.cpp](../../tests/async/world_singletons_harness.cpp) substitutes links, movement, extraction, dismounting, and event scheduling. [test_nevent_cancellation_runtime.py](../../tests/async/test_nevent_cancellation_runtime.py) proves generic cancellation separately. Both are useful controls, but neither alone proves a flight survives production passenger-link teardown or combat.
 
-2. **Geography itself applies travel rules.** `quest_route_builder::region()` (368–435) calls `connection()`, excluding locks, walls, castle/map barriers and terrain. It stores one integer; mixed surface/Underdark boundaries resolve to zero. Underdark membership currently requires a directed return. Merely bypassing the final route verdict leaves hidden route dependencies.
-
-3. **Named origins exist, but unrestricted flooding is unsafe.** [specs.assign.c](../../src/specs/specs.assign.c) binds giver 1709 and Cerrio 74060. [quietus.zon](../../areas/zon/quietus.zon) places 1709 at 1734; [bs.zon](../../areas/zon/bs.zon) places 74060 at 74339. A read-only parser of AREA-listed authored files, using zone top intervals and `ZONE_MAP`, found Quietus boundaries 635755/636555 and 850045. Bloodstone has direct surface boundaries and adjacent interiors including mountaintracks; unrestricted interior traversal expands through 5,165 rooms and many map boundaries. Simply deleting obstacle filters from that flood is not a justified locality rule. The previous loaded-world record identifies local Bloodstone anchors including 602263/598665 and 813720; requalify their membership under the new topology. The authored parser is not a server boot or proof of eligible targets.
-
-4. **Existing map helpers have narrower meanings.** `IS_MAP_ROOM()` in [map.h](../../src/world/map.h) uses `ZONE_MAP`, not just surface/Underdark VNUM ranges. `assign_continents()` in [map.c](../../src/world/map.c) supplies surface identities. `calculate_map_coordinates()` combines interiors/maps and filters reciprocal exits/ocean; `map_section` is not an independent Underdark-component identifier. `get_map_room()` in [world_quest.c](../../src/world/world_quest.c):387 returns the first direct zone map exit. It can provide a cached hint but cannot represent BOTH memberships or resolve every interior origin.
-
-5. **ASK is filtered before quest type selection.** `ordinary_instance()` (991–1005) applies authored and live `[L - 4, L + 5]` checks. Changing only the ASK branch cannot recover those candidates. `world_type_eligible()` separately checks the ASK prototype against `MAXLVL`; an explicit live cutoff is needed when the shared band goes away. `static_zone_eligibility()` (927–942) retains the truncated zone average, reward pool and mapless threshold. [world_quest_policy_math.h](../../src/world/world_quest_policy_math.h) defines the strict `(L - 7, L + 5)` zone window; [config.h](../../src/core/config.h):114 defines `MAXLVL` as 62.
-
-6. **Commands and maps consume the same policy.** `do_quest()` in world_quest.c:654 checks the sharing recipient through the accepted-target API. `world_quest_refresh()` at 795 converts `unavailable` into a saved replacement entitlement. Map hints come from the route context. [specs.mobile.c](../../src/specs/specs.mobile.c):10854 says local tasks require ordinary travel; world_quest.c also has travel-specific status/share wording. Map payment revalidates the target and must retain its non-route protection.
-
-7. **The route counter also bounds non-route work.** `quest_spend_work()` charges live-character scans, visibility/lighting and shop lookup as well as traversal. Remove route budgets/dependencies, but retain clearly named bounded target checks and the existing 32 target-probe/32 history-check limits. Target/history exhaustion retains its conservative meaning and must not become a route verdict.
-
-8. **Existing tests encode the superseded policy.** [world_quest_routes_harness.cpp](../../tests/async/world_quest_routes_harness.cpp) expects obstacles, missing returns and mixed regions to refuse. [world_quest_live_targets_harness.cpp](../../tests/async/world_quest_live_targets_harness.cpp):890–1011 expects locks, lost flight, scripts and oversized graphs to block accepted work; sharing/map-payment cases also depend on routes. [run_world_quest_dual_backend.py](../../tests/async/run_world_quest_dual_backend.py):600–608 expects the named level-29 refusals. [world_quest_journey_probe.cpp](../../tests/async/world_quest_journey_probe.cpp) exposes the route graph for test navigation. Removing only production callers would leave qualification broken or misleading.
-
-## Files and implementation sequence
-
-### 1. Establish geographic membership and failing cases
-
-Use existing harnesses and the disposable loaded-world probe to establish the actual surface identity and independent Underdark component attached to both named givers, including Bloodstone's connector zones. Record positive and negative room/zone fixtures before finalizing the attachment traversal.
-
-The representation must satisfy all of the following:
-
-- Reuse loaded world/zone metadata and existing surface continent identities. Compute Underdark components from authored map-to-map adjacency, independent of locks, terrain, procedures and player facts. Connectivity is geographical, not an outward/return proof; a one-way link cannot alone disqualify a target. Never merge Underdark components through interior zones, surface travel, scripts or transports.
-- Represent surface and Underdark membership separately and accept their union. Multiple entrances into one region are one membership. Having one of each is not a conflict.
-- Resolve attachments at map boundaries, using local connector relationships justified by the loaded-world audit. Zone membership must cover disconnected reset/live rooms within the same authored zone; neither room needs an ordinary-exit path to the giver. Do not cross a map region to discover additional origin regions or union arbitrary remote interior networks.
-- Unknown geography is not permission for remote targets below 30. Genuine geographic uncertainty may remain conservative, but scripts, locks and route budgets must not create it; both named origins must resolve. Raw room flooding and first-exit selection are inadequate. If loaded metadata cannot express a demonstrated local attachment unambiguously, use the smallest explicit quest-local attachment data for that origin rather than a general resolver, broad fallback or new configuration.
-- Prefer stable topology/attachment data in the existing boot catalog after map setup. Do not scan the entire world per request or cache player-dependent routes. Keep the implementation in the policy owner. At 30+, bypass local membership only.
-
-Extend the existing route harness into geographic coverage and the live-target harness into assignment/command coverage. Add cases that fail on the baseline for all three decisions, including remote-region negative controls. Reuse filenames and runners unless a rename is actually necessary.
-
-### 2. Replace route proof in the shared policy
-
-Expected production files: [world_quest_policy.c](../../src/world/world_quest_policy.c), [world_quest_policy.h](../../src/world/world_quest_policy.h), [world_quest_policy_math.h](../../src/world/world_quest_policy_math.h).
-
-- Remove `quest_route_builder`, current/capable/potential passes, reverse-return graphs and public route-only APIs after updating all consumers. Remove obsolete movement/trap/barrier includes, stubs and route limits. Do not retain an always-true route wrapper or compatibility switch.
-- Separate ordinary-instance checks from type-level rules. Put authored/live KILL bands in the KILL path and authored/live `< MAXLVL` in ASK. Retain remaining interaction checks, including #513's passive Bloodstone ASK handlers.
-- Use the same geography for selection, validation, sharing and replacement, preserving accepted level/origin. Keep legacy origin-zero binding and invalid-origin handling; describe origin as scope provenance instead of travel proof.
-- Classify accepted targets once for actual supply/interaction. Retain `valid`, `blocked`, `unproven`, `needs_origin` and `unavailable` for their surviving non-route meanings. Preserve blindness, silence, aggression and handler uncertainty.
-- Retain closed/private destination zones and restricted final-room exclusions currently supplied by `ordinary_space()` where they protect target eligibility. Move only those restrictions into the target check; do not copy terrain, transit-room restrictions, player capabilities or unknown travel procedures. ASK's underwater/silence checks are interaction constraints and stay; lack of travel gear must not disqualify KILL.
-- Supply map hints independently from known geographic entrances for the target's actual zone, consistent with local scope. Reuse cached `get_map_room()` when suitable; select a deterministic attached entrance when needed. Hints identify a place, not a proved route. A genuinely mapless target remains valid under the existing 41+ rule without a purchasable hint.
-- Retain bounded target/history work under accurate names, with no graph requirement. Old route size/work limits become irrelevant.
-
-### 3. Integrate commands without changing unrelated state behavior
-
-Expected additional production edits: small wording/comment changes in [world_quest.c](../../src/world/world_quest.c) and [specs.mobile.c](../../src/specs/specs.mobile.c), plus only integration changes demonstrated necessary by the shared policy.
-
-Exercise real `world_quest()` requests, `do_quest()` sharing, `world_quest_refresh()`, map-payment continuations and `world_quest_replace()`. Remove travel-specific refusal wording. Preserve payment ordering, genuine-failure refunds, remaining-kill supply, free replacement, dirty marking and GMCP cache behavior.
-
-A route change after acceptance, during sharing or during map payment must not block/invalidate work, clear its geographic hint, grant replacement, alter progress or cause a route-only refund. Genuine target/supply/location failures must retain their behavior. Keep serialized fields and GMCP status values; no schema or client protocol change is needed.
-
-### 4. Update tests and the reference
-
-Expected test changes:
-
-- [test_world_quest_routes.py](../../tests/async/test_world_quest_routes.py) and its harness: replace route-proof assertions with geography/non-mutation assertions; remove unused movement predicate extraction.
-- [test_world_quest_target_retries.py](../../tests/async/test_world_quest_target_retries.py) and the live-target harness: add type-level coverage and new refresh/share/map expectations; retain history/probe/payment controls.
-- [world_quest_journey_probe.cpp](../../tests/async/world_quest_journey_probe.cpp) and [run_world_quest_dual_backend.py](../../tests/async/run_world_quest_dual_backend.py): remove qualification dependencies on the deleted route API. Navigation is test tooling for deliberately walkable fixtures, not an eligibility oracle. Select controlled targets for real ASK/KILL completion. Test special-travel assignments/status separately without requiring the runner to walk them. Preserve recovery/history coverage.
-- Update [test_world_quest_dynamic_policy.py](../../tests/async/test_world_quest_dynamic_policy.py) only for changed contracts and any concrete references found by a repository-wide symbol search. Change registration only if an entry point changes.
-
-Update BARTENDER_QUESTS.md's source map, live targets, geographic policy, bounds, recovery, map/share wording and verification examples. Explain both local regions, level 30, independent ASK cutoff, preserved zone window and normal movement. Remove claims about route proof, gear-based eligibility and local mixed-region refusal. Record final evidence/limitations in this plan.
-
-## Proof and acceptance
-
-1. **No travel gating:** otherwise eligible ASK/KILL at 11, 29, 30 and a high supported level accept locked/secret/blocked/walled exits, missing returns, no ordinary path, unknown transit scripts, transport-only access, traps/barriers and flight/boat/waterbreathing requirements. Check both reset and live rooms. Keep ASK destination speech restrictions as negative controls. For high-level ASK use accepted/shared-target validation; retain KILL-only new purchases at 50+. A graph larger than the old route bounds cannot refuse an eligible target.
-2. **Both local regions:** for each named origin and levels 11/29, cover ASK/KILL in attached surface and Underdark regions. Use controlled eligible zone averages/rewards to isolate geography; report actual loaded-world grants separately. Reject another surface continent/disconnected Underdark component. Interior bridges must not merge components. Cover multiple/mixed entrances, disconnected rooms within a zone, one-way topology and player travel after acceptance. At 30, remote geography alone cannot refuse.
-3. **ASK and KILL levels:** vary authored/live values independently below `L - 4`, above `L + 5`, at 61, 62 and above. Keep zone means eligible so they do not obscure the type test. ASK accepts out-of-band levels below 62 and refuses either level at 62; KILL retains exact endpoints and adjacent rejections. Preserve strict zone-average boundaries `L - 7`/`L + 5` and positive cases just inside. Keep interaction, provenance and history negative controls.
-4. **Refresh/sharing/maps:** run real refresh, sharing with fixture sharing enabled, map purchase and replacement selection after each route-change class. Verify accepted fields, partial progress, wallet/history, shares, replacement flag, paid-map entitlement and Quest.Status/Quest.Map. Missing targets, inadequate supply and true interaction failures remain meaningful controls. Saved level 29 stays local after the player reaches 30. Preserve legacy origin binding and previously persisted replacement entitlements.
-5. **Commands/persistence:** update named-giver `reported` cases and deterministic surface/Underdark/broad-ASK fixtures. Run disposable flatfile and MariaDB journeys, refresh/share/map state across relog/restart and real ASK/KILL completion on walkable fixtures. Inspect saved and live state; restart must not reintroduce route blocking or lose progress. Keep genuine no-candidate/replacement and history-rollover controls. Random sampling of one region cannot establish both-region coverage.
-6. **Read-only checks and bounded work:** policy must not move actors, execute scripts, consume keys/traps, change equipment/affects, probe prototypes during requests or mutate assignment state before publication. Retain non-mutation assertions and target/history bounds. Confirm obsolete route symbols have no remaining consumer or substitute route requirement.
-
-Planned commands after implementation, from the worktree:
-
-```sh
-python3 tests/async/test_world_quest_routes.py
-python3 tests/async/test_world_quest_target_retries.py
-python3 tests/async/test_world_quest_dynamic_policy.py
-python3 tests/async/test_world_quest_reward_policy.py
-python3 tests/async/test_world_quest_failure_feedback.py
-python3 tests/async/test_world_quest_remaining_unloaded.py
-make -C src
-DURIS_WORLD_QUEST_BACKEND=both DURIS_WORLD_QUEST_JOURNEY=reported python3 tests/async/run_world_quest_dual_backend.py
-DURIS_WORLD_QUEST_BACKEND=both DURIS_WORLD_QUEST_JOURNEY=both python3 tests/async/run_world_quest_dual_backend.py
-./scripts/format.sh --check
-python3 tests/async/test_documentation_contract.py
-git diff --check
-```
-
-Integrate new deterministic cases into these existing selections. Use fresh binaries from existing runner helpers. Confirm local/dev environment before gameplay tests; use disposable accounts/databases/state roots and artifacts under `bin/`. The target suite includes SQL-history cases; run the separate history journey only if a change disturbs that integration. Do not wait for hosted CI. Record failed/skipped checks distinctly; helper tests do not replace command/persistence proof.
+The issue's live diagnostics and earlier ad hoc harness results are historical reports. This planning pass did not access production or independently rerun those ad hoc reproductions.
 
 ## Ablation decisions
 
-- **Keep:** one eligibility owner, geographic data needed by low-level selection/validation, independent ASK/KILL rules, target-interaction classification, map hints and focused command/persistence proof. Each serves a requirement or traced consumer.
-- **Simplify:** three capability-dependent route passes become geography plus one target check. Reuse the boot catalog, surface identities, current status/persistence machinery and harnesses.
-- **Drop:** movement-procedure allowlist expansion, permissive route fallbacks, ferry/teleport discovery, general graph infrastructure, configurable legacy/new modes, reward/history changes and unrelated cleanup.
-- **Investigate first:** the exact Bloodstone attachment boundary without obstacle filters. The authored audit shows why unrestricted traversal is not a safe substitution. Completion requires positive/negative loaded-world membership evidence, not an assumed region or an unresolved product decision.
+- **Keep carrier-owned continuation; simplify away passenger event ownership.** Schedule all outbound events with the carrier as owner and no victim, and resolve the current rider from `LNK_RIDING` in the callback. This removes the demonstrated cancellation dependency without changing generic `event_broken()`, storing a raw passenger pointer, or adding a registry.
+- **Keep existing return/reset paths.** A missing passenger transitions to the existing empty return; invalid route/location or scheduling failure uses the existing home landing. A watchdog would add another owner of the same state and is unnecessary for these traced interruptions.
+- **Keep one-player boarding.** Reject a passenger with either an outgoing mount or any incoming rider before ticket consumption. Any longer connected riding chain necessarily has an immediate link at this boundary. No recursive fare calculator, manifest, or multi-passenger altitude/command engine is needed.
+- **Keep one small paid-passenger predicate if shared by combat and mounting.** Both are concrete consumers of the same service/state/link check. Identify a real catalog service and its attached passenger; do not exempt all NPC mounts, flying creatures, or characters at altitude 10.
+- **Keep tests of real links, scheduling, combat, and command dispatch.** Existing stubs cannot prove those requirements. Extend current fixtures/journeys where possible; add at most a focused transport runtime harness if linking those production boundaries cannot fit an existing fixture cleanly.
+- **Investigate specific attack/body claims.** Inspect the actual attack path, altitude changes during room entry, and NPC/switched/morphed body guards. Change an attack path only when evidence shows a paid-flight invariant is broken. An unavailable original transcript is not evidence for blanket immunity.
+- **Drop schema changes, extra transport states, periodic whole-world scans, generic mount-chain infrastructure, and unrelated cleanup.** None is required by the traced failures or acceptance criteria.
 
-## Planning evidence and implementation estimate
+## Implementation sequence
 
-Completed at the pinned baseline, before source edits:
+### 1. Lock down the behavioral contract with focused regressions
 
-- `python3 tests/async/test_world_quest_dynamic_policy.py`: passed.
-- `python3 tests/async/test_world_quest_target_retries.py`: all 72 live-target/creation/payment scenarios and 10 SQL-history scenarios passed under the existing ASan/UBSan harness. These establish old behavior/compatibility, not the requested new rules.
-- `cmp docs/ongoing-projects/plan.md docs/ongoing-projects/plan-issue-420.md`: matched before replacement.
-- Source/caller/test review and read-only authored geography audits described above. No new server build, booted-world reproduction, production observation or implementation acceptance is claimed.
+Extend the flight fixture for missing rider, same-room unlink, separation, incoming rider rejection, and successful service reuse. Reuse its ordinary and extra-destination setup, ticket checks, and route execution. Record expected failures on the unmodified behavior before applying the fix where the fixture can faithfully exercise it.
 
-Planning validation: `python3 tests/async/test_documentation_contract.py` passed all 14 tests; `git diff --check` passed. The diff changes only this plan, and `gh issue develop 500 --list` confirms its Development branch link. Commit/push and verify matching local/remote heads, then publish the committed plan link without closing #500.
+Add integration coverage using production link/event teardown and combat entry, either within the existing runtime fixture or one small `tests/async/test_flight_transport_runtime.py`. It must execute actual relevant functions, with unrelated world I/O stubbed explicitly. Do not call a fake `extract_char()` or a map-backed fake scheduler and describe that as production extraction coverage. The disposable server journey below provides the full extraction/command path.
 
-Estimate for **me to implement and locally qualify: 4–6 hours of active work**:
+### 2. Make transport continuation independent of its passenger
 
-- 45–75 minutes: loaded geography confirmation and failing fixtures.
-- 75–105 minutes: policy removal, level split, map/command integration and focused regressions.
-- 60–90 minutes: journey/probe changes and disposable backend runs.
-- 30–60 minutes: reference updates, builds, final review and commits.
+In `src/world/transport.c`:
 
-Allow up to **8 hours** if Bloodstone's attachment data or navigation-fixture separation needs additional work. This includes implementation and local validation, not just editing the selector. It excludes prerequisite merge/review waiting, deployment and production qualification.
+- Update ticket departure, each outbound rearm, and restored occupied flights to schedule carrier-only events with a null victim. Keep empty returns carrier-only as they already are. Preserve owner-extraction cancellation.
+- At callback entry, validate the service/state/route, then resolve the live direct rider. Require the reciprocal riding relationship and room agreement before occupied movement. A missing/unlinked passenger must not cause another occupied step.
+- For an unoccupied carrier on its expected route, schedule the existing return from the current step. At step zero it can land at home immediately. For invalid progress, unexpected position, or failed scheduling, use `transport_land_at_home()` rather than leaving MOVING without an event.
+- If a remaining riding link points to a separately relocated passenger, detach that link before moving the carrier. Do not drag a relocated player back from another room through the landing helper. Preserve the player's new location and ordinary relocation/falling semantics.
+- After `char_to_room()`, verify the carrier survived before dereferencing it or scheduling again, and reacquire the rider rather than retaining a pointer across room-entry callbacks. Reuse the removal-generation/runtime-identity pattern already present in `src/cmd/actmove.c:2268`; do not add another lifetime system. Cover passenger removal during the callback as well as between callbacks.
+- Maintain at most one flight continuation and distinguish normal arrival from interruption. Ground and detach the delivered player, then run the empty return; do not allow a terrain-sensitive player `dismount` refusal to turn an intended empty return into an occupied one. Keep the return carrier at flight altitude until home and both delivered player/home carrier at zero.
 
-## Implementation evidence: ASK target levels
+No flight-specific behavior is added to generic event cancellation. Keep snapshot fields and state values compatible. Existing recovered empty flights and invalid legacy snapshots must still return/land correctly; validate a snapshot of an already stranded carrier through that path.
 
-The first chunk moves the authored/live level band from the shared ordinary-instance
-filter into KILL eligibility. ASK now checks both levels against `MAXLVL`, leaving
-zone eligibility and interaction checks in place. The reference describes this
-implemented rule; its route/geography sections await the next chunk.
+### 3. Enforce one eligible traveler at every boarding boundary
 
-The extended native fixture first failed against the old source for a level-11
-ASK with authored target level 6 and live level 11. After the production change,
-all **184** live-target/creation/payment scenarios passed under ASan/UBSan,
-including 112 new authored/live level cases at accepted levels 11/29/30/49.
-Both the selector and accepted-target API are exercised with forced quest type;
-the destination zone average remains fixed while each target level varies.
-All 10 SQL-history cases also passed.
+In ticket redemption, check both `IS_RIDING(ch)` and `GET_RIDER(ch)` before scheduling, consuming the ticket, changing altitude, or linking to the carrier. Preserve the ticket, cash, discovery state, room, and current links on refusal; tell the player to dismount or have their rider dismount first. Existing carrier eligibility already excludes a carrier with a mount or rider.
 
-Additional checks passed: `make -C src -j8`, dynamic policy contracts, XP feedback
-(MariaDB and flatfile), reward policy, 14 documentation checks, formatting and
-`git diff --check`. These results qualify the level chunk only; route removal,
-dual-region geography and the planned command/persistence journeys remain open.
-Current master `aa77a2030` was merged for build/compatibility qualification.
+Use the shared paid-passenger predicate in `do_mount()` to reject attaching an additional rider to an active flight passenger. Also exercise attempts to use ordinary mounting to join an occupied or returning service carrier, so the tested paths cannot substitute an unticketed rider during an interruption. Add only the transport-specific guard demonstrated necessary by these command tests. Preserve all normal centaur/horse ground consent, saddle, skill, and dismount rules.
 
-## Implementation evidence: route removal and both regions (in progress)
+Apply the same single-passenger validation when recovery reconnects a named rider. If recovery encounters an incompatible pre-existing riding arrangement, resolve it through the existing safe landing/recovery flow before any movement; do not resume a nested flight or ground only the direct rider while moving an additional traveler. Prove each affected live player's link, room, and altitude outcome.
 
-The second chunk replaces the route builder and all three capability passes
-with boot-time geography and one accepted-target interaction/supply check.
-The production route API and route limits are removed. Target-check bounds,
-actual restricted current target locations, provenance and ASK interaction rules
-remain. Maps use geographic zone entrances; travel changes no longer clear
-them or invalidate a task. Refusal messages now describe target/scope state.
+### 4. Resolve combat behavior using the real attack path
 
-The attachment decision is now concrete: gather authored map boundaries and
-interior-zone adjacency, then resolve the nearest boundary **separately for
-surface and Underdark**. The map-only Underdark graph uses undirected
-connectivity, ignoring movement flags; interior connectors cannot merge map
-components. Ties between different identities remain unresolved for that family.
-This avoids flooding all 5,165 connected Bloodstone interior rooms and requires
-no special-case origin table, new configuration or travel simulation.
+Planned policy: a properly attached paid-flight passenger does not need mounted-combat skill to remain aboard. Add the narrow exception in `set_fighting()` for that passenger. Ordinary mounts retain their current skill-based dismount behavior. This exception does not grant immunity, enable blocked passenger commands, or make different-altitude melee legal.
 
-The disposable **flatfile loaded-world audit passed**. Both 1734 and 74339
-resolve to surface region 2 and Underdark component 239868 in that boot's rnums.
-Both Good and Evil observers received eligible tasks at 11/29/30 from both
-origins. Component rnums are process-local evidence, not persisted identifiers.
-The geometry harness passes mixed/nearest boundaries, incoming/one-way edges,
-disconnected rooms, unrelated surface/Underdark rejection, ambiguity, unchanged
-world memory and a graph larger than the old route limit.
+Exercise actual `MobStartFight()`/`hit()` behavior through room entry and scheduled aggression, with an ordinary ground attacker and a correctly elevated passenger, then with a legal same-altitude attack. Check altitude, riding link, combat state, damage/attack rejection as applicable, and continued transport service. Include zero mounted-combat skill and a normal ground-mounted control.
 
-The expanded native suite passed **284** scenarios and 10 SQL-history cases,
-including the final terrain-fixture addition. It covers named-origin synthetic
-ASK/KILL geography at 11/29/30/56, broad ASK and KILL levels at 11/29/30/49/56,
-strict zone-average endpoints, refresh/sharing/map-payment route immunity and
-genuine target invalidation. The old distribution-room fixture is now explicitly
-private: its rejection proves location policy rather than a missing path.
-The journey probe now has its own ordinary-exit navigation helper; assignment
-is independent of whether that test helper can walk the target.
+Trace any observed altitude loss before changing targeting: `char_to_room()` indoor handling, room/mobile specials, and the actual route are relevant; the final movement helper alone is not. If a paid route lowers travelers before aggression, repair the smallest demonstrated transport/entry boundary and retest the actual path. Do not add a global altitude condition to `set_fighting()` that would silently alter spells or ranged combat.
 
-`make -C src -j8`, dynamic/reward/failure/remaining contracts, geography,
-formatting, whitespace and 14 documentation checks passed. The first `reported`
-and `both` journey runs failed in their ordinary-exit navigator after accepting
-valid broader-pool targets: one walked into a map barrier, and one could not
-reach remaining targets after restart. This did not justify restoring route
-eligibility. The test navigator now uses the actual read-only map-barrier
-predicate, and gameplay sampling explicitly chooses otherwise eligible fixtures
-with ordinary outward/return paths for their routine instances and birthplaces.
-Debugger hooks select that zone/prototype; production validation, publication,
-payments, movement, ASK/KILL, reward and persistence still execute normally.
-Special-travel acceptance is independently covered by native fixtures.
+For the horse report, test NPC-body redemption rejection, a player already riding an NPC horse, and applicable switched/morphed-body command guards in a disposable environment. Request the original command sequence/body/carrier only if these do not explain the report; mark its cause unconfirmed instead of inventing a new mechanism. The demonstrated nested-player path still receives a complete fix and regression coverage.
 
-The reported suite also enables sharing only in its disposable properties copy,
-then exercises actual CONSENT, QUEST SHARE and paid MAP with the giver's exits
-locked. It saves/restarts both source and recipient and compares copied work,
-paid map, purse, allowance and remaining shares. Fresh `reported` and `both`
-runs on both backends are underway; completion still requires their results.
+### 5. Prove service recovery and document the policy
 
-The next journey attempts exposed two further fixture defects: snapshots could
-observe a partially processed movement batch, and the newly created sharing
-recipient had not equipped its visibility gear. Navigation now synchronizes
-every movement/preparation command through its prompt, and score observations
-use tagged requests plus their response/prompt. The recipient uses normal
-`wear all` before consenting. The ASK completion sampler now specifically
-selects an eligible target outside the KILL band and records its live level;
-a focused 11/29 ASK journey on both backends supplements the full matrix.
-These are test changes, not production travel restrictions. All current journey
-results remain pending; draft #522 must not be marked ready before they pass.
+Extend `tests/async/test_flight_network_journey.py` with disposable players and world state. Use ordinary player commands for discovery, purchase, give, mounting, and allowed/blocked in-flight commands; use staff/test setup only to arrange interruption and attack conditions. Include Torrhan's configured service as a full-world check.
 
-Further qualification isolated stale queued score observations: snapshots now
-carry a unique request identifier, and the reader accepts only its own response.
-The broad ASK run completed its level-11 case. Its first level-29 fixture used
-a safe room, where existing reward rules legitimately suppress XP; completion
-fixtures now avoid safe/arena/guild locations when proving positive XP. No
-reward rule changed. Fresh full, reported and focused ASK runs are in progress;
-the required final result is still both backends passing every planned journey.
-Baseline, native and failed-journey logs are retained locally under
-`bin/qualification/issue500/` and are not tracked.
+After separation, passenger extraction, and a forced ride unlink, drain the scheduled return and verify exactly one carrier at its configured home, ground altitude, no rider, WAITING, and no stale flight callback. A new/eligible player must discover the stop with `list`, buy a ticket, and successfully depart again. Distinguish socket loss with a still-live passenger from actual extraction.
 
-The walker now observes each authored destination before submitting the next
-movement command, with a bounded wait and an exact room assertion. A prompt or
-batch-end score alone did not establish that every requested step had finished.
-The runner also freezes its probe source at startup so editing the checkout
-cannot mix probe signatures between its MariaDB and flatfile passes. A prior
-intermediate run's flatfile debugger stopped on that signature mismatch; this
-was not a server crash. Final `both` and `reported` runs use the corrected
-step synchronization. No production change was needed for these harness fixes.
+Retain occupied copyover, empty-return copyover, cold restart, dedicated destinations, and ordinary ground mounting controls. Update `docs/operations/WORLD_SINGLETON_RECOVERY.md` with carrier-owned runtime recovery and single-passenger/combat rules. Include concise refusal messages in the affected commands; update existing flight help only if its current wording promises incompatible behavior.
 
-Exact step observation then identified the remaining concrete navigation error:
-the simplified walker admitted ocean sectors (for example 556132 -> 555732),
-which ordinary movement rejects. The walker now conservatively excludes ocean
-and hazardous planar terrain, as appropriate for its completion fixtures only.
-Production eligibility remains independent of these travel checks. Superseded
-reported runs were interrupted with normal cleanup; the corrected full/reported
-pair is the remaining completion gate.
+## Files
 
-Ablation after that diagnosis removes the temporary per-step polling: the
-failure was an inadmissible ocean edge in test navigation, not evidence for a
-new movement-publication protocol. The final walker retains ordered batches,
-unique score request IDs, response/prompt synchronization and an exact end-room
-assertion (or a checked combat interruption). The stricter reported run already
-in flight may finish with per-step assertions; the final full run qualifies the
-batched reader on both backends. No eligibility or acceptance requirement is
-weakened by removing the diagnostic polling.
+Expected implementation files: `src/world/transport.c`, `src/world/transport.h` (shared predicate only), `src/combat/fight.c`, `src/classes/mount.c`; `tests/async/test_flight_network.py`, `tests/async/world_singletons_harness.cpp`, `tests/async/test_world_singletons.py`, `tests/async/test_flight_network_journey.py`; `docs/operations/WORLD_SINGLETON_RECOVERY.md` and this plan's completion evidence.
 
-Final source review added a regression for a tied surface boundary alongside a
-known Underdark attachment. It reproduced an incorrect `unavailable` verdict
-for the unmatched surface task. The geographic cache now retains an uncertainty
-bit: known matches still work, while an unresolved mismatch remains `unproven`
-and `world_quest_refresh()` keeps the accepted task instead of granting a reroll.
-All **300** native scenarios and 10 SQL-history cases pass, including the new
-negative control and the durable-state transition. The geography harness and
-fresh server build also pass. Fresh full/reported backend runs use this final
-production repair.
+Conditional: one focused `tests/async/test_flight_transport_runtime.py` if existing fixtures cannot host production link/event/combat integration clearly. `src/world/handler.c`, `src/mob/mobact.c`, and `src/world/graph.h` are investigation targets, not pre-authorized refactoring targets; touch only a demonstrated blocking flight/attack defect. Generic scheduler, link semantics, codecs, database schemas, and area data need no planned changes.
 
-The earlier full run completed both level-11 and level-29 kinds, including the
-partial KILL restart, before its level-30 fixture leveled to 31. Its remaining
-allowance then legitimately changed because history is counted per current
-level below 50 (`sql_world_quest_can_do_another`). The regression now checks
-that partial combat writes no history, and checks equal remaining allowance
-when the actor level is unchanged. No allowance policy was changed.
+## Proof and acceptance gates
 
-Final ablation also removes the carried-over private-birthplace restriction:
-the player interacts at the live target room, not its spawn room. Routine M-reset
-provenance and same-zone birthplace checks remain, but a public live target is
-not rejected just because it was born in a private holding room. The existing
-staging-release case now proves that positive behavior; NPCs currently in private
-holding rooms remain excluded. The fresh build and all 300 native/10 SQL-history
-cases pass with this final policy.
+The implementation is complete only when all of these hold:
 
-To make completion inputs deterministic, explicit disposable setup now restores
-routine NPCs in the requested target pool to their authored birth rooms and sets
-their sentinel flag. It does not spawn prototypes or alter levels, statistics,
-population counts or reset provenance. Targets are then selected and validated
-through production policy. After partial restart the same explicit preparation
-pins the retained target; the fixture asserts every saved player/quest field
-is unchanged. This replaces reliance on a random wandering population, which
-could leave no ordinary-travel KILL completion fixture after the first ASK case.
+- Passenger removal/extraction cannot cancel the carrier's only continuation; generic victim-link cancellation and carrier-owner cancellation still behave correctly. No stale passenger access, duplicate continuation, or sanitizer error occurs when teardown happens between or during callbacks.
+- Same-room unlink is detected before another occupied step; separation cannot silently abandon a carrier or pull a relocated player back. Missing rider, invalid route/progress, failed scheduling, ordinary arrival, and empty return all end with a usable service or one valid return continuation.
+- Incoming rider, outgoing mount, longer connected chain, and later mounting attempts cannot add an unticketed traveler. Refusal leaves tickets/money/access state intact. Solo centaurs remain eligible. Accepted travelers receive altitude 10 and the established mortal command lock, then altitude zero and released links at landing; existing trusted-command behavior is retained.
+- Ground attack tests use the real targeting/entry path. Legal combat entry at zero mounted-combat skill retains the paid ride, while ordinary ground riders retain existing behavior. Explicit forced unlink and extraction still exercise recovery independently of the combat exception.
+- Every interruption test checks service reuse, not merely that an event was queued. At least one full-world journey validates Torrhan 47020 at pad 582084 and a subsequent purchased trip.
+- Occupied/empty recovery and existing ticket/discovery/extra-destination behavior remain compatible on flat-file and MariaDB journeys. A recovered orphan snapshot returns to service; repairing the currently reported production instance remains a separate deployment/operations action.
 
-## Concurrent review integration and final-head qualification
+Run from this worktree after implementation:
 
-The full five-case matrix and reported-giver suites passed on **both backends**
-at implementation revision `f9b28d826`; their retained artifacts are
-`matrix-passed.json` and `reported-final-passed.json` under
-`bin/qualification/issue500/`. The runtime ASK targets were level 24 at accepted
-11 and level 20 at accepted 29. Both backends qualified real partial KILL
-save/restart, retained reward identities and ordinary outward/return commands.
+```sh
+python3 tests/async/test_flight_network.py
+python3 tests/async/test_nevent_cancellation_runtime.py
+python3 tests/async/test_world_singletons.py
+python3 tests/async/test_flight_transport_runtime.py
+./scripts/format.sh --check --rev origin/master
+make -C src
+python3 tests/async/test_flight_network_journey.py
+make -C src PERSISTENCE_BACKEND=mariadb
+tests/async/with_disposable_mariadb.sh python3 tests/async/test_flight_network_journey.py \
+  --backend mariadb --server bin/server/dms_new
+git diff --check
+```
 
-Before readiness, the remote stack advanced with concurrent review fixes.
-This checkout fast-forwarded those changes and merged the updated #520 parent
-in `75fb94e66`. The parent now includes durable item/history/recovery-receipt
-publication and retained final-kill entitlement; #522 adds ASK command-scene
-interceptor auditing independent of travel. Temporary target sleep/silence now
-blocks accepted ASK instead of issuing replacement. The integrated master also
-contains unrelated landed frag-cap and skill changes; those remain upstream work.
+The default journey builds its flat-file server under `bin/tests`; the MariaDB binary is also under `bin/`. The database wrapper supplies disposable loopback authority and the journey does not use the checkout's `.env` or running game. If a required journey is unavailable, record the specific missing dependency and leave that acceptance claim unverified. Do not wait for CI, stop a shared server, or run a repository-wide burn-in for this task.
 
-On this integrated head, 300 native scenarios, 16 SQL-history cases, reward
-publication, XP feedback on both backends, reward/failure/remaining contracts,
-save-pipeline contracts, flatfile history/recovery, item snapshot codec, the
-server build, formatting and 14 documentation checks passed. Full/reported
-journeys are rerunning: the old-head runtime artifacts do not claim coverage
-of the newer reward/persistence code.
+## Implementation and verification record
 
-The journey now checks completion allowance through a read-only copied player
-view at the level captured by the history admission, using the real allowance
-API. This preserves the exactly-one-consumption assertion when scalar XP later
-changes the actor's level; it neither changes the actor nor duplicates the
-allowance formula. All code and review changes are preserved, and the active
-worktree remains dedicated to this final qualification.
+### Implementation handoff: carrier continuation chunk
 
-The full matrix next reached a genuine scripted movement gate on its chosen
-level-29 ASK fixture. Its navigator now rejects opaque room/mobile/object
-movement handlers and room affects when selecting ordinary completion fixtures,
-reusing the production Bloodstone passive-handler predicate through the existing
-debugger mechanism rather than copying that allowlist. This test-only screening
-does not restore travel gating to production. The new full run is in progress.
+Implemented carrier-only outbound/recovered events, current-rider checks, empty return on lost riding links, shared route-position validation, remote-passenger detachment, unconditional arrival detachment, and carrier lifetime checks after both occupied and empty room entry. The shared position validator replaces duplicated recovery validation and is used by both runtime callbacks; no scheduler changes, watchdog, new state, or schema were added.
 
-**Reported-giver qualification passed on both backends.** For each backend the
-result includes all 10 Good/Evil named-giver grant cases, six saved/restarted
-abandon/regrant sequences, actual consent/share/map with locked giver exits and
-both players' retained state after restart, progressed-abandon history, legacy
-origin binding, durable free replacement, and Bloodstone level-30 ASK/KILL
-completion and ordinary return travel. The recipient restores an active level-29
-task from origin 1734, paid map, original receiver and no onward shares.
-Evidence: `bin/qualification/issue500/reported-passed.json` (ignored).
-The reported run used stricter per-step movement observation; the final full
-matrix still must qualify the simplified batched walker and 11/29 cases.
+`test_flight_network.py` now covers same-room unlink, unlink plus separation, separation with a remaining ride link, invalid step, unexpected position, and successful purchase/departure after interruptions. Its new carrier-only assertion failed on the unmodified implementation. `test_flight_transport_runtime.py` uses production link creation/removal and event scheduling/cancellation, with isolated allocation and room I/O, to exercise passenger teardown/freeing between and during movement and carrier extraction during outbound/return callbacks. The singleton fixture also tests recovery of an already orphaned flight snapshot.
 
-## Final integration and qualification — 2026-10-31
+Checks for this chunk: `make -C src -j8` passed; flight-network, world-singleton and generic event-cancellation sanitizer controls passed during development. Final focused checks are recorded with the review commit. Full-world and dual-backend journeys have not yet been run for the implementation.
 
-Both backend builds pass on settled master `964cd61cd` with the #522 changes.
-The master integration preserves the qualified quest, reward, player-save and
-currency implementations byte-for-byte; conflicts were duplicated #526 squash
-ancestry in a comment and the test setup action number. The independent-credit
-fixture uses action 8, retaining action 7 for locked-exit sharing.
+PR #586 combined the carrier implementation and review follow-up, then
+squash-merged as `4d45fe7f4`. The following checkpoint implements
+boarding/combat. No release tag or deployment is appropriate before the stack is
+fully merged.
 
-Fresh combined checks pass: assignment/refresh/share/map/type/geography and
-SQL-history regressions under ASan/UBSan; reward publication; XP and the level-25
-mercenary boundary/retry; reward/remaining/failure contracts; player-save retry
-and offline retention; currency/auction escrow; flatfile player/history and item
-codec; and disposable MariaDB save/claim rollback, replay and reward custody.
-Formatting, staged clang-tidy, documentation checks and whitespace checks pass.
+### Implementation handoff: boarding/combat chunk
 
-The `reported` journey passes on MariaDB and flatfile, covering named givers,
-locked-exit sharing/maps, saved abandonment/regrant, history, replacement and
-Bloodstone ASK/KILL completion. The default five-case `both` matrix passes on
-both backends: 11:2, 11:1, 29:1, 29:2 and 30:1, including real movement/combat,
-out-of-band ASK completion, partial KILL save/restart, rewards, history, relogin
-and restart. The MariaDB `history-failure-restart` journey also passes: an
-independent 1,000-copper credit survives rejected history writes and restart;
-retry charges the fee and records history exactly once.
+Implemented incoming-rider ticket refusal, service-carrier/passenger guards in the actual `do_mount()` command, and a narrow `set_fighting()` exception for active paid passengers. Catalog identity, movement state and reciprocal riding links define a paid passenger; altitude alone does not. Two small public predicates serve these concrete command/combat consumers. Ordinary mounting of a service carrier is also refused, preventing a free rider from joining an empty return. Mastered NPCs remain outside the service catalog rules.
 
-The first combined journeys exposed a test synchronization gap while final-KILL
-history was committed but its reward callback had not cleared the live task.
-The journey now waits on the completion marker with a timeout. A later MariaDB
-matrix selected an ordinary random fallback after an unsuitable purchase and
-could reach only one thorncat; its other resets were in an outbound-only load
-room. Retries now repeat the existing explicit fixture preparation and require
-the exact prechecked prototype and actual zone. No production eligibility,
-quota, NPC count, combat limits or credit was changed. The corrected MariaDB
-matrix passes at `4572474ac`; the flatfile matrix and both reported passes use
-`b1babb49e`, whose production quest/reward/save/currency code is unchanged by the
-settled-master integration and the subsequent fixture-only edits.
+Recovery and runtime callbacks detect legacy nested riders and land the chain. Landing first removes every link in the chain, then grounds/places co-located travelers, avoiding recursive movement with inconsistent altitudes. Separately relocated players remain in their new rooms. This is temporary landing state, not a persistent passenger manifest or new fare model.
 
-Ignored evidence is under `bin/merge522/` in the qualification checkout: native
-and save logs, `flatfile/final-{reported,both}.log`,
-`mariadb/final-reported.log`, `mariadb/final-history-failure-restart.log`, and
-`mariadb/final-both-fixture-identity.log`. Earlier failed/interrupted runs remain
-separate. Final cleanup retains this evidence in the main checkout's ignored
-merge-campaign directory. No production operation, deployment or release tag
-was part of this qualification.
+Focused flight-network, production flight/link/event/combat/mount runtime, and world-singleton sanitizer checks pass. Runtime tests execute the full production `set_fighting()` and `do_mount()` bodies with unrelated services stubbed, including zero-skill paid combat, the ordinary skill-based ground dismount, direct/later mount refusal, and successful ground centaur mounting. The singleton fixture verifies that a named recovered passenger carrying another rider lands both at altitude zero with no residual riding links. The local MariaDB server build passed before the journey runs.
+
+### Acceptance handoff
+
+PR #587 squash-merged the boarding/combat checkpoint as `d04e0d905`. The rebased
+acceptance checkpoint is commit `c18fe6d1a` in PR #588. The acceptance
+branch adds complete command journeys, focused test modes, and
+scheduling-refusal/body/long-chain assertions. Both full-world backends have
+passed actual outbound dismount/separation and character extraction at Torrhan,
+followed by a newly purchased trip and service reuse, in addition to catalog
+discovery, faction/access checks, occupied and empty copyover, logout, dedicated
+trips, crash recovery, and normal relog.
+
+Evidence already completed:
+
+- `python3 tests/async/test_flight_network_journey.py` — flat-file full world including both Torrhan interruptions; log `bin/issue584-flatfile-interruptions.log`, exit 0, binary SHA-256 `99a9f7087ccf612fef39c7d9ce6628453800e63b4dc3de698f2d8ed8820b3800`.
+- `tests/async/with_disposable_mariadb.sh python3 tests/async/test_flight_network_journey.py --backend mariadb --server bin/server/dms_new` — same complete MariaDB qualification; log `bin/issue584-mariadb-journey.log`, exit 0, binary SHA-256 `e36ea3d5b5d2260915edb62ff9e4eca198bc68a60efd7b02841b8da84e6834ae`.
+- `python3 tests/async/test_flight_network_journey.py --interruptions-only` — full-server NPC `kill`/`hit` paths at altitude 0 and 10: different-altitude attack rejected, same-altitude combat entered, riding link retained in both, trip and empty return completed. Both outbound interruption/reuse cases also passed. Log `bin/issue584-focused-flatfile.log`, exit 0. This run preceded the separate socket-reconnect case; its valid evidence is reused.
+- Final ablation removed unreachable legacy BFS error/no-path branches after the shared validator already rejects those states. `make -C src -j8`, flight-network, production flight/link/event/combat/mount runtime, and singleton sanitizer tests passed after that deletion. Earlier full-world evidence remains valid for the unchanged reachable branches; no repeat of both complete persistence suites is needed for dead-code removal.
+- The flight fixture now explicitly checks a two-edge route: a same-room unlink returns immediately instead of advancing alone. It also proves rejected initial scheduling retains the ticket, rejected continuation lands safely, mortal command restrictions/altitudes, solo centaur travel, longer incoming chains, NPC bodies, and NPC bodies controlled by player descriptors.
+
+- `python3 tests/async/test_flight_network_journey.py --reconnect-only` — passed on the final simplified callbacks, log `bin/issue584-reconnect-qualified.log`, exit 0, binary SHA-256 `ad3a8d53fee751fde3fbfba97aadc89c0b00862ab1553c249577fcb303d75608`. Staff diagnostics confirmed the socket-disconnected character was still live, link-dead, and riding; reconnect restored control, then the trip and empty return completed. The test fixture's initial fare funding and login-banner assumptions were corrected during qualification.
+
+All test sessions are finished; no test process needs to be resumed. Current source and focused tests include the final callback simplification. Both full persistence journeys and the actual NPC attack journey preceded that removal of unreachable branches; their reachable-path evidence is reused, with the build, focused sanitizer regressions and real reconnect journey run afterward. No generic event/link semantics, attack targeting, schema, snapshot format, or area data changed.
+
+Focused modes reuse the same world/authority/command logic. `--interruptions-only` discovers only Torrhan and the nearer Nizari stop; `--reconnect-only` runs only the socket case. They avoid repeating catalog, copyover, and dedicated-trip checks during iteration. All runs use disposable state, random loopback ports, and no checkout `.env` or shared server.
+
+The historical NPC-horse/original attacker sequences remain unconfirmed. Current ordinary-riding and NPC/switched-body guards are covered; no speculative horse or global combat behavior was added. Actual ground and same-altitude NPC attack paths pass, so the implementation adds neither global immunity nor a new targeting rule. The original production cause and production repair/deployment remain outside the evidence and this branch's scope. Keep #584 open until review/merge.
+
+At the planning base, these existing controls passed:
+
+- `python3 tests/async/test_flight_network.py` — catalog, paths, discoveries, fares, commands, tickets, and epic exclusions; ASan/UBSan enabled by the runner.
+- `python3 tests/async/test_nevent_cancellation_runtime.py` — cancellation runtime invariants under ASan/UBSan.
+- `python3 tests/async/test_world_singletons.py` — singleton/recovery lifecycle, five recovery cycles, riders/travel, and compatibility; ASan/UBSan enabled by the runner.
+
+Those planning-stage passes established the baseline only; implementation evidence is recorded above. No production experiment was performed. The original checkout and other worktrees remain untouched.
+
+## Final completion audit
+
+- Carrier recovery: production transport/link/event sanitizer tests cover real passenger teardown, same-room loss, separation, freeing during movement, owner extraction, generic victim cancellation, and balanced event ownership. The two-edge route assertion forbids the old extra solo outbound step. Invalid position/progress and scheduling refusal restore service. Orphan and occupied snapshots recover without a format change.
+- Boarding: production command tests cover incoming/outgoing and longer rider chains, preservation of tickets/cash/discovery on refusal, later mount attempts, NPC and player-controlled NPC guards, solo centaur acceptance, and normal ground mounting. Legacy nested recovery detaches/grounds every linked traveler before movement. Accepted passengers and completed landings have explicit altitude/command-lock assertions.
+- Combat: zero-skill paid combat entry and ordinary ground dismount controls execute production `set_fighting()`; real-server NPC `kill`/`hit` tests reject a ground attacker and allow same-altitude combat while retaining the ride. The historical attacker remains unidentified, without being treated as a reproduced universal targeting defect.
+- Whole workflow/persistence: both maintained backends complete discovery, fare/access checks, occupied and empty copyover, outbound interruption, actual extraction, Torrhan service reuse, extra destinations, crash recovery and relog. A final real socket reconnect remains distinct from extraction and completes successfully.
+- Review delivery: all work is in the three dependent branches/PRs above, with this plan and the existing operations guide updated. The original checkout and unrelated worktrees remain preserved. Required local build, focused regressions, formatting and diff checks pass. No CI wait, release tag, production repair, or deployment is required for the requested review-ready handoff.
+
+There is no remaining implementation/acceptance work for #584 in this plan. Reviewers should process the stack in order and retarget children after their parents merge. The reported production carrier needs the normal owner-approved deployment/recovery workflow separately.
+
+## Original estimate
+
+**5–8 hours of active implementation and verification**, assuming the local compiler, disposable MariaDB/Docker, and existing journey fixtures are available:
+
+- 1–1.5 hours: focused failing cases and production link/event integration.
+- 1–1.5 hours: carrier-owned continuation, recovery, and boarding guards.
+- 1–2 hours: combat exception and real attack/altitude investigation and tests.
+- 2–3 hours: builds, both persistence journeys, fixes from those checks, documentation, and final ablation/diff review.
+
+This estimate excludes waiting for a reporter's exact horse/attack sequence, review, and production deployment. A newly demonstrated special-attack or route-altitude defect could add approximately 1–2 hours; that would be reported with its evidence and a revised estimate, not silently expanded into a combat redesign.
+
+## PR #586 review follow-up (2026-11-02)
+
+Both P2 findings were verified against the production departure and placement
+contracts. The refused-departure fixture reproduced WAITING away from home with
+no flight event on the original head. The lifetime issue follows directly from
+`char_from_room()` permitting removal/replacement before the old caller's snapshot.
+
+The fix shares checked relocation between occupied movement, empty return and
+home landing. Recursive riding-companion movement checks both participants at
+the same callback boundaries. Refused home placement reuses the existing return
+event, and only confirmed home placement publishes WAITING. Startup callers honor
+failed landing and avoid accessing removed carriers. The fixtures now model leave
+vetoes and duplicate-insertion refusal and exercise the production companion mover.
+This keeps the existing state/snapshot format and scheduler; no new recovery service,
+configuration, tag, migration or production operation is needed.
+
+Focused proof includes repeated departure/entry refusal followed by recovery and
+service reuse; occupied/empty departure redirection, removal and storage replacement;
+and passenger/carrier removal during recursive movement and home landing. Validation passed: `make -C src -j8`; `test_flight_network.py`,
+`test_flight_transport_runtime.py`, `test_world_singletons.py`,
+`test_nevent_cancellation_runtime.py`, `test_mounted_gatekeeper_runtime.py`, and
+`test_char_from_room_callbacks.py` (focused native suites use ASan/UBSan);
+`./scripts/format.sh`, `./scripts/tidy.sh`, and `git diff --check`.
+Full-world final-stack acceptance follows in #588 after carrying this fix through
+#587's legacy-chain code.
+
+## PR #587 review carry-forward (2026-11-02)
+
+Rebased the single boarding/combat commit onto the reviewed #586 fix. The runtime
+fixture conflict retained both production companion placement and actual mount/combat
+bodies. Legacy-chain landing and startup candidate retirement now retain runtime
+identities alongside their temporary pointer lists, so an earlier leave callback
+cannot make a later queued traveler/carrier a stale access. Removed-count logging
+counts actual retirement. A focused legacy-chain case removes the later traveler
+from the earlier traveler's departure hook and verifies safe landing and balanced
+links/events. Ground centaur mounting, one-player boarding and paid combat semantics
+are preserved; no new persistent state or helper layer was needed.
+
+PR #587 carry-forward validation passed: local MariaDB build, flight-network,
+production flight/link/event/combat/mount runtime and singleton ASan/UBSan tests,
+formatting, tidy and diff checks. The rebased PR remains one logical boarding/combat
+commit; #586's review fix is its parent.
+
+## Final review qualification (2026-11-02)
+
+PR #588 was rebased onto merged master `d04e0d905` without changing its two
+logical commits: acceptance/simplification at `c18fe6d1a`, then this final
+documentation commit.
+The documentation conflict retained both the review-follow-up recovery guarantees
+and the full-world journey instructions. Master had advanced before merging to
+`3b47d69562de60610e5992c759b6c0100ab497d0`; its race-info-only changes did not
+overlap this stack. The full stack was rebased before #586, then #587 and #588
+were replayed onto each preceding squash merge so their diffs remained narrow.
+No release tag is appropriate before merge.
+
+Validation on the final stack passed:
+
+- `make -C src -j8` using the MariaDB backend.
+- `test_flight_network.py`, `test_flight_transport_runtime.py`,
+  `test_world_singletons.py`, and `test_nevent_cancellation_runtime.py` under
+  ASan/UBSan, plus `test_mounted_gatekeeper_runtime.py` and
+  `test_char_from_room_callbacks.py`. `test_race_command.py` also passed on the
+  rebased head, covering the new master commit.
+- `scripts/format.sh`, `scripts/tidy.sh`, and `git diff --check`.
+- Complete flat-file full-world journey on the rebased head, binary SHA-256
+  `376a6ffac3f5fa6d54ba0fa539d9639ec4b28b1e2304a52a1df882943596c6e7`.
+- Complete disposable MariaDB full-world journey on the same flight stack before
+  the unrelated race-info-only master rebase, binary SHA-256
+  `a247ae9a88efc3c81a54cf36ecf2a14780b3f8614a9c48ae275638d6ed1db612`.
+
+Each complete journey passed 25-stop discovery, fares and access rules, two
+copyovers, occupied and empty recovery, logout, ground and same-altitude NPC
+attack paths, outbound unlink/separation, actual passenger extraction, Torrhan
+service reuse, live socket reconnect, restricted destinations, crash recovery,
+and normal relog. The disposable database and all journey processes were removed
+by their test harnesses. Hosted CI was not used as a gate.
+The MariaDB journey was not repeated after the race-only rebase: ablation keeps
+the valid complete-backend evidence and pairs it with the exact-head MariaDB
+build, focused flight suites, race suite, and complete flat-file journey.

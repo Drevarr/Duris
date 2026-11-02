@@ -39,6 +39,7 @@ strings = "\n".join(extract_function("classes/salchemist.c", signature) for sign
 strings += "\n" + extract_function("world/db.c", "void free_obj(")
 harness = r'''
 #include "core/prototypes.h"
+#include "net/gmcp.h"
 #include "core/structs.h"
 #include "core/utils.h"
 #include "net/comm.h"
@@ -122,6 +123,7 @@ bool MakeScrap(P_char, P_obj object) {
 }
 int melee_damage(P_char, P_char victim, double, int, damage_messages *messages, int *) {
     ++damage_calls;
+    assert(messages->critical_known && !messages->critical);
     assert(messages->obj && strstr(messages->obj->name, "arrow"));
     assert(strstr(messages->obj->short_description, "arrow"));
     assert(!strstr(messages->attacker, "shield"));

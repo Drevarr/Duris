@@ -25,6 +25,8 @@
 using namespace std;
 
 #include "core/prototypes.h"
+#include "world/handler.h"
+#include "net/gmcp.h"
 #include "player/news.h"
 #include "cmd/information_cache.h"
 #include "core/structs.h"
@@ -680,7 +682,7 @@ P_obj get_object_in_equip_vis(P_char ch, char *arg, int *j)
 	for ((*j) = 0; (*j) < MAX_WEAR; (*j)++)
 		if (ch->equipment[(*j)])
 			if (CAN_SEE_OBJ(ch, ch->equipment[(*j)]))
-				if (isname(arg, ch->equipment[(*j)]->name))
+				if (obj_name_matches(ch, ch->equipment[(*j)], arg))
 					return (ch->equipment[(*j)]);
 
 	return (0);
@@ -690,7 +692,7 @@ P_obj get_object_in_equip(P_char ch, char *arg, int *j)
 {
 	for ((*j) = 0; (*j) < MAX_WEAR; (*j)++)
 		if (ch->equipment[(*j)])
-			if (isname(arg, ch->equipment[(*j)]->name))
+			if (obj_name_matches(ch, ch->equipment[(*j)], arg))
 				return (ch->equipment[(*j)]);
 
 	return (0);
@@ -7006,7 +7008,7 @@ void do_time(P_char ch, char *argument, int /*cmd*/)
 
 	if (IS_TRUSTED(ch) && GET_LEVEL(ch) >= FORGER && strlen(Gbuf1))
 	{
-		hour = time_info.hour = atoi(Gbuf1) % 24;
+		hour = time_info.hour = (atoi(Gbuf1) % 24 + 24) % 24;
 
 		wizlog(56, "%s set the time to %d:00 or %d:00%s.", GET_NAME(ch), time_info.hour,
 		       (hour == 0) ? 12 :
@@ -7015,6 +7017,7 @@ void do_time(P_char ch, char *argument, int /*cmd*/)
 		       (hour > 11) ? "pm" : "am");
 		send_to_char("You set the time.\n", ch);
 		astral_clock_setMapModifiers();
+		gmcp_time_changed();
 		return;
 	}
 
@@ -8905,7 +8908,7 @@ void do_news(P_char ch, char * /*argument*/, int /*cmd*/)
 		return;
 	if (!IS_SET(recipient->specials.act, PLR_PAGING_ON))
 	{
-		send_to_char("&+WNews file is to long, please tog page on, to read it\n", ch);
+		send_to_char("&+WNews file is too long; use 'toggle paging on' to read it.\n", ch);
 		return;
 	}
 	const auto &news = current_news();
@@ -8914,7 +8917,24 @@ void do_news(P_char ch, char * /*argument*/, int /*cmd*/)
 		send_to_char("News is currently unavailable.\r\n", recipient);
 		return;
 	}
-	if (!send_paged_text(recipient, "&+WDuris News\n\n" + news.text, LOG_NONE))
+	constexpr size_t max_news_bytes = 50000;
+	const std::string header = "&+WDuris News\n\n";
+	const std::string footer = "\n&nRead the full news archive on the website:\n"
+				   "&+Chttps://duris.sbs/news?tab=mud&n\n";
+	const size_t body_limit = max_news_bytes - header.size() - footer.size();
+	size_t length = news.text.size();
+	if (length > body_limit)
+	{
+		// Keep complete paragraphs where possible, otherwise complete lines.
+		// The full source and its fingerprint still identify the published news.
+		length = news.text.rfind("\n\n", body_limit);
+		if (length == std::string::npos)
+			length = news.text.rfind('\n', body_limit);
+		if (length == std::string::npos)
+			length = 0;
+	}
+	const std::string display = header + news.text.substr(0, length) + footer;
+	if (!send_paged_text(recipient, display, LOG_NONE))
 	{
 		send_to_char("News could not fit in the command output; it remains unread.\r\n",
 			     recipient);
@@ -10263,7 +10283,7 @@ void do_zlist(P_char ch, char * /*argument*/, int /*cmd*/)
 
 	if (!IS_SET(ch->specials.act, PLR_PAGING_ON))
 	{
-		send_to_char("&+WNews file is to long, please tog page on, to read it\n", ch);
+		send_to_char("&+WZone list is too long; use 'toggle paging on' to read it.\n", ch);
 		return;
 	}
 

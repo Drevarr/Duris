@@ -207,8 +207,43 @@ int main() {
     command(CMD_GIVE, "ticket carrier");
     assert(ch->carrying == ticket && !GET_MOUNT(ch));
     ch->specials.fighting = nullptr;
+    // A ticket cannot carry the player's own rider (or a longer riding chain).
+    const auto boarding_money = GET_MONEY(ch);
+    const auto boarding_stops = pc.learned_flight_stops;
+    link_char(other, ch, LNK_RIDING);
+    command(CMD_GIVE, "ticket carrier");
+    assert(output.find("Your rider must dismount") != std::string::npos);
+    assert(ch->carrying == ticket && !GET_MOUNT(ch) && GET_MOUNT(other) == ch);
+    assert(GET_MONEY(ch) == boarding_money && pc.learned_flight_stops == boarding_stops);
+    assert(scheduled.empty() && ch->specials.z_cord == 0 && other->specials.z_cord == 0);
+    pc_only_data extra_pc = {};
+    P_char extra = player(&extra_pc, "Extra");
+    char_to_room(extra, ch->in_room, -1);
+    link_char(extra, other, LNK_RIDING);
+    command(CMD_GIVE, "ticket carrier");
+    assert(ch->carrying == ticket && !GET_MOUNT(ch) && GET_MOUNT(extra) == other);
+    assert(GET_MONEY(ch) == boarding_money && scheduled.empty());
+    unlink_char(extra, other, LNK_RIDING);
+    unlink_char(other, ch, LNK_RIDING);
+    assert(!flying_transport_cmd_give(recipient, recipient, give)); // NPC bodies cannot redeem
+    descriptor_data switched = {};
+    switched.original = ch;
+    recipient->desc = &switched;
+    assert(!flying_transport_cmd_give(recipient, recipient, give)); // even while a player controls it
+    recipient->desc = nullptr;
+    reject_flight_events = true;
+    command(CMD_GIVE, "ticket carrier");
+    assert(ch->carrying == ticket && !GET_MOUNT(ch) && scheduled.empty());
+    reject_flight_events = false;
+    ch->player.race = RACE_CENTAUR; // An unoccupied centaur may take a paid flight alone.
     command(CMD_GIVE, "ticket carrier");
     assert(!ch->carrying && GET_MOUNT(ch) == recipient);
+    assert(is_flight_carrier(recipient) && is_flight_passenger(ch));
+    assert(!is_flight_passenger(other) && !is_flight_carrier(ch));
+    assert(command(CMD_LOOK) == 0 && command(CMD_FLIGHTS) == 0);
+    assert(command(CMD_NORTH) == 1 && command(CMD_MOUNT, "other") == 1);
+    assert(ch->specials.z_cord == 10 && recipient->specials.z_cord == 10);
+    ch->player.race = RACE_DROW;
     assert(command(CMD_FLIGHTS) == 0); // proc lets the interpreter run the anywhere command
     do_flights(ch, nullptr, CMD_FLIGHTS);
     assert(output.find("Quietus") != std::string::npos && awards == 2);
@@ -372,24 +407,94 @@ int main() {
     output.clear();
     do_flights(ch, nullptr, CMD_FLIGHTS);
     assert(output.find("distance unavailable") != std::string::npos);
+    // Each interrupted trip must return to service and sell the next trip.
+    pc.learned_flight_stops = 6 | (uint64_t{1} << 4);
+    ch->specials.position = STAT_NORMAL;
+    ch->player.race = RACE_DROW;
+    GET_COPPER(ch) = 1000000;
+    for (int interruption = 0; interruption < 5; ++interruption) {
+        visit(2);
+        command(CMD_LIST);
+        command(CMD_BUY, "2"); // A two-edge route: unlink before reaching the destination.
+        assert(ch->carrying);
+        command(CMD_GIVE, "ticket carrier");
+        assert(GET_MOUNT(ch) == recipient);
+        // Outbound continuation must not retain an extraction-sensitive victim.
+        assert(scheduled.at(recipient).rider == nullptr);
+        run_event(recipient);
+        const int interrupted_room = recipient->in_room;
+        assert(interrupted_room != 2);
+        if (interruption == 0) {
+            unlink_char(ch, recipient, LNK_RIDING); // still co-located
+        } else if (interruption == 1) {
+            unlink_char(ch, recipient, LNK_RIDING);
+            char_from_room(ch);
+            char_to_room(ch, 4, -1);
+        } else if (interruption == 2) {
+            // A separately relocated passenger must not be pulled back home.
+            char_from_room(ch);
+            ch->in_room = 4;
+            ch->next_in_room = rooms[4].people;
+            rooms[4].people = ch;
+        } else if (interruption == 3) {
+            TRANSPORT_STEP(recipient) = 999999;
+        } else {
+            // Wrong position with otherwise valid progress cannot resume the route.
+            unlink_char(ch, recipient, LNK_RIDING);
+            char_from_room(recipient);
+            char_to_room(recipient, 6, -1);
+        }
+        if (interruption == 0) {
+            run_event(recipient);
+            assert(recipient->in_room == 2); // Return immediately, never advance alone.
+        }
+        int callbacks = 0;
+        while (scheduled.count(recipient)) {
+            assert(++callbacks < 40);
+            assert(scheduled.at(recipient).rider == nullptr);
+            run_event(recipient);
+        }
+        assert(recipient->in_room == 2 && recipient->specials.z_cord == 0);
+        assert(TRANSPORT_STATE(recipient) == TRANSPORT_STATE_WAITING);
+        assert(TRANSPORT_ROUTE(recipient) == -1 && TRANSPORT_STEP(recipient) == 0);
+        assert(!GET_MOUNT(ch) && !GET_RIDER(recipient));
+        if (interruption == 1 || interruption == 2) assert(ch->in_room == 4);
+    }
+    // Successful travel still works after all interruptions.
+    visit(2);
+    command(CMD_BUY, "1");
+    command(CMD_GIVE, "ticket carrier");
+    while (scheduled.count(recipient)) run_event(recipient);
+    assert(ch->in_room == 1 && ch->specials.z_cord == 0);
+    assert(recipient->in_room == 2 && recipient->specials.z_cord == 0);
+    // Rejected continuation must land the carrier rather than abandon its rider.
+    visit(2);
+    command(CMD_BUY, "1");
+    command(CMD_GIVE, "ticket carrier");
+    reject_flight_events = true;
+    run_event(recipient);
+    reject_flight_events = false;
+    assert(recipient->in_room == 2 && ch->in_room == 2 && scheduled.empty());
+    assert(!GET_MOUNT(ch) && ch->specials.z_cord == 0 && recipient->specials.z_cord == 0);
     clear_world();
-    puts("flight catalog, paths, discoveries, fares, commands, tickets and epic exclusions passed");
+    puts("flight catalog, paths, discoveries, fares, commands, tickets and interruption recovery passed");
 }
 '''
 utility = (ROOT / 'src/core/utility.c').read_text()
 map_lookup = utility[utility.index('int maproom_of_zone(int zone_num)'):utility.index('/* real rooms only! */')]
 CASES = CASES.replace('int maproom_of_zone(int) { return NOWHERE; }', map_lookup)
 base = '#include <bit>\n' + base
-build = ROOT / 'bin/tests'
-build.mkdir(parents=True, exist_ok=True)
-with tempfile.TemporaryDirectory(prefix='flight-network-', dir=build) as temporary:
-    source = Path(temporary) / 'harness.cpp'
-    source.write_text(base + CASES)
-    binary = Path(temporary) / 'harness'
-    subprocess.run(['g++', '-std=c++20', '-g', '-Wall', '-Wextra', '-Werror',
-                    '-fsanitize=address,undefined', '-fno-omit-frame-pointer', '-fno-pie', '-no-pie',
-                    '-I', str(ROOT / 'src'), '-I/usr/include/mysql', '-I/usr/include/libxml2',
-                    str(source), str(ROOT / 'src/world/world_singletons.c'),
-                    '-lbsd', str(HARNESS_STUBS), '-o', str(binary)], check=True)
-    subprocess.run([str(binary)], check=True,
-                   env={**os.environ, 'ASAN_OPTIONS': 'detect_leaks=1:halt_on_error=1'})
+if __name__ == '__main__':
+    build = ROOT / 'bin/tests'
+    build.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(prefix='flight-network-', dir=build) as temporary:
+        source = Path(temporary) / 'harness.cpp'
+        source.write_text(base + CASES)
+        binary = Path(temporary) / 'harness'
+        subprocess.run(['g++', '-std=c++20', '-g', '-Wall', '-Wextra', '-Werror',
+                        '-fsanitize=address,undefined', '-fno-omit-frame-pointer', '-fno-pie', '-no-pie',
+                        '-I', str(ROOT / 'src'), '-I/usr/include/mysql', '-I/usr/include/libxml2',
+                        str(source), str(ROOT / 'src/world/world_singletons.c'),
+                        '-lbsd', str(HARNESS_STUBS), '-o', str(binary)], check=True)
+        subprocess.run([str(binary)], check=True,
+                       env={**os.environ, 'ASAN_OPTIONS': 'detect_leaks=1:halt_on_error=1'})

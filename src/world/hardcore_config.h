@@ -42,7 +42,6 @@ struct hardcore_config
 	int score_epic_points;
 	int score_multiclass_multiplier;
 	int score_killer_bonus;
-	int score_death_penalty_points;
 	int score_invalid_frag_threshold;
 	bool disable_in_ctf;
 	bool disable_in_chaos;

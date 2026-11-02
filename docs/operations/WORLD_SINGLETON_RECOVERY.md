@@ -81,3 +81,41 @@ recovery experiment.
 
 A full-world boot or copyover applies reconciliation and logs the number of extra
 keepers and dragons removed.
+
+Runtime flight continuation belongs to the carrier alone, including on occupied
+trips. Passenger extraction therefore removes the riding link without cancelling
+the carrier's next movement. Each callback checks the carrier's actual route
+position and current rider; an interrupted trip returns empty, while invalid
+progress lands the carrier at its configured pad. Separately relocated players
+are detached without being pulled back home. Arrival detaches and grounds the
+delivered passenger unconditionally, even where the ordinary dismount command
+would refuse. The carrier returns at flight altitude and lands at its own pad.
+
+A flight accepts one player who has neither a mount nor a rider. Ticket refusal
+preserves the ticket and wallet. Ordinary mounting cannot attach a rider to a
+service carrier or its active passenger. Legacy nested passengers found during
+recovery are all detached and grounded before landing at home. Entering combat
+without mounted-combat skill does not dismount a paid passenger; ordinary ground
+mounts and existing attack/altitude rules keep their normal behavior.
+
+`python3 tests/async/test_flight_transport_runtime.py` uses production transport,
+riding-link functions, event scheduling and cancellation with isolated room I/O.
+It covers passenger link teardown/freeing between and during movement, owner
+extraction during occupied and empty movement, generic victim cancellation, and
+return to service. It complements the full-server flight journey; its simulated
+room entry and character allocation do not prove a production attack sequence.
+
+Flight relocation checks character identity and liveness after both departure and
+entry callbacks, including recursively moved riding companions. A refused or
+redirected home placement keeps a single return callback pending; the carrier
+becomes WAITING and clears its progress only after confirmed placement at home.
+Duplicate retirement revalidates both carriers after landing before transferring
+items or extracting the extra body. No new event type or recovery snapshot field
+is needed.
+
+`test_flight_network_journey.py` qualifies real commands and persistence on
+disposable full worlds. `--interruptions-only` uses two learned stops for NPC
+attack, outbound interruption, carrier reuse and reconnect checks;
+`--reconnect-only` selects just the socket case. A ground NPC's melee attempt is
+rejected against an elevated passenger; legal same-altitude combat retains the
+paid ride. These checks do not identify the original reported attacker.

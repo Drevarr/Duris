@@ -34,7 +34,7 @@ def main():
 #include <algorithm>
 struct character;
 using P_char = character*;
-struct descriptor { int connected = 0, last_group_update = 0, term_type = 0, gmcp_enabled = 1; };
+struct descriptor { bool msp_group_manual = false; int connected = 0, last_group_update = 0, term_type = 0, gmcp_enabled = 1; };
 struct group_list { P_char ch; group_list *next; };
 struct character {
     int in_room = 1;

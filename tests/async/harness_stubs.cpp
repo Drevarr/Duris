@@ -51,6 +51,11 @@ HARNESS_STUB bool save_account_character_departure(P_char)
 {
 	return true;
 }
+// Extraction fixtures without locker authority have no departure to refuse.
+HARNESS_STUB bool locker_leave_for_extraction(P_char)
+{
+	return true;
+}
 // Ordinary NPC fixtures use their own race. Tutorial profile/parity coverage
 // links the real lookup, including the full-world read_mobile_probe comparison.
 HARNESS_STUB int tutorial_mobile_mechanics_race(char_data *ch)
@@ -143,6 +148,25 @@ HARNESS_STUB player_save_submit_result persistence_writer_submit(persistence_job
 	return player_save_submit_result::unavailable;
 }
 HARNESS_STUB void gmcp_char_vitals(P_char) {}
+HARNESS_STUB void gmcp_items_changed(P_char) {}
+HARNESS_STUB void gmcp_item_changed(P_obj) {}
+HARNESS_STUB void gmcp_item_edit_begin(P_desc, P_obj) {}
+HARNESS_STUB void gmcp_item_edit_done(P_desc) {}
+HARNESS_STUB void gmcp_item_edit_extracted(P_obj) {}
+HARNESS_STUB bool gmcp_item_selector_matches(P_char, P_obj, const char *)
+{
+	return false;
+}
+HARNESS_STUB void gmcp_combat_damage(P_char, P_char, int, const damage_messages *) {}
+HARNESS_STUB void gmcp_session_update(P_desc) {}
+HARNESS_STUB void gmcp_preferences_changed(P_desc) {}
+HARNESS_STUB void gmcp_session_restored(P_desc) {}
+HARNESS_STUB bool gmcp_handle_control_json(P_desc, const struct cJSON *, const char *, size_t,
+					   const char *)
+{
+	return false;
+}
+
 HARNESS_STUB void debug(const char *, ...) {}
 HARNESS_STUB void wizlog(int, const char *, ...) {}
 HARNESS_STUB void statuslog(int, const char *, ...) {}
@@ -299,3 +323,29 @@ HARNESS_STUB bool shop_trade_transaction_player_busy(P_char)
 {
 	return false;
 }
+
+HARNESS_STUB int set_obj_condition(P_obj object, int condition)
+{
+	object->condition = condition;
+	gmcp_item_changed(object);
+	return object->condition;
+}
+HARNESS_STUB void set_obj_extra_flags(P_obj object, unsigned flags)
+{
+	object->extra_flags = flags;
+	gmcp_item_changed(object);
+}
+HARNESS_STUB void set_obj_extra2_flags(P_obj object, unsigned flags)
+{
+	object->extra2_flags = flags;
+	gmcp_item_changed(object);
+}
+
+HARNESS_STUB bool obj_name_matches(P_char, P_obj object, const char *name)
+{
+	return object && name && strncasecmp(name, "@i:", 3) && isname(name, object->name);
+}
+
+void __attribute__((weak)) update_group_vitals(P_char) {}
+// Non-group fixtures do not deliver group observer notifications.
+HARNESS_STUB void update_groupies(P_char, bool) {}

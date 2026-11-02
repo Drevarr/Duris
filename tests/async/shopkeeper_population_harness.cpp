@@ -6,6 +6,9 @@
 #include <cstring>
 #include <string>
 #include <vector>
+#include <unordered_set>
+#include <cerrno>
+#include <cstdint>
 
 #include "economy/shopkeeper_save_policy.h"
 
@@ -24,6 +27,7 @@ struct object_affect
 };
 struct Object
 {
+	unsigned long obj_uid = 0;
 	int R_num = 0, weight = 0, cost = 0, value[8] = {}, str_mask = 0, loc_p = 0, wear_flags = 0,
 	    type = 0, material = 0, db_item_id = 0;
 	unsigned char runtime_flags = 0;
@@ -221,6 +225,8 @@ P_obj read_object(int rnum, int)
 	if (rnum == read_object_fail_rnum)
 		return nullptr;
 	P_obj obj = new Object;
+	static unsigned long next_uid = 1000000;
+	obj->obj_uid = ++next_uid;
 	obj->R_num = rnum;
 	objects.push_back(obj);
 	return obj;
@@ -235,6 +241,26 @@ void obj_to_char(P_obj obj, P_char ch)
 	ch->carrying = obj;
 	obj->loc_p = LOC_CARRIED;
 	obj->loc.carrying = ch;
+}
+void obj_from_char(P_obj obj)
+{
+	P_obj *link = &obj->loc.carrying->carrying;
+	while (*link != obj)
+	{
+		assert(*link);
+		link = &(*link)->next_content;
+	}
+	*link = obj->next_content;
+	obj->next_content = nullptr;
+	obj->loc_p = 0;
+	obj->loc.carrying = nullptr;
+}
+int shop_producing(P_obj obj, int shop)
+{
+	for (int index = 0; index < shop_index[shop].number_items_produced; ++index)
+		if (shop_index[shop].producing[index] == obj->R_num)
+			return true;
+	return false;
 }
 void extract_obj(P_obj obj, int)
 {
@@ -277,11 +303,27 @@ bool sql_load_item_extra_descr_from_table(int, P_obj, const char *)
 {
 	return true;
 }
+std::unordered_set<unsigned long> foreign_uids;
+uint64_t matching_shop_owner = 0;
+uint64_t item_shopkeeper_owner_id(uint32_t shop)
+{
+	return uint64_t(shop) + 1;
+}
+bool sql_persistence_item_owner_matches_identity(unsigned long long uid, const char *type,
+						 unsigned long long owner,
+						 unsigned long long context, const char *)
+{
+	assert(!strcmp(type, "shopkeeper") && owner > 0 && context == 0);
+	if (matching_shop_owner && uid == 1001)
+		return owner == matching_shop_owner;
+	return !foreign_uids.count(uid);
+}
 
 // Fake MySQL results own strings until mysql_free_result(), as the real API does.
 using Rows = std::vector<std::vector<std::string>>;
 Rows saved_keepers, saved_items, saved_affects, saved_item_affects;
 bool fail_affects_query = false;
+bool legacy_resale = false, fail_owner_query = false;
 struct MYSQL_RES
 {
 	Rows rows;
@@ -292,10 +334,14 @@ using MYSQL_ROW = char **;
 bool DB = true;
 MYSQL_RES *db_query(const char *query, ...)
 {
+	if (fail_owner_query && strstr(query, "FROM item_current_owner own"))
+		return nullptr;
 	if (fail_affects_query && strstr(query, "FROM shopkeeper_affects sa"))
 		return nullptr;
 	Rows rows;
-	if (strstr(query, "SELECT shop_id"))
+	if (strstr(query, "FROM item_current_owner own"))
+		rows = legacy_resale ? Rows{ { "1" } } : Rows{};
+	else if (strstr(query, "SELECT shop_id"))
 		rows = saved_keepers;
 	else if (strstr(query, "FROM shopkeeper_item_affects sia"))
 		rows = saved_item_affects;
@@ -337,6 +383,8 @@ bool is_replicated_shop(int shop)
 	return false;
 }
 
+bool sql_restore_shopkeepers(bool refill = false);
+// PRODUCTION_RESTOCK
 // PRODUCTION_RESTORE
 // PRODUCTION_HELPER
 
@@ -379,8 +427,9 @@ P_char spawn(int room, int rnum = 0)
 }
 void add_item(int keeper, int vnum, int slot = 0)
 {
-	std::vector<std::string> row(29, "0");
+	std::vector<std::string> row(30, "0");
 	row[0] = std::to_string(saved_items.size() + 1);
+	row[29] = std::to_string(1000 + saved_items.size() + 1);
 	row[1] = std::to_string(keeper);
 	row[2] = std::to_string(vnum);
 	row[3] = std::to_string(slot);
@@ -459,11 +508,86 @@ int main(int argc, char **argv)
 		command.arg3 = NOWHERE;
 		reset_mobile(1, false); // Existing invalid-room handling still rejects placement.
 	}
-	else if (scenario == "shared")
+	else if (scenario == "refill" || scenario == "unsold" || scenario == "excess" ||
+		 scenario == "recovery" || scenario == "refill-failure")
 	{
+		P_char fresh = spawn(0);
+		bind_shopkeeper(fresh, 0);
+		P_obj bag = read_object(83185, REAL);
+		bag->contains = read_object(91, REAL);
+		bag->contains->loc_p = LOC_INSIDE;
+		bag->contains->loc.inside = bag;
+		obj_to_char(bag, fresh);
+		obj_to_char(read_object(3102, REAL), fresh);
+		obj_to_char(read_object(3102, REAL), fresh);
+		obj_to_char(read_object(80, REAL), fresh);
+		saved_keepers = { { "0", "10", "100", "200" } };
+		add_item(10, 90); // Unrelated player-sold goods.
+		add_item(10, 3102); // Partially sold stock.
+		add_item(10, 83185, 1); // Equipment never counts as sale stock.
+		if (scenario == "unsold" || scenario == "excess")
+			add_item(10, 83185);
+		if (scenario == "unsold")
+		{
+			add_item(10, 92);
+			saved_items.back()[20] = "4";
+			saved_items.back()[5] = "777";
+		}
+		if (scenario == "excess")
+			add_item(10, 83185);
+		shop_index[0].number_items_produced = 1;
+		shop_index[0].producing[0] = 80;
+		if (scenario == "refill-failure")
+		{
+			read_object_fail_rnum = 80;
+			assert(!sql_restore_shopkeepers(true));
+			assert(world[0].people == fresh && !fresh->next_in_room);
+			assert(has_item(fresh, 83185) && has_item(fresh, 3102));
+		}
+		else
+		{
+			assert(sql_restore_shopkeepers(scenario != "recovery"));
+			P_char keeper = world[0].people;
+			int bags = 0, potions = 0;
+			bool retained_bag = false;
+			for (P_obj item = keeper->carrying; item; item = item->next_content)
+			{
+				bags += item->R_num == 83185;
+				potions += item->R_num == 3102;
+				if (scenario == "unsold" && item->R_num == 83185)
+					assert(item->contains && item->contains->R_num == 92 &&
+					       item->contains->cost == 777);
+				if (item == bag)
+				{
+					retained_bag = true;
+					assert(item->contains && item->contains->R_num == 91);
+					assert(item->contains->loc.inside == item);
+				}
+			}
+			assert(bags == (scenario == "recovery" ? 0 : scenario == "excess" ? 2 : 1));
+			assert(potions == (scenario == "recovery" ? 1 : 2));
+			assert(retained_bag == (scenario == "refill"));
+			assert(has_item(keeper, 90) && has_item(keeper, 80));
+			assert(keeper->equipment[0] && keeper->equipment[0]->R_num == 83185);
+			assert(!keeper->next_in_room);
+			reset_mobile(0, true); // An ordinary reset cannot add any more stock.
+		}
+	}
+	else if (scenario == "refill-new")
+	{
+		P_char fresh = spawn(0);
+		bind_shopkeeper(fresh, 0);
+		obj_to_char(read_object(90, REAL), fresh);
+		assert(sql_restore_shopkeepers(true));
+		assert(world[0].people == fresh && !fresh->next_in_room && has_item(fresh, 90));
+	}
+	else if (scenario == "shared" || scenario == "refill-shared")
+	{
+		P_char ambiguous = spawn(0);
+		obj_to_char(read_object(90, REAL), ambiguous);
 		spawn(0);
-		spawn(0);
-		spawn(1);
+		P_char bound = spawn(1);
+		obj_to_char(read_object(91, REAL), bound);
 		P_char elsewhere = spawn(2);
 		P_char player = spawn(0);
 		player->npc = false;
@@ -476,15 +600,77 @@ int main(int argc, char **argv)
 		shop_index[0].number_items_produced = shop_index[1].number_items_produced = 1;
 		shop_index[0].producing[0] = 80;
 		shop_index[1].producing[0] = 81;
-		assert(sql_restore_shopkeepers());
+		assert(sql_restore_shopkeepers(scenario == "refill-shared"));
 		P_char first = world[0].people, second = world[1].people;
 		assert(first->next_in_room == player && player->next_in_room);
 		assert(!second->next_in_room && world[2].people == elsewhere);
 		assert(has_item(first, 70) && has_item(first, 80) && !has_item(first, 81));
 		assert(has_item(second, 71) && has_item(second, 81) && !has_item(second, 80));
 		assert(second->equipment[0]->R_num == 72 && second->affects == 1);
+		assert(has_item(ambiguous, 90) && !has_item(first, 90));
+		assert(has_item(second, 91) == (scenario == "refill-shared"));
 		assert(shop_index[0].dirty && shop_index[1].dirty);
 		assert(mob_index[0].number == 6);
+	}
+	else if (scenario == "stale-root" || scenario == "stale-tree" || scenario == "stale-child")
+	{
+		saved_keepers = { { "0", "10", "100", "200" } };
+		add_item(10, 70);
+		add_item(10, 71);
+		saved_items[1][20] = "1";
+		add_item(10, 72, 1);
+		foreign_uids.insert(scenario == "stale-child" ? 1002 : 1001);
+		if (scenario == "stale-tree")
+			foreign_uids.insert(1002);
+		assert(sql_restore_shopkeepers());
+		P_char keeper = world[0].people;
+		assert(keeper && keeper->equipment[0]->obj_uid == 1003);
+		if (scenario == "stale-tree")
+			assert(!keeper->carrying);
+		else if (scenario == "stale-root")
+			assert(keeper->carrying->obj_uid == 1002 && !keeper->carrying->contains);
+		else
+			assert(keeper->carrying->obj_uid == 1001 && !keeper->carrying->contains);
+	}
+	else if (scenario == "stale-duplicate")
+	{
+		saved_keepers = { { "0", "10", "100", "200" }, { "1", "11", "100", "201" } };
+		add_item(10, 70);
+		add_item(11, 70);
+		saved_items[1][29] = saved_items[0][29];
+		matching_shop_owner = 1;
+		assert(sql_restore_shopkeepers());
+		assert(world[0].people->carrying->obj_uid == 1001 && !world[1].people->carrying);
+	}
+	else if (scenario == "resale-legacy" || scenario == "ownership-failure")
+	{
+		saved_keepers = { { "0", "10", "100", "200" } };
+		add_item(10, 70);
+		foreign_uids.insert(1001);
+		legacy_resale = scenario == "resale-legacy";
+		fail_owner_query = !legacy_resale;
+		assert(sql_restore_shopkeepers() == legacy_resale);
+		if (legacy_resale)
+			assert(world[0].people->carrying->obj_uid == 1001);
+		else
+			assert(!character_list && objects.empty() && !world[0].people);
+	}
+	else if (scenario == "uid-legacy")
+	{
+		saved_keepers = { { "0", "10", "100", "200" } };
+		add_item(10, 70);
+		saved_items[0][29].clear();
+		assert(sql_restore_shopkeepers());
+		assert(world[0].people->carrying->obj_uid != 0);
+	}
+	else if (scenario == "uid-duplicate" || scenario == "uid-invalid")
+	{
+		saved_keepers = { { "0", "10", "100", "200" } };
+		add_item(10, 70);
+		add_item(10, 71);
+		saved_items[1][29] = scenario == "uid-duplicate" ? saved_items[0][29] : "0";
+		assert(!sql_restore_shopkeepers());
+		assert(!character_list && objects.empty() && !world[0].people);
 	}
 	else if (scenario == "duplicate")
 	{
@@ -519,6 +705,9 @@ int main(int argc, char **argv)
 	}
 	else
 		assert(false);
+	for (P_obj item : objects)
+		if (item->db_item_id && !saved_items[item->db_item_id - 1][29].empty())
+			assert(item->obj_uid == std::stoul(saved_items[item->db_item_id - 1][29]));
 	while (character_list)
 		extract_char(character_list);
 	for (P_obj obj : objects)

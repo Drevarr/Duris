@@ -12868,6 +12868,33 @@ attack.
 See also: CAMP, INNS, RENT
 
 #
+"RACE" (Command)
+===========================================================================
+Syntax: race
+        race list
+        race info <race name>
+        race innates <race name>
+
+Browse the races of Duris. The roster separates Good, Evil and Neutral races
+with distinct colors. Neutral races choose their racewar side during creation.
+An asterisk marks a race disabled in character creation. Special and legacy
+races appear separately, with their normal restrictions or descent paths.
+
+Race info shows the race's description, racewar side, creation availability,
+valid classes and their available specializations, racial stat factors and
+combat/spell speed. Its class list uses the current character creation
+restrictions, including enabled classes.
+
+Race innates lists only that race's abilities, including abilities gained at
+later levels. An asterisk marks a passive ability. Use help <ability name> for
+details about an innate, or help <race name> for more lore and racial traits.
+
+Multiword race names work without quotes, such as race info mountain dwarf.
+Unique abbreviations work; ambiguous names ask you to be more specific.
+===========================================================================
+See also: RACES, INNATE, CLASSES
+
+#
 RACES (General Information)
 ===========================================================================
 Your race is defined by the path you choose to take in the Land of Duris.
@@ -15093,16 +15120,48 @@ See also: BASH
 
 #
 SKILLS (General Information)
-===========================================================================
-Skills are methods of survival or battle tactics and techniques that are 
-learned by classes through use over time. 
+============================================================
+Use skills to see your own skill proficiency and future unlock levels.
+Staff also see their own skills when no argument is supplied.
 
-Your proficiency at a skill will increase over time if you apply the skill
-as you adventure.
+==Syntax==
 
-NOTE: Type "skill" to see a list of your character's skills are current
-      proficiency at them.  
-===========================================================================
+skills
+skills <class or specialization>
+skills info <skill name>
+
+Examples: skills warrior, skills guardian, skills dark knight,
+and skills info mounted combat. Full names and unique abbreviations work.
+
+Class and specialization lists show unlock levels and proficiency caps.
+A specialization list includes inherited skills and its changes, and names
+skills lost from the base class. Assassin and Thief select the current
+Rogue specializations. These catalogs are references; they do not determine
+whether your race can choose that class or specialization.
+
+Skill information shows current class/spec definitions, your own progress,
+and existing helpfile details. Unlisted specializations inherit base-class
+values. A proficiency rating is not a guaranteed chance of success.
+Epic skills use their separate acquisition rules. Instruments and bard
+songs are included where applicable; spells use the spell commands.
+
+==Staff inspection==
+
+skills <target>
+skills target <name>
+skills levels
+
+Staff can inspect a visible character. Use the explicit target form when a
+character's name matches a class, specialization, or command keyword.
+The levels table shows base-class unlock levels in grouped columns.
+The obsolete skills reset option has been removed.
+
+==See also==
+
+* Practice
+* Teachers
+* Specialization
+* Race
 
 #
 
@@ -16509,8 +16568,8 @@ properties.  Certain songs are only effective on certain instruments.
                 piper: dirge of the ghosts (Horn)
                 song of dragons (Horn)
                 piper: draconic crescendo (Horn)
-36th level:     song of healing (Lyre)
-                piper: song of the unholy (Lyre)
+                song of healing (Lyre)
+36th level:     piper: song of the unholy (Lyre)
                 song of harming (Flute)
                 piper: song of decay (Lyre)
 41st level:     song of storms (Drums)
@@ -18001,13 +18060,15 @@ See also: "ETHEREAL GROUNDS"
 #
 TERMINAL (General Information)
 ===========================================================================
-Syntax:  toggle terminal
+Syntax:  toggle terminal [ansi|gen|msp [quiet]]
 
-This toggle lets you select if you want ANSI mode, which shows all the
-nifty colors and ANSI art we've added to the mud descriptions, objects
-and player lists.  Of course, your communications program must support
-this mode in order for it to work properly.  GEN mode is plain old
-black-and-white.
+ANSI shows colors and ANSI art. GEN is plain text. MSP adds tags around
+prompts, maps and group displays for clients that understand them.
+
+Use toggle terminal msp quiet to keep MSP prompts and maps while displaying
+group status only when you type group. Use toggle terminal msp to restore
+automatic group updates. Clients that use those updates for a group panel
+should keep ordinary MSP mode. Quiet mode lasts for this connection.
 ===========================================================================
 
 #
@@ -18357,7 +18418,8 @@ Spaces in these help spellings are accepted: battle alert, group needed,
 no locate, no level, save notify, ship map, show titles, and hint channel.
 Their single-word commands remain available.
 
-Terminal uses ansi, gen, or msp. Screensize uses 12-48, default, off, or 0;
+Terminal uses ansi, gen, msp, or msp quiet (manual group display).
+Screensize uses 12-48, default, off, or 0;
 no value resets the default. Color has its own channel and motion settings.
 Automatic fleeing (wimpy), smartprompt and retired specialization placeholders
 are unavailable. Use oldsmartprompt for prompt timing. Divine Boons apply
@@ -25952,6 +26014,11 @@ invisibility may be needed. Handing a ticket to someone else does not teach
 its destination or bypass
 that character's access rules. Old route tickets may need to be replaced.
 
+A flight takes one ticketed passenger. You cannot mount the carrier or
+its passenger directly, or board with another rider on your back.
+Entering combat does not require Mounted Combat to keep this paid ride.
+If the passenger leaves or is lost, the carrier returns home on its own.
+
 Discovery experience grows with the number of ordinary stops you have found:
 base reward = your current EXP-gain cap * discovery count / 27.
 Normal racial, rested, well-rested and difficulty modifiers and EXP limits
@@ -27439,13 +27506,14 @@ Syntax: leaderboard
 
 The main leaderboard ranks the top 20 mortal characters (levels 1-56).
 Staff characters are excluded. It shows rank, level, score, player frags,
-ship reputation, total earned epics and deaths. Ties sort by name.
+ship reputation and total earned epics. Ties sort by name.
 
 With the default scoring settings, the displayed score is:
   10 per level + experience / 1,000,000 + 100 per full player frag
-  + 1 per ship-reputation point + 1 per earned epic - 0.25 per death.
+  + 1 per ship-reputation point + 1 per earned epic.
 Experience is counted in complete blocks of 10,000 before scaling the
 score. Scores use the latest saved character and ship data.
+Recorded deaths do not affect leaderboard scores.
 
 Player frags are displayed as full frags, including hundredths. Negative
 frags lower your score. Invalid stored frag totals contribute zero without
@@ -27545,3 +27613,141 @@ Empty containers before donating them. This command gives equipment
 to the well; it does not make a real-money donation.
 
 See also: GET, EQUIPMENT
+
+#
+Firemagus
+Read 'help fire magus' for the Conjurer fire specialization, its
+requirements, skills, spells and innate abilities.
+#
+Starter Kit
+Read 'help newbie kit' for your starting equipment and the
+'toggle newbie' option. New characters receive a race- and
+class-appropriate kit when entering the game.
+Use 'inventory' and 'equipment' to see what you carry and wear.
+#
+Conjurer Spells
+Read 'help conjurer skills' for the Conjurer spell-circle and skill
+progression. Read 'help conjurer' for class and specialization choices.
+A listed spell still needs to be learned and prepared as appropriate;
+read 'help scribe', 'help memorize' and 'help cast' for those commands.
+#
+Rifts
+Several different abilities use the word rift. Read 'help ethereal rift',
+'help cosmic rift' or 'help shadow gate' for their separate rules.
+For world locations, read 'help tharnadia' or ask fellow players.
+These spell guides do not describe the Tharnadia Rift area's encounters.
+#
+Anti-Paladin Spells
+Read 'help anti-paladin skills' for the class's spell-circle and skill
+progression. Specializations can add or remove grants; read
+'help anti-paladin' for the class and its specialization choices.
+#
+Grey-Elf
+Read 'help grey elf' for the race's traits, abilities and class choices.
+#
+Tavern
+Bartenders offer ASK and KILL tasks. Read 'help quest' for buying a task,
+sharing it, rewards, maps and abandonment. Use 'quest' to view your task.
+#
+Burrow
+Syntax: innate burrow
+
+Halflings gain this active racial innate at level 1. It hides you by
+blending into the ground. It does not move you to another room or create
+an underground passage. Being hidden does not make you undetectable.
+You cannot activate it again while already hidden or during its cooldown.
+Read 'help hide' for hiding and 'help innate' for using racial abilities.
+#
+Racial
+Read 'help innate' for racial and class abilities. Type 'innates' to see
+your own abilities, and read 'help <race name>' for that race's traits.
+The race browser also offers 'race innates <race name>' for racial
+abilities and unlock levels, and 'race info <race name>' for its profile.
+#
+Epic Bonus
+Syntax: epic bonus
+        epic bonus <cargo|shop|exp|epic|health|moves|none>
+
+Choose one bonus supported by recently earned epics. With no choice,
+'epic bonus' shows your current bonus and the available maximums.
+Every selection resets the earning start time, even if you select the
+same bonus again. Earlier earnings do not build the new selection.
+Bottle epics do not contribute.
+
+The current settings use a 5-day window of daily epic earnings, after
+your selection, up to 10,000 epics. The bonus grows proportionally toward
+its maximum as you earn epics, and falls as those earnings expire.
+'none' removes your selection. Read 'help epic bonus cargo' for cargo.
+#
+Epic Bonus Cargo
+Syntax: epic bonus cargo
+
+Select the Cargo Discount epic bonus. It reduces eligible cargo purchase
+prices by up to 40% at the current settings. The discount grows with
+eligible recent epic earnings; selecting it resets the earning start
+time. It does not increase a ship's cargo capacity.
+Use 'epic bonus' to see your current bonus and 'help epic bonus' for
+the earning window, other choices and reset rules.
+#
+Torrhan
+Torrhan is a city and a shipbuilding port. Read 'help ships' for buying
+and using ships, and 'help ferries' for scheduled passenger transport.
+This help is a pointer to travel guides, rather than a city walkthrough.
+#
+List Weapons
+At a shipwright, 'list weapons' lists ship weapons and their prices,
+weight, ammunition, range and damage. Read 'help ship weapons' for the
+full guide. For personal equipment, read 'help weapons'.
+#
+Stoneskin
+Read 'help stone skin' for the spell, Earth Magus layers and Stone innate.
+#
+SV Spell
+Spell save is your saving throw against spell attacks. Read
+'help saving throw' for the saving-throw categories and how they work.
+#
+
+Spells (Command)
+============================================================
+Browse your spells, class spell circles, and individual spell details.
+
+==Syntax==
+
+spells
+spells <class or specialization>
+spells info <spell name>
+
+Bare spells shows your own spells, including for staff. Spells are grouped by
+Circle and name; future circles are labeled. Your class, specialization,
+secondary class and current maximum Circle describe whose access is shown.
+Book markers check inventory, hands and belt only for spellbook users.
+Circle access and book presence do not mean a spell is prepared or ready to cast.
+
+Use spells cleric for base grants or spells fire magus for a complete effective
+specialization catalog, including inherited spells and changes. Lost base
+spells are listed separately. Bard songs and instruments remain in skills.
+Catalogs are reference information, independent of your race, class and level.
+
+Use spells info fireball for registered aggression, class/spec circles and
+changes, your personal access, and the existing helpfile. Live definitions
+supply circles; authored help explains casting syntax, effects and restrictions.
+Names accept case-insensitive full names and unique abbreviations, with spaces
+or hyphens. Ambiguous names list choices.
+
+==Staff==
+
+spells <target>
+spells target <name>
+spells all
+
+Staff can inspect a visible character. Class/spec names take precedence;
+use spells target <name> for collisions with catalogs or reserved words.
+Spells all lists spell IDs, aggression and base-class circles, with a class-code
+legend. Use info or a specialization catalog for specialization access.
+
+==See also==
+
+Skills, Race, Classes, Specialization, Multiclass, Spell circle, Cast,
+Memorize, Pray, Scribe
+
+#

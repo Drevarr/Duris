@@ -6,6 +6,7 @@
 #include "core/prototypes.h"
 #include <cmath>
 #include "core/structs.h"
+#include "economy/shopkeeper_restock.h"
 #include "net/comm.h"
 #include "net/unicode.h"
 #include "net/output_preference_codec.h"
@@ -228,7 +229,7 @@ bool sql_save_shopkeeper(P_char ch, int shop_nr)
 {
 	return false;
 }
-bool sql_restore_shopkeepers(void)
+bool sql_restore_shopkeepers(bool /*refill*/)
 {
 	return true;
 }
@@ -3150,6 +3151,26 @@ struct all_items_temp
 	struct all_items_temp *next;
 };
 
+static bool shopkeeper_saved_item_owned(unsigned long uid, int shop, bool *owned)
+{
+	// Older SQL shop saves did not claim resale stock. Accept that legacy claim
+	// only when the seller no longer has the item in its saved inventory.
+	MYSQL_RES *result = db_query(
+		"SELECT 1 FROM item_current_owner own WHERE own.item_uid=%lu "
+		"AND own.owner_type=1 AND own.state=1 AND NOT EXISTS "
+		"(SELECT 1 FROM player_items p WHERE p.pid=own.owner_id AND p.obj_uid=own.item_uid)",
+		uid);
+	if (!result)
+		return false;
+	const bool legacy_resale = mysql_fetch_row(result) != nullptr;
+	mysql_free_result(result);
+	*owned = legacy_resale ||
+		 sql_persistence_item_owner_matches_identity(uid, "shopkeeper",
+							     item_shopkeeper_owner_id(shop), 0,
+							     "sql_restore_shopkeepers");
+	return true;
+}
+
 void discard_shopkeeper_restore_stage(struct shopkeeper_temp *keepers,
 				      struct all_items_temp *all_items, bool items_attached)
 {
@@ -3198,7 +3219,7 @@ void discard_shopkeeper_restore_stage(struct shopkeeper_temp *keepers,
 	}
 }
 
-static bool sql_restore_shopkeeper_catalog(int only_shop, P_char *restored)
+static bool sql_restore_shopkeeper_catalog(int only_shop, P_char *restored, bool refill)
 {
 	if (!DB)
 		return false;
@@ -3344,7 +3365,7 @@ static bool sql_restore_shopkeeper_catalog(int only_shop, P_char *restored)
 		"SELECT si.id, si.shopkeeper_id, si.vnum, si.equip_slot, si.weight, si.cost, si.timer, "
 		"si.extra_flags, si.value0, si.value1, si.value2, si.value3, si.value4, si.value5, "
 		"si.value6, si.value7, si.name, si.short_descr, si.description, si.action_descr, si.container_id, "
-		"si.wear_flags, si.item_type, si.item_material, si.bitvector1, si.bitvector2, si.bitvector3, si.bitvector4, si.bitvector5 "
+		"si.wear_flags, si.item_type, si.item_material, si.bitvector1, si.bitvector2, si.bitvector3, si.bitvector4, si.bitvector5, si.obj_uid "
 		"FROM shopkeeper_items si "
 		"INNER JOIN shopkeepers s ON si.shopkeeper_id = s.id "
 		"WHERE (%d < 0 OR s.shop_id=%d) ORDER BY si.shopkeeper_id, si.id",
@@ -3390,6 +3411,21 @@ static bool sql_restore_shopkeeper_catalog(int only_shop, P_char *restored)
 			}
 
 			int equip_slot = atoi(row[3]);
+			unsigned long uid = obj->obj_uid;
+			if (row[29] && *row[29])
+			{
+				char *end = nullptr;
+				errno = 0;
+				uid = strtoul(row[29], &end, 10);
+				if (errno || !uid || row[29][0] < '1' || row[29][0] > '9' || *end)
+				{
+					extract_obj(obj);
+					mysql_free_result(result);
+					discard_shopkeeper_restore_stage(keepers, all_items, false);
+					return false;
+				}
+			}
+			obj->obj_uid = uid;
 			int container_id = row[20] ? atoi(row[20]) : 0;
 			if (equip_slot < 0 || equip_slot > MAX_WEAR || container_id < 0)
 			{
@@ -3603,9 +3639,49 @@ static bool sql_restore_shopkeeper_catalog(int only_shop, P_char *restored)
 			}
 		}
 	}
+	// As with player/locker loads, a later holder's claim supersedes stale rows.
+	// Validate the saved graph first, then lift retained children past stale parents.
+	for (struct all_items_temp *t = all_items; t; t = t->next)
+		for (struct shopkeeper_temp *k = keepers; k; k = k->next)
+			if (k->shopkeeper_id == t->shopkeeper_id)
+			{
+				bool owned = false;
+				if (!shopkeeper_saved_item_owned(t->obj->obj_uid, k->shop_nr,
+								 &owned))
+				{
+					discard_shopkeeper_restore_stage(keepers, all_items, false);
+					return false;
+				}
+				if (!owned)
+				{
+					extract_obj(t->obj, false);
+					t->obj = nullptr;
+				}
+				break;
+			}
+	std::unordered_set<unsigned long> restored_uids;
 	for (struct all_items_temp *t = all_items; t; t = t->next)
 	{
-		if (t->container_id <= 0)
+		if (!t->obj)
+			continue;
+		if (!restored_uids.insert(t->obj->obj_uid).second)
+		{
+			discard_shopkeeper_restore_stage(keepers, all_items, false);
+			return false;
+		}
+		while (t->container_id > 0)
+		{
+			struct all_items_temp *parent = all_items;
+			while (parent->item_id != t->container_id)
+				parent = parent->next;
+			if (parent->obj)
+				break;
+			t->container_id = parent->container_id;
+		}
+	}
+	for (struct all_items_temp *t = all_items; t; t = t->next)
+	{
+		if (!t->obj || t->container_id <= 0)
 			continue;
 		for (struct all_items_temp *p = all_items; p; p = p->next)
 			if (p->item_id == t->container_id)
@@ -3621,7 +3697,7 @@ static bool sql_restore_shopkeeper_catalog(int only_shop, P_char *restored)
 	// assign items to shopkeepers
 	for (struct all_items_temp *t = all_items; t; t = t->next)
 	{
-		if (t->container_id > 0)
+		if (!t->obj || t->container_id > 0)
 			continue;
 
 		for (struct shopkeeper_temp *k = keepers; k; k = k->next)
@@ -3674,6 +3750,38 @@ static bool sql_restore_shopkeeper_catalog(int only_shop, P_char *restored)
 		}
 	}
 
+	// Prepare every replacement and deficit before any live keeper is removed.
+	struct replacement
+	{
+		shopkeeper_temp *saved;
+		std::vector<P_char> incumbents;
+		std::vector<P_obj> stock;
+	};
+	std::vector<replacement> replacements;
+	try
+	{
+		for (auto *k = keepers; k; k = k->next)
+		{
+			std::vector<P_char> incumbents;
+			for (P_char keeper2 : live_shopkeepers(k->shop_nr))
+				if (keeper2 != k->mob &&
+				    (shop_index[k->shop_nr].shop_is_roaming ||
+				     keeper2->in_room == real_room(k->room_vnum)) &&
+				    mob_index[GET_RNUM(keeper2)].virtual_number == k->mob_vnum)
+					incumbents.push_back(keeper2);
+			std::vector<P_obj> stock;
+			if (refill && !restored && incumbents.size() == 1)
+				stock = shopkeeper_reboot_stock(incumbents[0]->carrying,
+								k->inventory, k->shop_nr);
+			replacements.push_back({ k, std::move(incumbents), std::move(stock) });
+		}
+	}
+	catch (const std::bad_alloc &)
+	{
+		discard_shopkeeper_restore_stage(keepers, all_items, true);
+		return false;
+	}
+
 	// free item temp structs
 	struct all_items_temp *ti = all_items;
 	while (ti)
@@ -3685,8 +3793,9 @@ static bool sql_restore_shopkeeper_catalog(int only_shop, P_char *restored)
 
 	// process each shopkeeper
 	int loaded = 0;
-	for (struct shopkeeper_temp *k = keepers; k; k = k->next)
+	for (auto &replacement : replacements)
 	{
+		auto *k = replacement.saved;
 		int load_room = real_room(k->room_vnum);
 		if (load_room == NOWHERE)
 		{
@@ -3711,27 +3820,23 @@ static bool sql_restore_shopkeeper_catalog(int only_shop, P_char *restored)
 
 		const int shop_idx = k->shop_nr;
 
-		// Replace only one incumbent already proven to belong to this exact
-		// shop.  A controlled NPC, a different bound shop, or an ambiguous
-		// same-template population is never destructive restore authority.
-		std::vector<P_char> incumbents;
-		for (P_char keeper2 : live_shopkeepers(k->shop_nr))
-			if (keeper2 != k->mob &&
-			    (shop_index[k->shop_nr].shop_is_roaming ||
-			     keeper2->in_room == load_room) &&
-			    mob_index[GET_RNUM(keeper2)].virtual_number == k->mob_vnum)
-				incumbents.push_back(keeper2);
-		const int incumbent_matches = static_cast<int>(incumbents.size());
+		const int incumbent_matches = static_cast<int>(replacement.incumbents.size());
 		int extracted = 0;
 		if (!restored && incumbent_matches == 1)
 		{
-			extract_char(incumbents[0]);
+			for (P_obj item : replacement.stock)
+			{
+				obj_from_char(item);
+				obj_to_char(item, k->mob);
+			}
+			extract_char(replacement.incumbents[0]);
 			extracted = 1;
 		}
 		if (persistence_trace_enabled())
 			logit(LOG_DEBUG,
-			      "sql_restore_shopkeepers: shop %d vnum %d incumbent_matches=%d extracted=%d",
-			      k->shop_nr, k->mob_vnum, incumbent_matches, extracted);
+			      "sql_restore_shopkeepers: shop %d vnum %d incumbent_matches=%d extracted=%d refill=%d restocked=%zu",
+			      k->shop_nr, k->mob_vnum, incumbent_matches, extracted, refill,
+			      replacement.stock.size());
 
 		if (restored)
 			*restored = k->mob;
@@ -3765,9 +3870,9 @@ static bool sql_restore_shopkeeper_catalog(int only_shop, P_char *restored)
 	return true;
 }
 
-bool sql_restore_shopkeepers(void)
+bool sql_restore_shopkeepers(bool refill)
 {
-	return sql_restore_shopkeeper_catalog(-1, nullptr);
+	return sql_restore_shopkeeper_catalog(-1, nullptr, refill);
 }
 
 // True while the periodic save's next pulse is scheduled.

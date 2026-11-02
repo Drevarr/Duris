@@ -257,7 +257,8 @@ struct edit_data
 #define LNK_CHAR_OBJ_AFF 23
 #define LNK_DRAGOON_MOUNT 24
 #define LNK_PLANT_PARALYSIS 25
-#define LNK_MAX 25
+#define LNK_TAUNT 26
+#define LNK_MAX 26
 
 #define LNKFLG_NONE 0
 #define LNKFLG_ROOM BIT_1
@@ -498,6 +499,7 @@ struct arti_data
 struct obj_data
 {
 	unsigned long obj_uid; /* unique item identifier          */
+	unsigned gmcp_items_editors; // Pending native string edits; no partial item view.
 	long g_key; /* Key generated upon creation     */
 	int R_num; /* Where in data-base               */
 	::byte type; /* Type of item                     */
@@ -1191,7 +1193,7 @@ struct affected_type
 	uint flags; /* flags describing affect behavior, see AFFTYPE_* defines */
 	int modifier; /* This is added to apropriate ability     */
 	ubyte location; /* Tells which ability to change(APPLY_XXX)*/
-	ubyte loc2;
+	uint16_t loc2; // skill IDs extend beyond the byte-sized apply locations
 	void *context;
 	unsigned short level;
 	unsigned long bitvector; /* Tells which bits to set (AFF_XXX)       */
@@ -1349,6 +1351,7 @@ struct pc_only_data
 	// Kept outside the legacy 14-value quest payload in player snapshots.
 	int quest_origin_room; // VNUM; zero for quests accepted before origin tracking.
 	int quest_replacement_due;
+	int quest_reward_item_count; // Frozen completion quantity; zero for legacy/unrolled tasks.
 
 	long unsigned int last_ip;
 	int skillpoints;
@@ -1551,6 +1554,7 @@ struct char_data
 	struct char_obj_link_data *obj_linked;
 	unsigned int runtime_flags;
 	uint64_t runtime_id; /* process-local identity; changes whenever storage is reused */
+	uint64_t gmcp_items_epoch; // Live presentation changes; independent of save dirtiness.
 	uint64_t durable_pet_uid; /* stable corpse-derived follower custody identity */
 	uint32_t durable_pet_owner_pid; /* survives loss of the live master link */
 	/* Telemetry identity is runtime-only and intentionally not persisted. */
@@ -1726,6 +1730,23 @@ struct snoop_data
 
 typedef struct gnutls_session_int *gnutls_session_t;
 
+// Last accepted viewer-specific combat subjects. No retained character pointers.
+struct gmcp_combat_subject
+{
+	uint64_t identity;
+	int health_percent;
+	unsigned char position;
+	bool present;
+	bool bleeding;
+	char name[256];
+};
+
+enum group_update_kind
+{
+	GROUP_UPDATE_ALL = 1,
+	GROUP_UPDATE_REMOTE_VITALS = 2
+};
+
 struct descriptor_data
 {
 	// Session-local cosmetic state, zeroed on allocation/reconnect/copyover.
@@ -1786,7 +1807,8 @@ struct descriptor_data
 	int movement_noise;
 	char client_str[MAX_INPUT_LENGTH]; /* CLIENT SPECIFIC STRING */
 	int last_map_update; /* CLIENT SPECIFIC INT */
-	int last_group_update; /* CLIENT SPECIFIC INT */
+	int last_group_update; /* Pending group_update_kind, or zero. */
+	bool msp_group_manual; /* Quiet MSP: group frames only on explicit request. */
 	char *msp_group_output; /* Last displayed group body; owned by this connection. */
 
 	/* WebSocket support */
@@ -1809,6 +1831,45 @@ struct descriptor_data
 	size_t ws_control_output_offset;
 	int gmcp_enabled;
 	bool gmcp_initial_state_pending;
+	uint32_t gmcp_supports; // Versioned new streams; legacy packages keep their defaults.
+	uint32_t gmcp_interests;
+	uint32_t gmcp_active_streams; // Last accepted control snapshot.
+	bool gmcp_control_pending;
+	uint64_t gmcp_time_revision;
+	gmcp_combat_subject gmcp_combat_subjects[2];
+	uint64_t gmcp_combat_revision;
+	bool gmcp_combat_state_sent;
+	uint64_t gmcp_items_epoch;
+	uint64_t gmcp_items_body;
+	uint64_t gmcp_items_revision;
+	uint32_t gmcp_items_filter;
+	P_obj gmcp_items_cursor; // Used only while the captured body/epoch still match.
+	P_obj gmcp_items_container; // Same epoch guard as the page/search cursor.
+	uint64_t gmcp_items_requested_uid;
+	bool gmcp_items_ascending;
+	unsigned gmcp_items_index;
+	unsigned gmcp_items_page;
+	unsigned char gmcp_items_location;
+	bool gmcp_items_started;
+	char gmcp_items_scope[33];
+	uint64_t gmcp_item_edit_uid;
+	uint64_t gmcp_event_sequence;
+	uint32_t gmcp_event_bytes;
+	unsigned gmcp_event_count;
+	uint64_t gmcp_session_generation;
+	uint64_t gmcp_session_player; // Runtime identities are never sent as player IDs.
+	uint64_t gmcp_session_body;
+	uint64_t gmcp_session_body_revision;
+	uint64_t gmcp_session_sent_generation;
+	unsigned char gmcp_session_state;
+	unsigned char gmcp_session_sent_state;
+	bool gmcp_session_pending;
+	bool gmcp_session_sent;
+	bool gmcp_session_resumed;
+	char gmcp_session_context[33]; // Opaque connection context; no account identity.
+
+	uint64_t gmcp_request_refill_ms[3];
+	unsigned char gmcp_request_tokens[3];
 	bool gmcp_command_receipts; // Opt-in, session-local input dequeue observation.
 	uint64_t gmcp_input_sequence;
 	int mssp_sent;
@@ -1893,6 +1954,10 @@ struct damage_messages
 	const char *death_room = nullptr;
 	int type = 0;
 	P_obj obj = nullptr;
+	// Authoritative delivery metadata; zero means the caller did not supply a kind.
+	int damage_kind = 0;
+	bool critical_known = false;
+	bool critical = false;
 };
 
 struct msg_type

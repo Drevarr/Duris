@@ -699,6 +699,44 @@ string wiki_help_single(string str)
 
 #endif
 
+// Race profiles use authored lore, with live classes/stats/innates supplied separately.
+string wiki_race_description(string title)
+{
+	string text;
+#ifdef __NO_MYSQL__
+	const auto &help = flat_help();
+	if (help.ready)
+	{
+		const auto *entry = flatfile_help_catalog_find(help.catalog, title);
+		if (entry)
+			text = entry->text;
+	}
+#else
+	const auto *catalog = help_cache_get();
+	if (catalog)
+		for (const auto &page : *catalog)
+			if (help_title_equal(page.fields[0], title))
+			{
+				text = page.fields[1];
+				break;
+			}
+#endif
+	// Imported parsed-help pages retain their edit header and underline in the body.
+	text = trim(text, " \t\r\n");
+	while (!text.empty())
+	{
+		const size_t end = text.find('\n');
+		const string line = trim(text.substr(0, end), " \t\r");
+		if (strcasecmp(line.c_str(), title.c_str()) &&
+		    line.find(" - Last Edited:") == string::npos &&
+		    line.find_first_not_of('=') != string::npos)
+			break;
+		text = end == string::npos ? "" : trim(text.substr(end + 1), " \t\r\n");
+	}
+	// The opening paragraphs describe the race; later sections are available via help.
+	return dewikify(trim(text.substr(0, text.find("\n==")), " \t\r\n"));
+}
+
 struct cmd_attrib_data cmd_attribs[CMD_ATTRIB_MAX];
 
 void load_cmd_attributes()

@@ -14,9 +14,32 @@ from _paths import ROOT, HARNESS_STUBS, extract_function, source
 
 parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument('--output', type=Path)
+parser.add_argument('--sanitize', action='store_true')
 args = parser.parse_args()
+sanitizers = ['-fsanitize=address,undefined', '-fno-sanitize-recover=all', '-fno-omit-frame-pointer', '-fno-pie', '-no-pie'] if args.sanitize else []
 functions = [
     ('utility.c', 'string strip_ansi('),
+    ('condition.c', 'char *item_condition('),
+    ('salchemist.c', 'void set_short_description('),
+    ('random_equipment.c', 'bool identify_random('),
+    ('magic.c', 'void spell_reveal_true_name('),
+    ('handler.c', 'int set_obj_condition('),
+    ('handler.c', 'P_obj unequip_char('),
+    ('handler.c', 'void update_char_objects('),
+    ('interp.c', 'char *one_argument('),
+    ('actnew.c', 'void do_disarm('),
+    ('magic.c', 'void spell_repair_one_item('),
+    ('handler.c', 'void set_obj_extra_flags('),
+    ('handler.c', 'void set_obj_extra2_flags('),
+    ('handler.c', 'int get_number('),
+    ('handler.c', 'bool isname(const char *str, const char *namelist)'),
+    ('handler.c', 'bool obj_name_matches('),
+    ('handler.c', 'P_obj get_obj_in_list('),
+    ('handler.c', 'P_obj get_obj_in_list_vis('),
+    ('handler.c', 'P_obj get_obj_equipped('),
+    ('actinf.c', 'P_obj get_object_in_equip('),
+    ('actobj.c', 'static P_obj do_get_obj_in_equipment_vis('),
+    ('actobj.c', 'static P_obj do_get_container_resolve_item('),
     ('ship_utils.c', 'char *ShipSlot::get_status_str('),
     ('ship_utils.c', 'const char *ShipSlot::get_position_str('),
     ('ship_utils.c', 'char *ShipSlot::get_description('),
@@ -32,7 +55,7 @@ functions = [
     ('gmcp.c', 'void gmcp_room_info('),
     ('gmcp.c', 'void gmcp_comm_channel_ex('),
     ('gmcp.c', 'void gmcp_char_vitals('),
-    ('gmcp.c', 'void gmcp_send('),
+    ('gmcp.c', 'void gmcp_input_receipt('),
     ('gmcp.c', 'void gmcp_handle_negotiation('),
     ('gmcp.c', 'void gmcp_flush_initial_states('),
     ('gmcp.c', 'void gmcp_send_initial_state('),
@@ -42,17 +65,16 @@ functions = [
     ('gmcp.c', 'static cJSON *json_build_ship_contacts('),
     ('gmcp.c', 'void gmcp_flush_dirty_ship_contacts('),
     ('gmcp.c', 'void gmcp_flush_dirty_ship_info('),
-    ('gmcp.c', 'void gmcp_combat_update('),
-    ('gmcp.c', 'void gmcp_combat_target('),
-    ('gmcp.c', 'void gmcp_combat_end('),
     ('gmcp.c', 'void gmcp_send_room_map('),
     ('gmcp.c', 'void gmcp_send_quest_map('),
     ('gmcp.c', 'void gmcp_quest_status(struct char_data *ch)'),
     ('gmcp.c', 'void gmcp_quest_status(struct char_data *ch, world_quest_target_status status)'),
     ('gmcp.c', 'void gmcp_quest_map(struct char_data *ch, world_quest_target_status status)'),
+    ('weather.c', 'void event_another_hour('),
     ('world_quest.c', 'void show_map_at('),
     ('utility.c', 'int IS_MORPH('),
     ('ws_handlers.c', 'void ws_send_full_game_state('),
+    ('ws_handlers.c', 'static void ws_reset_chargen('),
 ]
 # MAP_AUTOMAP already suppresses text; mutating websocket would change framing.
 comm = source('comm.c').read_text()
@@ -72,14 +94,36 @@ with tempfile.TemporaryDirectory(prefix='gui-gmcp-', dir=build) as directory:
     tmp = Path(directory)
     damage = extract_function('fight.c', 'int raw_damage(')
     start = damage.index('/* Send GMCP updates for combat */')
-    notice = damage[start:damage.index('\n\t\t}', start)]
-    (tmp / 'production.inc').write_text('\n\n'.join(extract_function(*f) for f in functions)
-        + '\nvoid applied_damage_notice(P_char ch, P_char victim, double dam) {\n' + notice + '\n}\n')
+    application_start = damage.index('if (flags & RAWDAM_NOKILL)')
+    application_end = damage.index('telemetry_runtime_game_combat_damage(', application_start)
+    notice = damage[application_start:application_end] + damage[start:damage.index('\n\t\t}', start)]
+    delivery_paths = []
+    for function, name, params in [
+        ('int spell_damage(', 'capture_spell_delivery', 'int type, uint flags'),
+        ('int melee_damage(', 'capture_physical_delivery', 'int flags'),
+    ]:
+        implementation = extract_function('fight.c', function)
+        begin = implementation.index('damage_messages delivery = *messages;')
+        end = implementation.index('damAccumulator);', begin) + len('damAccumulator);')
+        delivery_paths.append(f'int {name}(P_char ch, P_char victim, double dam, {params}, damage_messages *messages) {{ int result; int *damAccumulator = nullptr;\n' + implementation[begin:end] + '\nreturn result; }')
+    gmcp = source('gmcp.c').read_text()
+    control = gmcp[gmcp.index('// New-stream control and time.'):gmcp.index('// End new-stream control and time.')]
+    auth_source = gmcp[gmcp.index('static int gmcp_durisweb_auth_limited('):gmcp.index('void gmcp_input_receipt(')]
+    parser_source = gmcp[gmcp.index('void gmcp_handle_input('):gmcp.index('/* core gmcp send')]
+    combat_source = gmcp[gmcp.index('// Combat snapshots.'):gmcp.index('// End combat snapshots.')]
+    sql = source('sql/sql.c').read_text()
+    reward_source = sql[sql.index('struct world_quest_reward_publication\n'):sql.index('// End world quest reward publication.')]
+    sender_source = gmcp[gmcp.index('/* core gmcp send'):gmcp.index('/* Bootstrap state')]
+    (tmp / 'production.inc').write_text(control + '\n' + sender_source + '\n' + auth_source + '\n' + parser_source + '\n' + combat_source + '\n' + '\n\n'.join(extract_function(*f) for f in functions)
+        + '\n' + reward_source + '\n' + '\n'.join(delivery_paths) + '\nvoid applied_damage_notice(P_char ch, P_char victim, double dam, damage_messages *messages = nullptr, uint flags = 0) {\n' + notice + '\n}\n'
+        + '\nvoid rejected_creation(P_desc d, P_char ch) { account_racewar_admission admission{};\n'
+        + extract_function('ws_handlers.c', 'if (!account_commit_character_admission(d, ch, false, &admission))') + '\n}\n')
     binary = tmp / 'test'
     subprocess.run(['g++', '-std=c++20', '-Wall', '-Wextra', '-Werror',
-        '-ffunction-sections', '-fdata-sections', '-Isrc', '-I/usr/include/mysql', f'-I{tmp}',
-        str(ROOT/'tests/async/gui_gmcp_contract_harness.cpp'), str(source('json_utils.c')), str(HARNESS_STUBS),
-        '-Wl,--gc-sections', '-lcjson', '-o', str(binary)], cwd=ROOT, check=True, timeout=120)
+        *sanitizers, '-ffunction-sections', '-fdata-sections', '-Isrc', '-I/usr/include/mysql', f'-I{tmp}',
+        str(ROOT/'tests/async/gui_gmcp_contract_harness.cpp'), str(source('json_utils.c')),
+        str(source('random_equipment_tables.c')), str(source('safe_format.c')), str(HARNESS_STUBS),
+        '-Wl,--gc-sections', '-lcjson', '-lcrypto', '-o', str(binary)], cwd=ROOT, check=True, timeout=120)
     result = subprocess.run([str(binary)], cwd=ROOT, check=False, text=True, capture_output=True, timeout=30)
     if result.returncode:
         print(result.stderr)

@@ -25,6 +25,7 @@
 #include "core/prototypes.h"
 #include "world/world_singletons.h"
 #include "flatfile/flatfile_shopkeeper_restore.h"
+#include "economy/shopkeeper_boot.h"
 #include "item/item_actions.h"
 #include "item/artifact_mana.h"
 #include "item/device_actions.h"
@@ -132,6 +133,7 @@
 #include "persistence/persistence_mode.h"
 #include "core/env_file.h"
 #include "persistence/locker_async.h"
+#include "persistence/locker_recovery.h"
 #include "persistence/maintenance_repository.h"
 #include "persistence/maintenance_scheduler.h"
 #include "persistence/maintenance_snapshot.h"
@@ -515,6 +517,8 @@ int no_ferries = 0;
 int copyover_boot = 0;
 // The writer's shutdown bound: game_loop() starts it, run_the_game() enforces it.
 constexpr uint64_t SHUTDOWN_WRITER_SECONDS = 30;
+// Leave the last two seconds of the same shutdown window for the locker image.
+constexpr uint64_t SHUTDOWN_LOCKER_RECOVERY_USEC = 2000000;
 static uint64_t shutdown_writer_deadline_usec = 0;
 
 // What is left of the writer's shutdown bound, at most cap_msec: once it has passed, a
@@ -522,10 +526,13 @@ static uint64_t shutdown_writer_deadline_usec = 0;
 static int shutdown_writer_remaining_msec(int cap_msec)
 {
 	const uint64_t now = persistence_observability_now_usec();
-	if (!shutdown_writer_deadline_usec || now >= shutdown_writer_deadline_usec)
+	const uint64_t writer_deadline =
+		shutdown_writer_deadline_usec > SHUTDOWN_LOCKER_RECOVERY_USEC ?
+			shutdown_writer_deadline_usec - SHUTDOWN_LOCKER_RECOVERY_USEC :
+			0;
+	if (!writer_deadline || now >= writer_deadline)
 		return 0;
-	return static_cast<int>(
-		std::min<uint64_t>(cap_msec, (shutdown_writer_deadline_usec - now) / 1000));
+	return static_cast<int>(std::min<uint64_t>(cap_msec, (writer_deadline - now) / 1000));
 }
 
 // Names every save shutdown could not write, once per owner, with its kind in the
@@ -819,12 +826,6 @@ int main(int argc, char **argv)
 	if (!persistence_mode_requires_mysql() &&
 	    !item_uid_allocator_reserve(nullptr, ITEM_UID_BOOT_RESERVATION))
 		fatal_boot_error("comm", "Could not reserve a collision-free flat item UID range");
-	if (!persistence_mode_requires_mysql() && !hydrate_flatfile_system_item_owner())
-		fatal_boot_error("comm",
-				 "Could not hydrate the flat-file system item-owner revision");
-	if (persistence_mode_requires_mysql() && !sql_hydrate_item_owner_revisions())
-		logit(LOG_STATUS,
-		      "Authoritative item owner revisions unavailable; movement fails closed.");
 	if (copyover_boot && copyover_prepare_boot() != copyover_boot_result::ready)
 		fatal_boot_error(
 			"copyover",
@@ -846,6 +847,17 @@ int main(int argc, char **argv)
 			logit(LOG_STATUS,
 			      "Redis recovery evidence unavailable or invalid; physical absence is unresolved");
 	}
+	// Replay before caching ownership revisions as well as before custody cleanup.
+	if (!locker_recovery_boot())
+		fatal_boot_error(
+			"locker_recovery",
+			"Locker shutdown recovery unresolved; preserve runtime/locker-shutdown (or FLATFILE_STATE_DIR/locker-shutdown) and follow the locker recovery runbook");
+	if (!persistence_mode_requires_mysql() && !hydrate_flatfile_system_item_owner())
+		fatal_boot_error("comm",
+				 "Could not hydrate the flat-file system item-owner revision");
+	if (persistence_mode_requires_mysql() && !sql_hydrate_item_owner_revisions())
+		logit(LOG_STATUS,
+		      "Authoritative item owner revisions unavailable; movement fails closed.");
 	const auto &population = artifact_population_prepare_boot(copyover_boot);
 	logit(LOG_STATUS, "Artifact population evidence: %s rows=%zu retained_uids=%zu.",
 	      population.complete ? "complete" : "incomplete", population.items.size(),
@@ -882,6 +894,17 @@ int main(int argc, char **argv)
 	start_log_writer();
 	(void)telemetry_runtime_init(telemetry_runtime_options_from_environment());
 
+	if (!mini_mode)
+	{
+		std::string boot_error;
+		if (!shopkeeper_boot_begin("shopkeeper-boot",
+					   copyover_boot || redis_world_recovery_boot_active(),
+					   &boot_error))
+			fatal_boot_error("shopkeeper", "Could not record boot state: %s",
+					 boot_error.c_str());
+		logit(LOG_STATUS, "Shopkeeper reboot refill eligibility: %s.",
+		      shopkeeper_boot_restock() ? "clean cold restart" : "preserve saved stock");
+	}
 	const int game_exit_status = run_the_game(port, sslport);
 	telemetry_shutdown_request telemetry_shutdown{};
 	telemetry_shutdown.final_flush = 1U;
@@ -902,6 +925,14 @@ int main(int argc, char **argv)
 	artifact_mana_shutdown();
 	shutdown_mysql();
 
+	if (!mini_mode && shutdownflag && !_copyover &&
+	    (game_exit_status == 0 || game_exit_status == 52 || game_exit_status == 54))
+	{
+		std::string boot_error;
+		if (!shopkeeper_boot_finish("shopkeeper-boot", &boot_error))
+			fprintf(stderr, "Shopkeeper clean stop was not recorded: %s\n",
+				boot_error.c_str());
+	}
 	return game_exit_status;
 }
 
@@ -1257,25 +1288,33 @@ int run_the_game(int port, int sslport)
 	collector_maintenance_shutdown();
 	collector_listing_pipeline_shutdown();
 	collector_presence_shutdown();
-	collector_catalog_cache_shutdown();
 	information_cache_shutdown();
 	help_cache_shutdown();
 	account_recovery_shutdown();
 	password_login_shutdown();
-	critical_command_coordinator_shutdown();
 	locker_identify_shutdown();
 	critical_outbox_shutdown();
 	if (!_pwipe)
 	{
 		// The last lockers are queued here. Nothing queues a write after this: the
-		// writer gets what is left of its 30 s, a query still running then is cut off,
-		// and every save it could not write is named.
+		// writer gets what is left before the image's two-second reservation, a query
+		// still running then is cut off, and every save it could not write is named.
 		if (!shutdown_writer_deadline_usec)
 			shutdown_writer_deadline_usec = persistence_observability_now_usec() +
 							SHUTDOWN_WRITER_SECONDS * 1000000ULL;
 		locker_async_drain(shutdown_writer_remaining_msec(2000));
-		report_unwritten_saves(player_save_pipeline_finish(shutdown_writer_deadline_usec,
-								   sql_pool_interrupt_borrowed));
+		report_unwritten_saves(player_save_pipeline_finish(
+			shutdown_writer_deadline_usec - SHUTDOWN_LOCKER_RECOVERY_USEC,
+			sql_pool_interrupt_borrowed));
+		// Nothing can commit after this point. Retain the coordinator until the
+		// completed operations have published into the live inventories. Use the
+		// normal dispatcher for every item-changing domain, not just creation grants.
+		critical_completion shutdown_completions[64];
+		while (const size_t count =
+			       critical_command_coordinator_pulse(shutdown_completions, 64))
+			critical_gameplay_handle_completions(shutdown_completions, count);
+		locker_recovery_begin();
+		locker_recovery_finish(shutdown_writer_deadline_usec);
 		artifact_guild_transaction_report_unsaved();
 		locker_async_shutdown();
 	}
@@ -1284,6 +1323,8 @@ int run_the_game(int port, int sslport)
 		// Pwipe already drained and closed admission before its SQL boundary.
 		player_save_worker_shutdown();
 	}
+	critical_command_coordinator_shutdown();
+	collector_catalog_cache_shutdown();
 
 	/* Don't need this anymore, as dropped artis are handled in real time on the DB.
 	// Look for dropped artis and remove them from the next boot.
@@ -1623,6 +1664,8 @@ static void dispatch_session_input(P_desc descriptor, P_char character, char *in
 	case session_input_route::authentication_pending:
 		return;
 	}
+	if (route == session_input_route::nanny && is_desc_valid(descriptor))
+		gmcp_session_update(descriptor);
 	command_latency_record(latency, &event,
 			       latency_trace_elapsed_us(started_us, loop_monotonic_us()));
 }
@@ -2336,6 +2379,9 @@ static void run_recurring_persistence_phase(game_loop_pulse_context &ctx)
 		gmcp_flush_dirty_rooms();
 		gmcp_flush_dirty_ship_contacts();
 		gmcp_flush_dirty_ship_info();
+		latency_trace_record("gmcp_protocol",
+				     latency_trace_elapsed_us(gmcp_begin_us, loop_monotonic_us()),
+				     loop_tick);
 		flush_pending_ship_saves();
 		retry_unplaced_ships();
 		locker_async_pulse();
@@ -2490,7 +2536,8 @@ static void run_combat_phase(game_loop_pulse_context &ctx)
 				{
 					gmcp_send_group_status(t_ch);
 				}
-				if (t_ch->desc->term_type == TERM_MSP)
+				if (t_ch->desc->term_type == TERM_MSP &&
+				    t_ch->desc->last_group_update == GROUP_UPDATE_ALL)
 				{
 					send_msp_group(t_ch, false);
 				}
@@ -2918,8 +2965,8 @@ resume_game_loop:
 	discord_bridge_shutdown();
 
 	// Shutdown always goes (persistence reset step 8). Each drain is bounded and a
-	// failure is reported, never a reason to keep running. The writer gets 30 s for
-	// what is queued; run_the_game() names whatever it could not write once nothing
+	// failure is reported, never a reason to keep running. The writer and locker
+	// image share 30 s; run_the_game() names whatever it could not write once nothing
 	// else can queue a write.
 	if (!_pwipe && item_creation_grant_batches_pending())
 		persistence_alert(AVATAR, "starter_grant", "shutdown", "none", "none",
@@ -2946,8 +2993,9 @@ resume_game_loop:
 					  "dirty_save_failed", "shutdown_cancelled=0");
 		shutdown_writer_deadline_usec =
 			persistence_observability_now_usec() + SHUTDOWN_WRITER_SECONDS * 1000000ULL;
-		player_save_pipeline_drain(SHUTDOWN_WRITER_SECONDS * 1000ULL);
-		if (!redis_world_recovery_drain(3000))
+		player_save_pipeline_drain(
+			shutdown_writer_remaining_msec(SHUTDOWN_WRITER_SECONDS * 1000));
+		if (!redis_world_recovery_drain(shutdown_writer_remaining_msec(3000)))
 			persistence_alert(AVATAR, "world_recovery", "shutdown", "none", "none",
 					  "pipeline_drain_failed", "shutdown_cancelled=0");
 	}
@@ -3565,6 +3613,7 @@ static void forget_hostname(int descriptor);
 
 void close_socket(struct descriptor_data *d)
 {
+	gmcp_item_edit_done(d);
 	locker_invalidate_chest_access(d->character);
 	locker_invalidate_chest_access(d->original);
 

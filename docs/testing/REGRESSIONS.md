@@ -59,6 +59,15 @@ and writer admission are controlled boundaries, not a live database fault test.
 `test_locker_leave_during_save.py` separately verifies that an older in-flight save
 cannot retire the locker character before the newer terminal contents are written.
 
+`python3 tests/async/test_locker_callback_visit.py` executes locker callbacks and
+the real async writer state machine under ASan/UBSan. A delayed sort or snapshot
+must still belong to the player's current visit. It covers departure to a bank
+whose extra-description keyword parses as pointer `0xba`, entry into another
+locker, stale worker replies, player identity reuse, ordinary sorting and
+preparation failure. Terminal capture still saves the old holder's items without
+moving anything in the next locker. Event dispatch, inventory movement and the
+persistence sink are controlled boundaries.
+
 ## Legacy object trap restoration (#368)
 
 `python3 tests/async/test_legacy_trap_editor.py` compiles and executes the actual area
@@ -570,8 +579,8 @@ network paging, events, or a database.
 `python3 tests/async/test_newbie_object_template.py` also runs the real index
 builder, parser, and object instantiation against cold names, empty text, sentinel
 and EOF termination, preserved positions, shared pointers and cleanup. The local
-staff/mortal and timing evidence is recorded in the
-[continuation plan](../ongoing-projects/plan-builder-list-commands.md).
+staff/mortal and timing evidence is recorded in
+[#231](https://github.com/LuminariMUD/Duris/issues/231).
 
 ## PSP consistency and gradual movement decay (#57)
 
@@ -642,8 +651,9 @@ The CLI creates missing output directories before retaining the JSON result.
 `test_psp_regen_journey_output.py` executes its argument parsing and result writing
 with the full journey stubbed, checking a missing nested parent and an existing file.
 
-See `docs/ongoing-projects/plan-issue-57.md` for exact build commands, binary hash and review
-stack. No migration, production rollout or shared-player changes were performed.
+[#57](https://github.com/LuminariMUD/Duris/issues/57) records delivery and the
+original qualification scope. Use current source/build identities when rerunning
+the journey; old measurements do not certify a later binary.
 
 ## Combined log-review integration qualification
 
@@ -802,7 +812,7 @@ not final combined-stack qualification or production rollout; full-server fault
 journeys and the broad gates remain due after #73–#75 integration.
 
 Issue #58 is locally qualified on `fix/58-artifact-guild-memory`. The
-[qualification record](../records/log-server-review.md#qualification-update-2026-10-14)
+[qualification record](https://github.com/LuminariMUD/Duris/blob/76262c0b71da4bf1e835228475930a966fb08310/docs/records/log-server-review.md#qualification-update-2026-10-14)
 maps the acceptance criteria to tests, records local logs and separates review
 readiness from production rollout.
 
@@ -1033,7 +1043,7 @@ fails at the adjacent-room assertion. RNG, eligibility, presentation, movement
 endpoints, and wait are adapters; no live cast, production rollout, or historical
 attribution is claimed. The development server build and eight related focused
 zone/movement/lifecycle/latency tests pass. Evidence and remaining original
-acceptance are in [the continuation plan](../records/plan-issue-106.md).
+acceptance are in [the continuation plan](https://github.com/LuminariMUD/Duris/blob/76262c0b71da4bf1e835228475930a966fb08310/docs/records/plan-issue-106.md).
 
 The legacy physical `damage()` wrapper now stops a skill after either
 participant dies, matching its spell branch. Previously simultaneous death

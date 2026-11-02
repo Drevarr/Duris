@@ -68,6 +68,7 @@
 #include "mob/studioproc.h"
 #include "world/vnum.obj.h"
 #include "world/weather.h"
+#include "world/transport.h"
 #include "world/world_quest.h"
 #include "net/ws_handlers.h"
 #include "guild/artifact_guild_transaction.h"
@@ -602,6 +603,7 @@ int vamp(P_char ch, double fhits, double fcap, bool allow_improved_healing)
 		send_to_char(buf, ch);
 	}
 
+	update_group_vitals(ch);
 	gmcp_char_vitals(ch);
 
 	return hits;
@@ -4397,7 +4399,10 @@ int spell_damage(P_char ch, P_char victim, double dam, int type, uint flags,
 
 	// ugly hack - we smuggle damage_type for eq poofing messages on 8 highest bits
 	messages->type |= type << 24;
-	result = raw_damage(ch, victim, dam, (RAWDAM_DEFAULT ^ flags) | RAWDAM_NOWARD, messages,
+	damage_messages delivery = *messages;
+	delivery.damage_kind = type;
+	delivery.critical_known = false;
+	result = raw_damage(ch, victim, dam, (RAWDAM_DEFAULT ^ flags) | RAWDAM_NOWARD, &delivery,
 			    damAccumulator);
 
 	if (type == SPLDAM_ACID && !number(0, 3))
@@ -5093,7 +5098,9 @@ int melee_damage(P_char ch, P_char victim, double dam, int flags, struct damage_
 
 	messages->type |= 1 << 24;
 
-	result = raw_damage(ch, victim, dam, RAWDAM_DEFAULT | flags | RAWDAM_NOWARD, messages,
+	damage_messages delivery = *messages;
+	delivery.damage_kind = -1; // The physical reduction pipeline, independent of damage text.
+	result = raw_damage(ch, victim, dam, RAWDAM_DEFAULT | flags | RAWDAM_NOWARD, &delivery,
 			    damAccumulator);
 
 	if (result != DAM_NONEDEAD)
@@ -5745,19 +5752,15 @@ int raw_damage(P_char ch, P_char victim, double dam, uint flags, struct damage_m
 			{
 				dam = GET_HIT(victim) + 11;
 			}
+			const int hit_before = GET_HIT(victim);
 			GET_HIT(victim) -= dam;
 			telemetry_runtime_game_combat_damage(
 				ch, victim, dam > 0.0 ? static_cast<std::uint64_t>(dam) : 0U, 0U);
 
 			/* Send GMCP updates for combat */
-			gmcp_char_vitals(victim); /* Update victim's vitals */
-			if (victim != ch)
-			{
-				if (GET_OPPONENT(ch) && GET_OPPONENT(ch) != victim)
-					gmcp_combat_target(ch, GET_OPPONENT(ch));
-				else
-					gmcp_combat_update(ch, victim, (int)dam, "unknown", 0);
-			}
+			update_group_vitals(victim);
+			gmcp_char_vitals(victim);
+			gmcp_combat_damage(ch, victim, hit_before - GET_HIT(victim), messages);
 		}
 
 		if (IS_PC(victim) && victim->desc &&
@@ -5900,6 +5903,8 @@ int raw_damage(P_char ch, P_char victim, double dam, uint flags, struct damage_m
 
 		if (GET_STAT(victim) == STAT_SLEEPING && new_stat != STAT_DEAD)
 		{
+			if (new_stat >= STAT_SLEEPING && !IS_AFFECTED(victim, AFF_KNOCKED_OUT))
+				send_to_char("You are rudely awakened!\r\n", victim);
 			act("$n has a RUDE awakening!", TRUE, victim, 0, 0, TO_ROOM);
 			affect_from_char(victim, SPELL_SLEEP);
 			if (IS_AFFECTED(victim, AFF_SLEEP))
@@ -7549,6 +7554,8 @@ bool hit(P_char ch, P_char victim, P_obj weapon, int *damAccumulator)
 
 	//!!!
 	// | RAWDAM_NOEXP,   // hitting yields normal exp -Odorf &messages)
+	messages.critical_known = true;
+	messages.critical = sic == -1;
 	if (melee_damage(ch, victim, dam,
 			 (msg == MSG_HIT ? PHSDAM_TOUCH : PHSDAM_HELLFIRE | PHSDAM_BATTLETIDE),
 			 &messages, damAccumulator) != DAM_NONEDEAD)
@@ -7859,6 +7866,7 @@ void set_fighting(P_char ch, P_char vict)
 	GET_OPPONENT(ch) = victim;
 	disarm_char_nevents(ch, event_water_crossing);
 	disarm_char_nevents(victim, event_water_crossing);
+	update_group_vitals(ch);
 	gmcp_char_vitals(ch);
 	gmcp_combat_target(ch, victim);
 	ch->specials.next_fighting = combat_list;
@@ -7921,7 +7929,7 @@ void set_fighting(P_char ch, P_char vict)
 	}
 	if (P_char mount = get_linked_char(ch, LNK_RIDING))
 	{
-		if (!GET_CHAR_SKILL(ch, SKILL_MOUNTED_COMBAT) /* && !is_natural_mount(ch, mount)*/)
+		if (!GET_CHAR_SKILL(ch, SKILL_MOUNTED_COMBAT) && !is_flight_passenger(ch))
 		{
 			send_to_char("I'm afraid you aren't quite up to mounted combat.\r\n", ch);
 			act("$n quickly slides off $N's back.", TRUE, ch, 0, mount, TO_NOTVICT);
@@ -8801,6 +8809,7 @@ void stop_fighting(P_char ch)
 	gmcp_combat_end(ch);
 
 	update_pos(ch);
+	update_group_vitals(ch);
 	gmcp_char_vitals(ch);
 }
 

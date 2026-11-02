@@ -8,7 +8,7 @@ from _paths import ROOT, extract_function, HARNESS_STUBS
 
 bodies = extract_function("cmd/interp.c", "char *one_argument(") + "\n" + "\n".join(extract_function("item/storage_lockers.c", signature) for signature in (
     "inline StorageLocker *GetChestList(",
-    "static StorageLocker *locker_current(",
+    "static StorageLocker *locker_current(P_char ch)\n{",
     "static bool locker_private_chests_available(",
     "StorageLocker::StorageLocker(",
     "LockerChest *StorageLocker::AddLockerChest(",

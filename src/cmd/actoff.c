@@ -37,6 +37,7 @@
 #include "core/prototypes.h"
 #include "core/structs.h"
 #include "net/comm.h"
+#include "net/gmcp.h"
 #include "world/db.h"
 #include "world/events.h"
 #include "cmd/interp.h"
@@ -1211,6 +1212,8 @@ void lance_charge(P_char ch, char *argument)
 		act("$n is knocked to the ground!", FALSE, victim, 0, 0, TO_ROOM);
 		send_to_char("You are knocked to the ground!\n", victim);
 		SET_POS(victim, POS_SITTING + GET_STAT(victim));
+		update_group_vitals(victim);
+		gmcp_char_vitals(victim);
 		CharWait(victim, (int)(PULSE_VIOLENCE *
 				       get_property("skill.lance.charge.KnockdownLag", 2.000)));
 	}
@@ -3950,6 +3953,8 @@ void kick(P_char ch, P_char victim)
 		act("$n's nimble kick connects with $N's groin...\r$N crashes to the ground!",
 		    FALSE, ch, 0, victim, TO_NOTVICT);
 		SET_POS(victim, POS_SITTING + GET_STAT(victim));
+		update_group_vitals(victim);
+		gmcp_char_vitals(victim);
 
 		if (!number(0, 24))
 		{
@@ -4924,6 +4929,8 @@ void do_dragon_strike(P_char ch, char *argument, int /*cmd*/)
 			act("$n is knocked to the ground!", FALSE, victim, 0, 0, TO_ROOM);
 			send_to_char("You are knocked to the ground!\n", victim);
 			SET_POS(victim, POS_SITTING + GET_STAT(victim));
+			update_group_vitals(victim);
+			gmcp_char_vitals(victim);
 			CharWait(victim, vict_lag * PULSE_VIOLENCE);
 		}
 	}
@@ -5517,6 +5524,28 @@ void do_headbutt(P_char ch, char *argument, int /*cmd*/)
 	debug("do_headbutt: (%s) butting (%s) chance (%d) roll (%d).", GET_NAME(ch),
 	      GET_NAME(victim), chance, roll);
 
+	// Damage results report deaths, so count delivered damage separately for feedback.
+	auto headbutt_damage = [&](P_char source, P_char target, double amount, int flags,
+				   damage_messages *hit_messages)
+	{
+		int delivered = 0;
+		int result = melee_damage(source, target, amount, flags, hit_messages, &delivered);
+		if (result == DAM_NONEDEAD && delivered == 0)
+		{
+			bool backfire = source != ch;
+			act(backfire ? "Your headbutt backfires, but does no damage to you." :
+				       "Your headbutt does no damage to $N.",
+			    FALSE, ch, 0, victim, TO_CHAR);
+			act(backfire ? "$n's headbutt backfires, but does no damage to $m." :
+				       "$n's headbutt does no damage to you.",
+			    FALSE, ch, 0, victim, TO_VICT);
+			act(backfire ? "$n's headbutt backfires, but does no damage to $m." :
+				       "$n's headbutt does no damage to $N.",
+			    FALSE, ch, 0, victim, TO_NOTVICTROOM);
+		}
+		return result;
+	};
+
 	// failed catastrophically!
 	if (!notch_skill(ch, SKILL_HEADBUTT, get_property("skill.notch.offensive", 7)) && roll <= 2)
 	{
@@ -5534,9 +5563,9 @@ void do_headbutt(P_char ch, char *argument, int /*cmd*/)
 		affect_to_char(ch, &af);
 		CharWait(ch, PULSE_VIOLENCE * 2);
 
-		if (melee_damage(victim, ch, dam,
-				 PHSDAM_NOPOSITION | PHSDAM_TOUCH | PHSDAM_NOREDUCE,
-				 &fail_messages) != DAM_NONEDEAD)
+		if (headbutt_damage(victim, ch, dam,
+				    PHSDAM_NOPOSITION | PHSDAM_TOUCH | PHSDAM_NOREDUCE,
+				    &fail_messages) != DAM_NONEDEAD)
 		{
 			return;
 		}
@@ -5554,7 +5583,7 @@ void do_headbutt(P_char ch, char *argument, int /*cmd*/)
 		affect_to_char(ch, &af);
 		CharWait(ch, PULSE_VIOLENCE * 1.5);
 
-		if (melee_damage(victim, ch, dam, PHSDAM_NOPOSITION, &fail_messages) !=
+		if (headbutt_damage(victim, ch, dam, PHSDAM_NOPOSITION, &fail_messages) !=
 		    DAM_NONEDEAD)
 		{
 			return;
@@ -5604,9 +5633,9 @@ void do_headbutt(P_char ch, char *argument, int /*cmd*/)
 		CharWait(ch, (int)(PULSE_VIOLENCE * 1.5));
 		debug("do_headbutt: (%s) butting (%s) dam (%d) skill (%d).", GET_NAME(ch),
 		      GET_NAME(victim), (int)dam, GET_CHAR_SKILL(ch, SKILL_HEADBUTT));
-		if (melee_damage(ch, victim, (int)dam,
-				 PHSDAM_NOPOSITION | PHSDAM_TOUCH | PHSDAM_NOREDUCE,
-				 messages) != DAM_NONEDEAD)
+		if (headbutt_damage(ch, victim, (int)dam,
+				    PHSDAM_NOPOSITION | PHSDAM_TOUCH | PHSDAM_NOREDUCE,
+				    messages) != DAM_NONEDEAD)
 		{
 			return;
 		}
@@ -5622,9 +5651,9 @@ void do_headbutt(P_char ch, char *argument, int /*cmd*/)
 			debug("do_headbutt: (%s) double butting (%s) dam (%d) skill (%d).",
 			      GET_NAME(ch), GET_NAME(victim), (int)dam / 2,
 			      GET_CHAR_SKILL(ch, SKILL_DOUBLE_HEADBUTT));
-			if (melee_damage(ch, victim, (int)(dam / 2),
-					 PHSDAM_NOPOSITION | PHSDAM_TOUCH | PHSDAM_NOREDUCE,
-					 messages) != DAM_NONEDEAD)
+			if (headbutt_damage(ch, victim, (int)(dam / 2),
+					    PHSDAM_NOPOSITION | PHSDAM_TOUCH | PHSDAM_NOREDUCE,
+					    messages) != DAM_NONEDEAD)
 			{
 				return;
 			}
@@ -6962,6 +6991,8 @@ void bash(P_char ch, P_char victim, bool _debug)
 		act("$N avoids being bashed by $n, who loses $s balance and falls.", FALSE, ch, 0,
 		    victim, TO_NOTVICT);
 		SET_POS(ch, POS_SITTING + GET_STAT(ch));
+		update_group_vitals(ch);
+		gmcp_char_vitals(ch);
 		CharWait(ch, (int)(PULSE_VIOLENCE * 2.000));
 		return;
 	}
@@ -7007,6 +7038,8 @@ void bash(P_char ch, P_char victim, bool _debug)
 		act("You attempt to bash $N, but $E is simply too huge for you to move!", FALSE, ch,
 		    0, victim, TO_CHAR);
 		SET_POS(ch, POS_SITTING + GET_STAT(ch));
+		update_group_vitals(ch);
+		gmcp_char_vitals(ch);
 		CharWait(ch, (int)(PULSE_VIOLENCE * 0.500));
 		return;
 	}
@@ -7020,6 +7053,8 @@ void bash(P_char ch, P_char victim, bool _debug)
 		act("You topple over yourself as you try to bash $N - $E's just too small!\n",
 		    FALSE, ch, 0, victim, TO_CHAR);
 		SET_POS(ch, POS_SITTING + GET_STAT(ch));
+		update_group_vitals(ch);
+		gmcp_char_vitals(ch);
 		CharWait(ch, (int)(PULSE_VIOLENCE * 0.500));
 		return;
 	}
@@ -7185,6 +7220,8 @@ void bash(P_char ch, P_char victim, bool _debug)
 	else if (percent_chance == TAKEDOWN_PENALTY)
 	{
 		SET_POS(ch, POS_SITTING + GET_STAT(ch));
+		update_group_vitals(ch);
+		gmcp_char_vitals(ch);
 		CharWait(ch, PULSE_VIOLENCE * 2);
 		return;
 	}
@@ -7260,6 +7297,8 @@ void bash(P_char ch, P_char victim, bool _debug)
 			SET_POS(ch, POS_KNEELING + GET_STAT(ch));
 			CharWait(ch, PULSE_VIOLENCE * 2);
 		}
+		update_group_vitals(ch);
+		gmcp_char_vitals(ch);
 	}
 	else
 	{
@@ -7321,8 +7360,11 @@ void bash(P_char ch, P_char victim, bool _debug)
 				    FALSE, ch, 0, victim, TO_NOTVICT);
 				set_short_affected_by(ch, SKILL_BASH, (int)(1.5 * PULSE_VIOLENCE));
 			}
+
 			SET_POS(victim, POS_SITTING + GET_STAT(victim));
 			update_pos(victim);
+			update_group_vitals(victim);
+			gmcp_char_vitals(victim);
 		}
 
 		if (!IS_ALIVE(ch))
@@ -7639,6 +7681,8 @@ void do_tackle(P_char ch, char *arg, int /*cmd*/)
 		}
 
 		SET_POS(vict, POS_SITTING + GET_STAT(vict));
+		update_group_vitals(vict);
+		gmcp_char_vitals(vict);
 		CharWait(ch, PULSE_VIOLENCE * 2);
 		CharWait(vict, PULSE_VIOLENCE * 2);
 
@@ -9138,6 +9182,8 @@ void do_rearkick(P_char ch, char *argument, int /*cmd*/)
 			CharWait(victim, (int)(PULSE_VIOLENCE *
 					       get_property("kick.roomkick.victimlag", 1.000)));
 			SET_POS(victim, POS_PRONE + GET_STAT(victim));
+			update_group_vitals(victim);
+			gmcp_char_vitals(victim);
 		}
 		else if (movement.status == forced_move_status::blocked)
 		{
@@ -9145,6 +9191,8 @@ void do_rearkick(P_char ch, char *argument, int /*cmd*/)
 			CharWait(victim, (int)(PULSE_VIOLENCE *
 					       get_property("kick.wallkick.victimlag", 1.5)));
 			SET_POS(victim, POS_SITTING + GET_STAT(victim));
+			update_group_vitals(victim);
+			gmcp_char_vitals(victim);
 			stop_fighting(victim);
 		}
 	}
@@ -9545,6 +9593,8 @@ void do_trample(P_char ch, char *argument, int /*cmd*/)
 			act("$n is knocked to the ground!", FALSE, victim, 0, 0, TO_ROOM);
 			send_to_char("You are knocked to the ground!\n", victim);
 			SET_POS(victim, POS_SITTING + GET_STAT(victim));
+			update_group_vitals(victim);
+			gmcp_char_vitals(victim);
 			CharWait(victim, vict_lag * PULSE_VIOLENCE);
 		}
 	}
@@ -12019,6 +12069,12 @@ void do_taunt(P_char ch, char *arg, int cmd)
 		return;
 	}
 
+	if (IS_ROOM(vict->in_room, ROOM_SINGLE_FILE) && !AdjacentInRoom(vict, ch))
+	{
+		act("$N can't reach you in this narrow room.", FALSE, ch, NULL, vict, TO_CHAR);
+		return;
+	}
+
 	if ((notch_skill(ch, SKILL_TAUNT, get_property("skill.notch.offensive", 7)) ||
 	     number(1, 100) <= percent_chance || IS_TRUSTED(ch)))
 	{
@@ -12048,10 +12104,7 @@ void do_taunt(P_char ch, char *arg, int cmd)
 				af.flags = AFFTYPE_SHORT | AFFTYPE_NOSAVE;
 				af.context = (void *)ch;
 				af.duration = duration;
-				affect_to_char_with_messages(
-					vict, &af,
-					"You finally let the words go and can focus on other targets again.",
-					"$n seems to have calmed down.");
+				linked_affect_to_char(vict, &af, ch, LNK_TAUNT);
 				if (GET_OPPONENT(vict) != ch)
 				{
 					stop_fighting(vict);

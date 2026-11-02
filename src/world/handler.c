@@ -1257,6 +1257,43 @@ void recover_from_room_ch_loop(P_char k)
 	k->next_in_room = 0;
 }
 
+// A companion's departure/entry hooks may also remove or redirect this entrant.
+static bool move_riding_companions(P_char ch, int room, int dir)
+{
+	const auto runtime = ch->runtime_id;
+	const auto removals = character_removal_generation;
+	for (int incoming = 0; incoming < 2; ++incoming)
+	{
+		P_char companion = incoming ? GET_RIDER(ch) : GET_MOUNT(ch);
+		if (!companion || companion->in_room == room)
+			continue;
+		const auto companion_runtime = companion->runtime_id;
+		char_from_room(companion);
+		const bool entrant_live =
+			(removals == character_removal_generation || char_in_list(ch)) &&
+			ch->runtime_id == runtime && IS_ALIVE(ch);
+		if ((removals == character_removal_generation || char_in_list(companion)) &&
+		    companion->runtime_id == companion_runtime && IS_ALIVE(companion) &&
+		    companion->in_room == NOWHERE)
+		{
+			// Finish placing a surviving companion even if the entrant vanished.
+			// A redirected entrant must not be pulled back by the riding link.
+			if (!entrant_live || ch->in_room != room)
+			{
+				if (incoming)
+					unlink_char(companion, ch, LNK_RIDING);
+				else if (entrant_live)
+					unlink_char(ch, companion, LNK_RIDING);
+			}
+			char_to_room(companion, room, dir);
+		}
+		if ((removals != character_removal_generation && !char_in_list(ch)) ||
+		    ch->runtime_id != runtime || !IS_ALIVE(ch) || ch->in_room != room)
+			return false;
+	}
+	return true;
+}
+
 /*
  * place a character in a room.
  */
@@ -1431,37 +1468,25 @@ bool char_to_room(P_char ch, int room, int dir)
 				continue; // Not in map room or ship room
 			}
 
-			if (!CAN_SEE_Z_CORD(who, ch))
-				continue;
-			// Don't show if people move off the map? :(
-			if (!IS_MAP_ROOM(ch->in_room))
-				continue;
 			if (ch == who)
 				continue;
 			if (who->desc->last_map_update) // performance saving!
 				continue;
 
-			// If who is going to follow ch, then don't update map.
-			if (ch == who->following && was_in == who->in_room &&
-			    GET_STAT(who) == STAT_NORMAL && GET_POS(who) == POS_STANDING &&
-			    CAN_ACT(who))
-				continue;
-			// If ch is in the act of following someone.
-			if (IS_AFFECTED5(ch, AFF5_FOLLOWING))
+			// Suppress a follower's intermediate arrival only for observers that
+			// already reached the destination. Other followers may fail to move.
+			if (IS_AFFECTED5(ch, AFF5_FOLLOWING) && who->in_room == ch->in_room)
 			{
-				// If the person they're following is who, don't update who's automap.
-				if (ch->following == who)
-					continue;
-				// If they're following the same person (ie same group) and moving together.
-				if (ch->following == who->following &&
-				    (who->in_room == was_in || who->in_room == ch->in_room))
+				if (ch->following == who || ch->following == who->following)
 					continue;
 			}
 
-			int dist = calculate_map_distance(ch->in_room, observer_map_room);
 			int view_dist = map_view_distance(who, observer_map_room);
-
-			if (dist >= 0 && dist <= (view_dist * view_dist))
+			// Destination visibility cannot tell us whether the old glyph was visible.
+			// Refresh old tiles conservatively; rendering filters their current occupants.
+			if (map_view_contains(observer_map_room, was_in, view_dist) ||
+			    (CAN_SEE_Z_CORD(who, ch) &&
+			     map_view_contains(observer_map_room, ch->in_room, view_dist)))
 			{
 				who->desc->last_map_update = 1;
 				continue;
@@ -1486,17 +1511,8 @@ bool char_to_room(P_char ch, int room, int dir)
 
 	AddCharToZone(ch);
 
-	if ((t_ch = get_linked_char(ch, LNK_RIDING)) && t_ch->in_room != ch->in_room)
-	{
-		char_from_room(t_ch);
-		char_to_room(t_ch, ch->in_room, dir);
-	}
-
-	if ((t_ch = get_linking_char(ch, LNK_RIDING)) && t_ch->in_room != ch->in_room)
-	{
-		char_from_room(t_ch);
-		char_to_room(t_ch, ch->in_room, dir);
-	}
+	if (!move_riding_companions(ch, room, dir))
+		return FALSE;
 
 	/*
 	 * ok, since running battles aren't allowed, if they get here and are
@@ -1887,6 +1903,31 @@ static void mark_char_or_owner_dirty(P_char ch)
 	}
 }
 
+int set_obj_condition(P_obj object, int condition)
+{
+	const auto before = object->condition;
+	object->condition = condition;
+	if (before != object->condition)
+		gmcp_item_changed(object);
+	return object->condition;
+}
+
+void set_obj_extra_flags(P_obj object, unsigned flags)
+{
+	const auto before = object->extra_flags;
+	object->extra_flags = flags;
+	if (before != object->extra_flags)
+		gmcp_item_changed(object);
+}
+
+void set_obj_extra2_flags(P_obj object, unsigned flags)
+{
+	const auto before = object->extra2_flags;
+	object->extra2_flags = flags;
+	if (before != object->extra2_flags)
+		gmcp_item_changed(object);
+}
+
 // Give an object to a char
 void obj_to_char(P_obj object, P_char ch)
 {
@@ -1999,6 +2040,7 @@ void obj_to_char(P_obj object, P_char ch)
 		object->g_key = 1;
 	}
 
+	gmcp_items_changed(ch);
 	mark_char_or_owner_dirty(ch);
 	SET_BIT(ch->runtime_flags, CHAR_RFLAG_DIRTY_INVENTORY);
 }
@@ -2051,6 +2093,7 @@ void obj_from_char(P_obj object)
 	IS_CARRYING_N(object->loc.carrying)--;
 	object->z_cord = object->loc.carrying->specials.z_cord;
 
+	gmcp_items_changed(ch);
 	mark_char_or_owner_dirty(ch);
 	SET_BIT(ch->runtime_flags, CHAR_RFLAG_DIRTY_INVENTORY);
 
@@ -2146,6 +2189,7 @@ void equip_char(P_char ch, P_obj obj, int pos, int nodrop)
 							     SPELL_TYPE_SPELL, ch, 0));
 		}
 
+	gmcp_items_changed(ch);
 	mark_char_or_owner_dirty(ch);
 	SET_BIT(ch->runtime_flags, CHAR_RFLAG_DIRTY_EQUIPMENT);
 }
@@ -2164,6 +2208,8 @@ P_obj unequip_char(P_char ch, int pos, bool saving)
 		return NULL;
 	}
 	obj = ch->equipment[pos];
+	const int old_hit = GET_HIT(ch), old_max_hit = GET_MAX_HIT(ch);
+	const int old_vitality = GET_VITALITY(ch), old_max_vitality = GET_MAX_VITALITY(ch);
 	// Temporary unequip preserves actions until an actual source departure.
 	if (!saving)
 		item_actions_source_leaving(obj);
@@ -2180,6 +2226,15 @@ P_obj unequip_char(P_char ch, int pos, bool saving)
 	obj->loc.wearing = NULL; // must clear full pointer, not just int-sized loc.room
 	all_affects(ch, TRUE);
 
+	// Temporary unequips used by saving must not publish intermediate vitals.
+	if (!saving &&
+	    (old_hit != GET_HIT(ch) || old_max_hit != GET_MAX_HIT(ch) ||
+	     old_vitality != GET_VITALITY(ch) || old_max_vitality != GET_MAX_VITALITY(ch)))
+	{
+		update_group_vitals(ch);
+		gmcp_char_vitals(ch);
+	}
+
 	balance_affects(ch);
 
 	if (IS_SET(obj->extra_flags, ITEM_LIT) || ((obj->type == ITEM_LIGHT) && obj->value[2]))
@@ -2189,6 +2244,8 @@ P_obj unequip_char(P_char ch, int pos, bool saving)
 	}
 	GET_CARRYING_W(ch) -= (encumbrance_weight(GET_OBJ_WEIGHT(obj)) / 2);
 
+	if (!saving)
+		gmcp_items_changed(ch);
 	mark_char_or_owner_dirty(ch);
 	SET_BIT(ch->runtime_flags, CHAR_RFLAG_DIRTY_EQUIPMENT);
 
@@ -2828,6 +2885,7 @@ static void mark_container_dirty(P_obj container)
 	while (OBJ_INSIDE(top) && top->loc.inside)
 		top = top->loc.inside;
 
+	gmcp_item_changed(top);
 	SET_BIT(top->runtime_flags, OBJ_RFLAG_DIRTY_CONTAINER);
 
 	P_char owner = NULL;
@@ -3102,6 +3160,7 @@ void obj_to_char_at_end(P_obj object, P_char ch)
 
 	if (object->g_key == 0 && IS_PC(ch) && GET_LEVEL(ch) < 57 && GET_PID(ch) < 10000000)
 		object->g_key = 1;
+	gmcp_items_changed(ch);
 }
 
 /*
@@ -3629,6 +3688,7 @@ void update_char_objects(P_char ch)
 	{
 		char_light(ch);
 		room_light(ch->in_room, REAL);
+		gmcp_items_changed(ch);
 	}
 }
 
@@ -3643,6 +3703,8 @@ void extract_char_after_terminal_save(P_char ch)
 		logit(LOG_EXIT, "No ch in extract_char_after_terminal_save");
 		return;
 	}
+	if (!locker_leave_for_extraction(ch))
+		return;
 
 	if (ch->telemetry_session_sequence != 0U)
 	{
@@ -4021,6 +4083,7 @@ void extract_char(P_char ch)
 			flush_input_queue(ch->desc);
 #ifndef USE_ACCOUNT
 			ch->desc->connected = CON_MAIN_MENU;
+			gmcp_session_update(ch->desc);
 			SEND_TO_Q(MENU, ch->desc);
 			//  SEND_TO_Q("\r\n*** PRESS RETURN: ", ch->desc);
 			//  ch->desc->connected = CON_RMOTD;
@@ -4041,6 +4104,7 @@ void extract_char(P_char ch)
 			if (ch->desc->account)
 			{
 				ch->desc->connected = CON_DISPLAY_ACCT_MENU;
+				gmcp_session_update(ch->desc);
 
 				/* For WebSocket clients, send return_to_menu signal instead of telnet menu */
 				if (ch->desc->websocket)
@@ -4280,6 +4344,15 @@ P_char get_char_vis(P_char ch, const char *name)
 	return (0);
 }
 
+bool obj_name_matches(P_char viewer, P_obj object, const char *name)
+{
+	if (!object || !name)
+		return false;
+	if (!strncasecmp(name, "@i:", 3))
+		return gmcp_item_selector_matches(viewer, object, name);
+	return isname(name, object->name);
+}
+
 P_obj get_obj_in_list_vis(P_char ch, const char *name, P_obj list, bool no_tracks)
 {
 	P_obj i;
@@ -4300,8 +4373,9 @@ P_obj get_obj_in_list_vis(P_char ch, const char *name, P_obj list, bool no_track
 	{
 		for (i = list, j = 1; i && (j <= k); i = i->next_content)
 		{
-			if (isname(tmp, i->name) || (IS_PC(ch) && IS_TRUSTED(ch) &&
-						     atoi(name) > 0 && atoi(name) == OBJ_VNUM(i)))
+			if (obj_name_matches(ch, i, tmp) ||
+			    (IS_PC(ch) && IS_TRUSTED(ch) && atoi(name) > 0 &&
+			     atoi(name) == OBJ_VNUM(i)))
 			{
 				if (CAN_SEE_OBJ(ch, i) ||
 				    (IS_NOSHOW(i) && OBJ_VNUM(i) != VNUM_TRACKS))
@@ -4317,8 +4391,9 @@ P_obj get_obj_in_list_vis(P_char ch, const char *name, P_obj list, bool no_track
 	{
 		for (i = list, j = 1; i && (j <= k); i = i->next_content)
 		{
-			if (isname(tmp, i->name) || (IS_PC(ch) && IS_TRUSTED(ch) &&
-						     atoi(name) > 0 && atoi(name) == OBJ_VNUM(i)))
+			if (obj_name_matches(ch, i, tmp) ||
+			    (IS_PC(ch) && IS_TRUSTED(ch) && atoi(name) > 0 &&
+			     atoi(name) == OBJ_VNUM(i)))
 			{
 				if (CAN_SEE_OBJ(ch, i) || IS_NOSHOW(i))
 				{
@@ -4618,7 +4693,7 @@ P_obj get_obj_equipped(P_char ch, char *arg)
 		if (!ch->equipment[i])
 			continue;
 		// Skip items that don't match
-		if (!isname(tmp, ch->equipment[i]->name) &&
+		if (!obj_name_matches(ch, ch->equipment[i], tmp) &&
 		    !(IS_TRUSTED(ch) && (vnum > 0) && (vnum == OBJ_VNUM(ch->equipment[i]))))
 		{
 			continue;
@@ -4876,7 +4951,7 @@ int generic_find(const char *arg, int bitvector, P_char ch, P_char *tar_ch, P_ob
 	if (IS_SET(bitvector, FIND_OBJ_EQUIP))
 	{
 		for (found = FALSE, i = 0; i < MAX_WEAR && !found; i++)
-			if (ch->equipment[i] && isname(name, ch->equipment[i]->name))
+			if (ch->equipment[i] && obj_name_matches(ch, ch->equipment[i], name))
 			{
 				*tar_obj = ch->equipment[i];
 				found = TRUE;

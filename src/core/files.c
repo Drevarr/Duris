@@ -36,6 +36,7 @@
 #include "classes/necromancy.h"
 #include "economy/collector_death_enrollment.h"
 #include "economy/collector_service.h"
+#include "economy/shopkeeper_boot.h"
 #include "player/player_save_pipeline.h"
 #include "player/player_revision_state.h"
 #include "player/player_snapshot_capture.h"
@@ -2127,6 +2128,7 @@ int restoreStatus(char *buf, P_char ch)
 	// Legacy pfiles contain no accepted origin or replacement entitlement.
 	ch->only.pc->quest_origin_room = 0;
 	ch->only.pc->quest_replacement_due = 0;
+	ch->only.pc->quest_reward_item_count = 0;
 	if (stat_vers > 41)
 	{
 		ch->only.pc->quest_active = GET_INTE(buf);
@@ -4052,7 +4054,8 @@ void restore_shopkeepers(void)
 	{
 		std::string error;
 		const char *root = persistence_mode_flatfile_root();
-		const auto restored = flatfile_shopkeeper_restore_catalog(root ? root : "", &error);
+		const auto restored = flatfile_shopkeeper_restore_catalog(
+			root ? root : "", &error, shopkeeper_boot_restock());
 		if (restored != flatfile_shopkeeper_restore_result::ok &&
 		    restored != flatfile_shopkeeper_restore_result::not_found)
 			fatal_boot_error("shopkeeper", "flat-file shopkeeper restore failed: %s",
@@ -4061,7 +4064,7 @@ void restore_shopkeepers(void)
 		return;
 	}
 #ifndef __NO_MYSQL__
-	if (!sql_restore_shopkeepers())
+	if (!sql_restore_shopkeepers(shopkeeper_boot_restock()))
 		fatal_boot_error(
 			"shopkeeper",
 			"SQL shopkeeper restore incomplete; refusing to publish partial stock");

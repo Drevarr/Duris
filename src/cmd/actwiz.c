@@ -4957,6 +4957,7 @@ void do_switch(P_char ch, char *argument, int cmd)
 			ch->only.pc->switched = victim;
 
 			victim->desc = ch->desc;
+			gmcp_session_update(victim->desc);
 
 			// We could, at this point, pull ch from room and leave the was_in_room, and put them back there
 			//   upon do_return, but that's not really necessary.
@@ -5006,6 +5007,7 @@ void do_return(P_char ch, char * /*argument*/, int /*cmd*/)
 		ch->desc->character->only.pc->switched = 0;
 
 		ch->desc->character->desc = ch->desc;
+		gmcp_session_update(ch->desc);
 		switched_mob->desc = 0; // Clear the MOB's desc, not ch->desc
 	}
 	else /* switched body due to shape change  */
@@ -6170,10 +6172,11 @@ void do_restore(P_char ch, char *argument, int cmd)
 					continue;
 				for (i = 0; i < MAX_WEAR; i++)
 					if (victim->equipment[i])
-						victim->equipment[i]->condition =
-							100; // victim->equipment[i]->max_condition; wipe2011
+						set_obj_condition(
+							victim->equipment[i],
+							100); // victim->equipment[i]->max_condition; wipe2011
 				for (obj = victim->carrying; obj; obj = obj->next_content)
-					obj->condition = 100; // obj->max_condition; wipe2011
+					set_obj_condition(obj, 100); // obj->max_condition; wipe2011
 				send_to_char(
 					"&+gFrom out of nowhere, little gremlin-like creatures about 6 inches tall pop up.\n"
 					"&+gThey grab all of your equipment, and fiddle with it before returning to you.\n"
@@ -7182,12 +7185,12 @@ void do_secret(P_char ch, char *argument, int /*cmd*/)
 	{
 		if (IS_SET(obj->extra_flags, ITEM_SECRET))
 		{
-			REMOVE_BIT(obj->extra_flags, ITEM_SECRET);
+			set_obj_extra_flags(obj, obj->extra_flags & ~(ITEM_SECRET));
 			send_to_char("SECRET bit removed.\n", ch);
 		}
 		else
 		{
-			SET_BIT(obj->extra_flags, ITEM_SECRET);
+			set_obj_extra_flags(obj, obj->extra_flags | (ITEM_SECRET));
 			send_to_char("SECRET bit set.\n", ch);
 		}
 	}
@@ -13212,7 +13215,7 @@ void do_account(P_char ch, char *arg, int /*cmd*/)
  * Usage: extractlink <name> - extract specific ghost character
  *        extractlink all    - extract all ghost characters
  */
-static void extractlink_attempt(P_char ch, P_char vict)
+static bool extractlink_attempt(P_char ch, P_char vict)
 {
 	char victim_name[MAX_INPUT_LENGTH];
 	char buf[MAX_STRING_LENGTH];
@@ -13228,6 +13231,16 @@ static void extractlink_attempt(P_char ch, P_char vict)
 	if (dangling_descriptor)
 		vict->desc = NULL;
 
+	if (!locker_leave_for_extraction(vict))
+	{
+		snprintf(
+			buf, sizeof(buf),
+			"Deferred ghost: %s. Locker departure is not ready; try again shortly.\r\n",
+			victim_name);
+		send_to_char(buf, ch);
+		return false;
+	}
+
 	persistence_save_character_terminal(vict, RENT_LINKDEAD);
 
 	extract_char_after_terminal_save(vict);
@@ -13235,6 +13248,7 @@ static void extractlink_attempt(P_char ch, P_char vict)
 	logit(LOG_WIZ, "%s extracted ghost character %s", GET_NAME(ch), victim_name);
 	snprintf(buf, sizeof(buf), "Extracted ghost: %s.\r\n", victim_name);
 	send_to_char(buf, ch);
+	return true;
 }
 
 void do_extractlink(P_char ch, char *argument, int /*cmd*/)
@@ -13304,9 +13318,8 @@ void do_extractlink(P_char ch, char *argument, int /*cmd*/)
 		}
 
 		ghosts++;
-		// The save is queued and the ghost always leaves (persistence reset step 7).
-		extractlink_attempt(ch, vict);
-		extracted++;
+		if (extractlink_attempt(ch, vict))
+			extracted++;
 	}
 
 	if (extract_all)
@@ -13316,9 +13329,10 @@ void do_extractlink(P_char ch, char *argument, int /*cmd*/)
 				     ch);
 		else
 		{
-			snprintf(buf, sizeof(buf),
-				 "extractlink all complete: %d ghost%s found; %d extracted.\r\n",
-				 ghosts, ghosts == 1 ? "" : "s", extracted);
+			snprintf(
+				buf, sizeof(buf),
+				"extractlink all complete: %d ghost%s found; %d extracted; %d deferred.\r\n",
+				ghosts, ghosts == 1 ? "" : "s", extracted, ghosts - extracted);
 			send_to_char(buf, ch);
 		}
 		return;
@@ -13332,11 +13346,12 @@ void do_extractlink(P_char ch, char *argument, int /*cmd*/)
 		return;
 	}
 
-	snprintf(buf, sizeof(buf),
-		 "extractlink result: %d match%s; %d ghost%s found; %d extracted; %d connected; "
-		 "%d excluded.\r\n",
-		 matches, matches == 1 ? "" : "es", ghosts, ghosts == 1 ? "" : "s", extracted,
-		 connected, excluded);
+	snprintf(
+		buf, sizeof(buf),
+		"extractlink result: %d match%s; %d ghost%s found; %d extracted; %d deferred; %d connected; "
+		"%d excluded.\r\n",
+		matches, matches == 1 ? "" : "es", ghosts, ghosts == 1 ? "" : "s", extracted,
+		ghosts - extracted, connected, excluded);
 	send_to_char(buf, ch);
 }
 

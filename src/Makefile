@@ -136,6 +136,9 @@ OBJS =  $(SHIP_OBJS) \
 				 combat/frag_cap_runtime.o \
 				 cmd/actcomm.o \
 				 cmd/actinf.o \
+				 cmd/race.o \
+				 cmd/skills.o \
+				 cmd/spells.o \
 				 cmd/actmove.o \
 				 cmd/actnew.o \
 				 cmd/actobj.o \
@@ -312,6 +315,7 @@ OBJS =  $(SHIP_OBJS) \
 				 persistence/persistence_mode.o \
 				 core/env_file.o \
 				 flatfile/flatfile_store.o \
+				 flatfile/flatfile_shopkeeper_restock.o \
 				 flatfile/flatfile_authority_transaction.o \
 				 flatfile/flatfile_account_repository.o \
 				 flatfile/flatfile_account_delete.o \
@@ -363,6 +367,8 @@ OBJS =  $(SHIP_OBJS) \
 				 item/item_movement_transaction.o \
 				 economy/shop_trade_transaction.o \
 				 economy/shop_trade_runtime.o \
+				 economy/shopkeeper_boot.o \
+				 economy/shopkeeper_restock.o \
 				 item/item_transfer_repository.o \
 				 item/item_claim.o \
 				 item/item_claim_repository.o \
@@ -521,6 +527,7 @@ OBJS =  $(SHIP_OBJS) \
 				 item/locker_identify.o \
 				 item/locker_receipt.o \
 				 persistence/locker_async.o \
+				 persistence/locker_recovery.o \
 				 world/timers.o \
 				 cmd/track.o \
 				 economy/tradeskill.o \

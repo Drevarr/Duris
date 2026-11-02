@@ -1632,6 +1632,9 @@ char affect_total(P_char ch, int kill_ch)
 		return FALSE;
 	}
 
+	const int old_hit = GET_HIT(ch), old_max_hit = GET_MAX_HIT(ch);
+	const int old_vitality = GET_VITALITY(ch), old_max_vitality = GET_MAX_VITALITY(ch);
+
 	all_affects(ch, FALSE); /*
 	                         * effectively resets character to a state
 	                         * with NO affects
@@ -1783,6 +1786,12 @@ char affect_total(P_char ch, int kill_ch)
 			StartRegen(ch, regen_resource::ward);
 	}
 
+	if (old_hit != GET_HIT(ch) || old_max_hit != GET_MAX_HIT(ch) ||
+	    old_vitality != GET_VITALITY(ch) || old_max_vitality != GET_MAX_VITALITY(ch))
+	{
+		update_group_vitals(ch);
+		gmcp_char_vitals(ch);
+	}
 	return FALSE;
 }
 
@@ -1872,6 +1881,7 @@ struct affected_type *affect_to_char(P_char ch, struct affected_type *af)
 	}
 
 	/* Update web client affects display */
+	update_groupies(ch);
 	gmcp_char_affects(ch);
 
 	return affected_alloc;
@@ -2046,6 +2056,7 @@ void affect_remove(P_char ch, struct affected_type *af)
 			balance_affects(ch);
 
 			/* Update web client affects display */
+			update_groupies(ch);
 			gmcp_char_affects(ch);
 			return;
 		}
@@ -2112,6 +2123,7 @@ void affect_remove(P_char ch, struct affected_type *af)
 	balance_affects(ch);
 
 	/* Update web client affects display */
+	update_groupies(ch);
 	gmcp_char_affects(ch);
 }
 
@@ -2428,10 +2440,10 @@ void recalculate_obj_extra(P_obj obj)
 	if (!t_af)
 		return;
 
-	obj->extra2_flags = t_af->extra2;
-
+	unsigned extra2 = t_af->extra2;
 	for (t_af = obj->affects; t_af; t_af = t_af->next)
-		obj->extra2_flags |= t_af->extra2;
+		extra2 |= t_af->extra2;
+	set_obj_extra2_flags(obj, extra2);
 }
 
 void obj_affect_remove(P_obj obj, struct obj_affect *af)
@@ -2447,7 +2459,7 @@ void obj_affect_remove(P_obj obj, struct obj_affect *af)
 	// This should fix a crash bug that occurs when an item's condition < 0.
 	if (obj->condition < 0)
 	{
-		obj->condition = 1;
+		set_obj_condition(obj, 1);
 	}
 
 	// Find the assoicated event and disarm it
@@ -2577,7 +2589,7 @@ void set_obj_affected_extra(P_obj obj, int time, sh_int spell, sh_int data, ulon
 	if (extra2 && !get_obj_affect(obj, TAG_ALTERED_EXTRA2) && spell != TAG_ALTERED_EXTRA2)
 		set_obj_affected_extra(obj, -1, TAG_ALTERED_EXTRA2, 0, obj->extra2_flags);
 
-	obj->extra2_flags |= extra2;
+	set_obj_extra2_flags(obj, obj->extra2_flags | extra2);
 
 	if (time >= 0)
 	{
@@ -2771,6 +2783,7 @@ void initialize_links()
 	define_link(LNK_DRAGOON_MOUNT, "DRAGOON_MOUNT", charm_broken,
 		    LNKFLG_AFFECT | LNKFLG_EXCLUSIVE);
 	define_link(LNK_PLANT_PARALYSIS, "PLANT_PARALYSIS", NULL, LNKFLG_AFFECT);
+	define_link(LNK_TAUNT, "TAUNT", NULL, LNKFLG_AFFECT);
 
 	define_olink(LNK_CEGILUNE, "CEGILUNES_SEARING", cegilunes_broken,
 		     LNKFLG_EXCLUSIVE | LNKFLG_REMOVE_AFF | LNKFLG_BREAK_REMOVE);
@@ -3773,7 +3786,7 @@ bool falling_obj(P_obj obj, int speed, bool caller_is_event)
 				act("$p crashes into the ground from above!", TRUE, 0, obj, 0,
 				    TO_ROOM);
 				if (!IS_ARTIFACT(obj))
-					obj->condition -= dam / 10;
+					set_obj_condition(obj, obj->condition - (dam / 10));
 				// Add object damage/destroy, also hit people, here
 				return FALSE;
 			}

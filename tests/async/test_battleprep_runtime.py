@@ -47,6 +47,7 @@ void event_poison(P_char, P_char, P_obj, void *) {}
 static int cleared_effects;
 void affect_from_char(P_char, int effect) { assert(effect == SPELL_MAGMA_BURST || effect == FIRST_POISON); ++cleared_effects; }
 void gmcp_char_vitals(P_char) {}
+void update_group_vitals(P_char) {}
 nevent_handle nevent_handle_from_event(P_nevent event) { return {event, event->sequence}; }
 nevent_cancel_result nevent_cancel(nevent_handle handle) {
     auto **cursor = &handle.event->ch->nevents;

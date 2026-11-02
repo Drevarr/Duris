@@ -1,5 +1,6 @@
 #include "core/prototypes.h"
 #include "core/utils.h"
+#include "cmd/interp.h"
 #include "world/world_singletons.h"
 #include "persistence/copyover.h"
 #include "world/world_recovery_codec.h"
@@ -14,6 +15,7 @@
 #include <vector>
 
 P_char character_list = nullptr;
+uint64_t character_removal_generation = 0;
 P_desc descriptor_list = nullptr;
 P_obj object_list = nullptr;
 index_data mob_indexes[4] = {};
@@ -42,6 +44,7 @@ struct scheduled_event
 	P_char rider;
 };
 std::unordered_map<P_char, scheduled_event> scheduled;
+bool reject_flight_events = false;
 int next_id = 1;
 int bfs_cur_marker = 1;
 void bfs_clear_marks()
@@ -54,6 +57,9 @@ int shops_saved = 0;
 int saved_shop_rooms[7] = { -1, -1, -1, -1, -1, -1, -1 };
 bool fail_shop_placement = false;
 bool entry_hazard = false;
+void (*entry_hook)(P_char) = nullptr;
+int (*departure_hook)(P_char) = nullptr;
+P_char refused_entry = nullptr;
 persistence_mode persistence_mode_get()
 {
 	return PERSISTENCE_MODE_MARIADB_PRIMARY;
@@ -142,6 +148,15 @@ P_char find_player_by_name(const char *name)
 }
 void char_from_room(P_char ch)
 {
+	const int source = ch->in_room;
+	const auto runtime = ch->runtime_id;
+	if (departure_hook)
+	{
+		const int result = departure_hook(ch);
+		if (result == ROOM_PROC_LEAVE_VETO || !char_in_list(ch) ||
+		    ch->runtime_id != runtime || ch->in_room != source || !IS_ALIVE(ch))
+			return;
+	}
 	if (ch->in_room >= 0)
 	{
 		P_char *at = &world[ch->in_room].people;
@@ -150,11 +165,15 @@ void char_from_room(P_char ch)
 		if (*at)
 			*at = ch->next_in_room;
 	}
+	if (source >= 0)
+		ch->specials.was_in_room = world[source].number;
 	ch->in_room = -1;
 	ch->next_in_room = nullptr;
 }
 bool char_to_room(P_char ch, int room, int direction)
 {
+	if (!IS_ALIVE(ch) || ch->in_room != NOWHERE || ch == refused_entry)
+		return false;
 	// Ordinary room entry can extract a mob; recovery must skip those effects.
 	if (entry_hazard && direction >= 0)
 	{
@@ -176,6 +195,8 @@ bool char_to_room(P_char ch, int room, int direction)
 		char_from_room(rider);
 		char_to_room(rider, room, -1);
 	}
+	if (entry_hook)
+		entry_hook(ch);
 	return true;
 }
 int char_in_list(const P_char candidate)
@@ -202,6 +223,7 @@ P_char read_mobile(int v, int mode)
 	// As the production read_mobile() does: reported before it is marked an NPC.
 	shopkeeper_mob_created(ch);
 	ch->specials.act = ACT_ISNPC;
+	ch->specials.position = POS_STANDING + STAT_NORMAL;
 	return ch;
 }
 P_obj read_object(int v, int mode)
@@ -302,6 +324,7 @@ void extract_obj(P_obj obj, int)
 }
 void extract_char(P_char ch)
 {
+	++character_removal_generation;
 	assert(!GET_RIDER(ch));
 	scheduled.erase(ch);
 	// Ordinary production NPC teardown drops items in a valid room.
@@ -363,6 +386,8 @@ nevent_cancel_result nevent_cancel(nevent_handle h)
 nevent_schedule_result add_event(event_func f, int, P_char ch, P_char rider, P_obj, int,
 				 const void *, int)
 {
+	if (reject_flight_events)
+		return { nevent_schedule_status::negative_delay, {} };
 	assert(!scheduled.count(ch));
 	scheduled[ch] = { f, rider };
 	return {};
@@ -583,6 +608,7 @@ int main()
 	initialize_transport();
 	char player_name[] = "Passenger";
 	P_char rider = new char_data{};
+	rider->specials.position = STAT_NORMAL;
 	rider->player.name = player_name;
 	rider->in_room = -1;
 	rider->next = character_list;
@@ -640,6 +666,42 @@ int main()
 	assert(flight->in_room == 0 && TRANSPORT_STATE(flight) == TRANSPORT_STATE_WAITING &&
 	       scheduled.empty());
 
+	// A snapshot of an already stranded, unoccupied flight resumes its return.
+	char_from_room(flight);
+	char_to_room(flight, 1, -1);
+	transport_snapshot orphan = {};
+	orphan.origin = rooms[0].number;
+	orphan.destination = rooms[2].number;
+	orphan.state = TRANSPORT_STATE_MOVING;
+	orphan.step = 1;
+	transport_restore(flight, orphan);
+	initialize_transport();
+	assert(scheduled.at(flight).rider == nullptr);
+	while (scheduled.count(flight))
+		run_event(flight);
+	assert(flight->in_room == 0 && flight->specials.z_cord == 0 &&
+	       TRANSPORT_STATE(flight) == TRANSPORT_STATE_WAITING);
+	// Legacy nested passengers must all be detached/grounded before recovery moves them.
+	P_char extra = new char_data{};
+	extra->specials.position = STAT_NORMAL;
+	extra->player.name = const_cast<char *>("Extra");
+	extra->in_room = -1;
+	extra->next = character_list;
+	character_list = extra;
+	char_to_room(extra, 1, -1);
+	char_from_room(rider);
+	char_to_room(rider, 1, -1);
+	char_from_room(flight);
+	char_to_room(flight, 1, -1);
+	link_char(extra, rider, LNK_RIDING);
+	rider->specials.z_cord = extra->specials.z_cord = 10;
+	strlcpy(orphan.rider, player_name, sizeof(orphan.rider));
+	transport_restore(flight, orphan);
+	initialize_transport();
+	assert(flight->in_room == 0 && rider->in_room == 0 && extra->in_room == 0);
+	assert(!GET_MOUNT(rider) && !GET_MOUNT(extra) && !GET_RIDER(flight));
+	assert(rider->specials.z_cord == 0 && extra->specials.z_cord == 0 && scheduled.empty());
+
 	// Old snapshots have no route metadata; safely return that dragon home.
 	char_from_room(flight);
 	char_to_room(flight, 1, -1);
@@ -649,6 +711,7 @@ int main()
 
 	// Two occupied duplicates: land the extra passenger before extraction.
 	P_char rider2 = new char_data{};
+	rider2->specials.position = STAT_NORMAL;
 	rider2->in_room = -1;
 	rider2->next = character_list;
 	character_list = rider2;

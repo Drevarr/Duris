@@ -9,6 +9,28 @@ Duris has two deliberately separate histories:
   the baseline. Every post-baseline step receives one ordered ID, apply file,
   verifier, compatibility label, and exact SHA-256 hashes.
 
+## Bartender reward counts (0058)
+
+`0058_world_quest_reward_count` adds `player_data.quest_reward_item_count` as a
+signed integer with default zero. Existing completed quests retain their legacy
+one-item entitlement; new completions save the rolled quantity with their reward
+batch. The guarded migration preserves saved decisions when rerun. Apply it
+before starting the new server. Snapshot version 14 reads older snapshots with
+a zero default; an older binary cannot read version 14 snapshots. The previously
+sealed online modes below do not authorize this new migration or a 59-step head.
+
+`run --online-quest-reward-count` accepts only the sealed 59-step manifest ending
+at `0058_world_quest_reward_count`, with all 58 earlier steps already applied.
+It retains production target confirmation, allow-list, fresh backup, advisory
+lock, checksums, ordered history and success-last verification. The November 1
+live review found MariaDB 11.8.6 and InnoDB/Dynamic `player_data`, with the new
+column absent. Existing readers and writers name their columns, so the
+default-zero tail column preserves their behavior. The runner strengthens only
+the sealed ALTER to `ALTER ONLINE TABLE`, requires INSTANT DDL and LOCK=NONE,
+and bounds metadata/row-lock waits to one second. Unsupported DDL or a lock
+timeout leaves services running. Hold the backup job lock across DDL so a
+schema-aware backup cannot straddle it, then verify runtime compatibility.
+
 ## Online chest receipts and shared frag storage (0056/0057)
 
 `run --online-chest-frag` accepts only the sealed 58-step manifest ending in
@@ -331,7 +353,7 @@ shape and position. Replays preserve existing values and snapshots; old rows
 and old-writer inserts retain unknown consent. No current player flag is used
 to backfill permission. The v4 combat writer records NULL/0/1 with each owned
 snapshot in the existing transaction. See the
-[PvP implementation and rollout plan](../records/2026-10-18-pvp-mud-implementation-plan.md).
+[PvP implementation and rollout plan](https://github.com/LuminariMUD/Duris/blob/76262c0b71da4bf1e835228475930a966fb08310/docs/records/2026-10-18-pvp-mud-implementation-plan.md).
 
 Migration 0044 adds canonical artifact UID/state fields to the existing
 `artifact_domain_state` store. It retains `item_uid` and its custody FK: the
@@ -341,8 +363,10 @@ canonical selection or data cleanup. A unique key prevents one non-null canonica
 UID from naming two vnums, and retired UIDs remain representable. Column/index
 guards replay partial DDL; the verifier checks their full shape, preserves the
 custody FK, and refuses inconsistent state/UID pairs. Apply it before starting
-the updated database-backed server. See the [artifact plan](../ongoing-projects/plan-issue-67.md)
-for the separate runtime/admission/reconciliation acceptance work.
+the updated database-backed server. The
+[runtime identity contract](../reference/ARCHITECTURE.md#persistence)
+describes current reconciliation; the broader historical proposal is retained in
+closed [#67](https://github.com/LuminariMUD/Duris/issues/67).
 
 Migration 0046 restores only Nexus IDs 1 (Marduk) and 3 (Enlil), with explicit
 zero stat fields and the existing epic/cargo bonus assignments. Its SQL checks

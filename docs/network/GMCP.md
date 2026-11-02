@@ -1,0 +1,418 @@
+# GMCP contracts
+
+The same packages use Telnet GMCP subnegotiation and the existing WebSocket
+`{type:"gmcp", package, data}` envelope. Legacy gameplay packages keep their
+existing defaults. New versioned streams require explicit support and interest.
+This document describes the implemented control, time, lifecycle and combat
+state/damage and owner-item slices of issue #498. Requested nested contents use
+the same bounded owner-item scheduler. Actions and command results remain pending.
+
+## Negotiation and interest
+
+After negotiating GMCP, send:
+
+```text
+Core.Supports.Set ["Duris.Capabilities 1", "Duris.Time 1", "Duris.Session 1"]
+Duris.Subscribe ["Duris.Time 1"]
+```
+
+`Core.Supports.Set` replaces supported modules; `Add` and `Remove` update that
+set. Only exact implemented name/version pairs grant support. Unknown names
+and versions are ignored, so advertising a future schema does not enable it.
+Support means the client can decode a stream. It does not subscribe the client.
+
+`Duris.Subscribe` replaces the desired new streams. It requires support for
+`Duris.Capabilities 1`; only supported, implemented streams become interested.
+An empty array unsubscribes all new streams. Removing stream support also
+removes its interest; re-advertising it does not reopen the panel. Session is
+connection control: advertising its version enables it without Subscribe. Removing
+Capabilities support clears all new interest and sends one final invalidation.
+
+Each request is an entire JSON array, with no trailing non-whitespace data or
+NULs in module names. Requests are limited to 8 KiB including the package name
+(and the WebSocket JSON envelope), 64 entries and 96 decoded bytes per entry.
+Invalid arrays change no state.
+Supports operations share a per-connection token bucket: burst two, refill one
+per second. Subscribe has its own bucket. In-range malformed requests consume
+tokens too. Oversized or rate-limited requests are ignored before additional
+control parsing or construction. WebSocket reuses its already-decoded envelope instead of
+serializing and parsing the control data a second time.
+No gameplay command, permission, wait or transaction gate is bypassed.
+
+Changes coalesce at the existing two-pulse GMCP flush (about 500 ms). No new
+packet is sent to a legacy client that has not advertised Capabilities.
+WebSocket's legacy default does not opt it into these new streams.
+
+## Duris.Capabilities, version 1
+
+The server sends a complete control snapshot after supported-module/interest
+changes, playing-eligibility changes, initial character snapshots and preference
+re-enable/disable:
+
+```json
+{"version":1,"enabled":true,"features":{"Duris.Capabilities":1,"Duris.Subscribe":1,"Duris.Time":1,"Duris.Session":1,"Duris.Combat":1,"Char.Items":1,"Char.Items.Get":1},"supported":["Duris.Time"],"interested":["Duris.Time"],"active":["Duris.Time"],"control":["Duris.Session"]}
+```
+
+`features` lists implemented contracts only. `supported` and `interested` list
+new gameplay streams; the control package itself is implicit in this snapshot.
+`enabled` reflects transport negotiation and the character's GMCP preference.
+`active` is the effective gameplay set, also requiring a playing character.
+Before entry it is empty even when interest was already declared. `control`
+lists negotiated lifecycle control; it remains available before character entry
+and while the character preference disables gameplay. Removing Session support
+clears this array, invalidating Session presentation without implying an entry.
+Unverified connections receive the same public schema metadata; this grants no
+service/player authority.
+
+Arrays replace their whole scope. A stream absent from `active` invalidates its
+client state immediately; absence is not an authoritative empty gameplay list.
+The control snapshot precedes newly active time data. Turning off the character
+preference still permits this control notification but stops gameplay data.
+
+Telnet DONT invalidates streams through transport negotiation itself. The
+connection retains support/interest for DO re-enable and resends current state.
+A newly allocated connection starts with no support or interest. Version-18
+copyover preserves eligible live-socket protocol state as described below.
+These fields have no persistent account/character configuration or heap owner.
+
+## Duris.Session, version 1
+
+A complete connection/character lifecycle snapshot:
+
+```json
+{"context":"0123456789abcdef0123456789abcdef","process":"fedcba9876543210fedcba9876543210","generation":"1","state":"playing","resumed":false,"character":{"name":"Tester","bodyRevision":"1"}}
+```
+
+States are `account`, `chargen` and `playing`. Account and chargen snapshots
+have `character:null`; temporary creation/load bodies never become an entered
+character. No account identifier, credential, player ID or global runtime ID
+is included. The name belongs to the authenticated owning player, including
+while morphed or switched into an NPC. The opaque context/process markers are
+identities, not authentication tokens or permission grants.
+
+The once-per-entry key is `(context,generation)`. Context is unique to the
+connection; generation is a lossless decimal string advancing only when that
+connection actually enters/attaches a character. Repeated bootstrap, Supports,
+DO, or preference re-enable resends the same key. Account/chargen transitions
+never advance it. Returning to a character from the account menu advances it,
+even for the same name. A new TCP/WebSocket connection has a fresh context.
+Consumers must retain their initialized-entry key across stream re-enable and
+must not execute saved login actions merely because another snapshot arrived.
+
+`bodyRevision` identifies the controlled body within an entry. Morph, switch
+and return change it while retaining the entry key. Consumers invalidate
+body-scoped views/continuations on that change instead of treating it as a
+new login. It does not expose a prototype or globally enumerable identity.
+
+Ordering is Capabilities, Session boundary, then compatible character data.
+Leaving a character sends `character:null` while the old body is still valid;
+a direct A-to-B replacement also queues that clear before B's entry snapshot.
+Already queued output retains FIFO order. Temporary allocation/queue failure
+retains pending control, holds subsequent structured gameplay data and requests
+a fresh initial snapshot after recovery; no partial Session object is sent.
+Outside playing, Session-aware connections receive no character gameplay
+packets; Core control and explicitly opted-in input-receipt metadata remain
+available. Normal command/transaction/authentication rules remain unchanged.
+
+Copyover uses version 18 of the existing descriptor record to retain support,
+interest, entry context/generation, body revision and input-receipt continuity.
+Readers still accept versions 12-17 with their original descriptor prefix;
+missing optional protocol state defaults off. No new state file, account
+preference or synchronous repository read is added. On supported Telnet/MCCP
+hotboot, the entry key is unchanged, `resumed:true` and a new process marker
+invalidate process-local snapshot revision baselines. Views resynchronize;
+login actions do not rerun. WebSocket/TLS copyover eligibility retains the
+existing refusal policy. Ordinary reconnect creates a fresh connection context.
+
+## Duris.Time, version 1
+
+A complete, connection-scoped game-clock snapshot:
+
+```json
+{"revision":"1","hour":9,"phase":"day","process":"fedcba9876543210fedcba9876543210"}
+```
+
+`hour` is 0-23; phases are dawn 04-08, day 09-15, dusk 16-18 and night 19-03.
+`revision` is a decimal string, compared losslessly; it advances on observed
+hour changes within this server process. The opaque `process` marker scopes
+that revision even for a Time-only client, so a retained socket can reset its
+clock baseline after hotboot without requiring Session support. Repeated initial snapshots/re-enable
+may resend the same revision. A new connection/process establishes a fresh
+baseline. Session-aware consumers use its process marker to reset that baseline
+across copyover without creating another entry. There is no character identity, calendar, shutdown deadline or
+historical-event replay in this package.
+
+The server builds one small shared payload per changed hour, only when there
+is an eligible interested recipient. Entry, subscribe and re-enable send the
+current revision; ordinary idle flushes send nothing. Mutations invalidate the
+cache after normalized hourly/staff-set changes, without calling do_time(),
+world traversal or storage. Staff negative hour input is normalized before
+updating the authoritative clock and map phase. No per-second ticks are sent.
+
+Control/time output is bounded below 1 KiB per recipient per flush and enters
+the existing transport FIFO. On temporary queue failure the pending snapshot
+is retained for retry; later time data cannot overtake a pending control packet.
+Existing terminal overflow/connection-close behavior still applies. This slice
+makes no replay guarantee across disconnects.
+
+## Combat.Update (legacy-compatible full state)
+
+Every snapshot replaces both `target` and `tank`; each is an object or explicit
+`null`. Target is the controlled body's current opponent, only while room-local.
+Tank is that opponent's opponent, also only while room-local. Their HP is separate
+from `Char.Vitals.hp/maxHp`, which continues to describe the controlled body.
+
+```json
+{"target":{"name":"wolf","health":"small wounds","healthPercent":80,"position":"standing"},"tank":{"name":"Ally","health":"awful","healthPercent":5,"position":"kneeling"},"revision":"7"}
+```
+
+Percentages are clamped to 0-100 using wide intermediate arithmetic. Overheal
+cannot overflow a bar, and negative HP retains the bleeding condition. Position
+uses the existing prone/sitting/kneeling/standing model. Names follow the prompt's
+viewer policy: unseen subjects become `someone`, players use recipient-specific
+PERS, and NPCs use the first alphabetic word. Names are plain text, bounded to
+255 bytes; no runtime ID, prototype or raw pointer is exposed.
+
+The existing two-pulse descriptor pass samples only these two subjects and sends
+changed views, including healing, posture and non-GMCP tanks. It does not scan a
+room or the combat/population list per hit. Repeated unchanged flushes allocate no
+JSON; disabled and pre-entry recipients do not resolve subjects. Snapshots retain
+only bounded values, so extraction cannot leave a queued victim pointer. Initial
+bootstrap resends the current complete state; session/body transitions invalidate
+the cache. `{"target":null,"tank":null,"revision":"8"}` clears both views.
+
+`revision` is a lossless decimal string increasing for each accepted Combat.Update
+on this connection/process. Rejected state output leaves the cache unchanged for
+retry. Session-aware consumers use its process/body boundaries to reset their
+revision baseline. Other legacy consumers use their usual reconnect/bootstrap
+reset; no historical replay is implied. State-only JSON stays below 4 KiB.
+
+The optional legacy `round` remains a per-applied-hit compatibility field, not a
+complete battle log or aggregated combat round. Before the first combat
+relationship is established, its immediate snapshot uses the struck victim as
+the target, including a lethal first hit. The next periodic snapshot follows the
+current relationship and clears absent subjects. State-only updates never repeat
+the round. Active Duris.Combat subscribers receive damage only through that event package;
+their Combat.Update packets contain state without `round`. Other clients retain
+the legacy primary-only round behavior. This does not claim the reported client
+HP symptom fixed; real widget qualification remains required.
+
+## Duris.Combat, version 1
+
+Advertise `Duris.Combat 1`, then include it in the replacement Subscribe array.
+It is independent of Time and is never enabled just by WebSocket or support.
+Each packet is one outgoing applied-damage event against another character:
+
+```json
+{"version":1,"context":"0123456789abcdef0123456789abcdef","process":"fedcba9876543210fedcba9876543210","generation":"1","bodyRevision":"1","sequence":"12","kind":"damage","outcome":"applied","actor":"Tester","target":"wolf","primary":false,"damage":17,"damageType":"physical","critical":true}
+```
+
+`damage` is whole HP actually removed, measured after the normal damage caps
+and the engine's fractional-to-integer HP conversion. Positive applied hits only;
+self-damage, misses, mitigation attempts and direct scripted HP assignments are
+outside this stream. Secondary victims still produce an event and do not change
+the primary opponent; `primary` compares the actual victim with that opponent.
+Target/tank state continues independently through Combat.Update.
+
+Actor/target names use the same bounded viewer policy as combat state. Unseen
+local targets are `someone`; a victim outside the viewer's room has `target:null`
+rather than disclosing a remote identity. No vnum, global runtime ID, raw command
+or typed argument is exposed. `damageType` is physical, generic, fire, cold,
+lightning, gas, acid, negative, holy, psionic, spirit, sound, earth or unknown,
+as supplied by the authoritative physical/spell/raw delivery path. `critical`
+is true/false only when the existing melee/archery calculation supplied its
+result, otherwise null. Delivery does not roll, notch, recompute damage or alter
+combat rules. Nested spell damage cannot overwrite the caller's metadata.
+
+Context/process/generation/body revision scope the event. `sequence` is a
+lossless decimal string increasing for each accepted event on this connection
+and process. It does not equal a combat-state revision. Events enter the existing
+transport FIFO immediately, in order; the following coalesced state may summarize
+several events. State/bootstrap resync never replays history. Hotboot establishes
+a new process scope and sequence baseline while retaining the Session entry key.
+
+At most 64 events/64 KiB are accepted per descriptor between the existing
+(two-pulse) flushes. Byte accounting reserves 128 bytes per event for transport
+framing/envelope; each JSON payload is bounded below 4 KiB. There is no second
+event queue. Reaching either quota cancels only the combat-event subscription.
+The next control flush removes it from the Capabilities interested/active arrays
+and refreshes Combat.Update, after any previously accepted FIFO events. Gameplay
+and other streams continue. Clients must treat the event history as incomplete;
+an explicit new Subscribe can restart events, with the sequence continuing and
+no replay of the lost hit. A rejected control invalidation stays pending for retry.
+Allocation or transport queue failure still uses the existing write-failure
+teardown. Reconnect resynchronizes state and offers no historical replay or
+exactly-once guarantee.
+Unsubscribe, preference disable or transport disable stops new event construction;
+previously queued FIFO events precede the control invalidation. An active event
+consumer never receives the same hit through the legacy `round` representation.
+
+## Char.Items, version 1 (owner inventory and equipment)
+
+Advertise `Char.Items 1` and include it in Subscribe to receive the controlled
+body's visible inventory/equipment. These are independent of Time and Combat.
+`Char.Items.Get []` requests a replacement of both top-level lists. It has an
+independent burst-two/refill-one-per-second bucket and the same bounded control
+parser. Malformed requests change no state; unsupported, uninterested
+and pre-entry requests stop before additional parsing/construction. WebSocket
+uses the already decoded envelope, as with the other control requests.
+
+Each `Char.Items.List` packet is one page of a full replacement for its location:
+
+```json
+{"version":1,"context":"0123456789abcdef0123456789abcdef","process":"fedcba9876543210fedcba9876543210","generation":"1","bodyRevision":"1","revision":"7","location":"inv","page":0,"available":true,"items":[{"description":"a red blade","quantity":1,"slot":null,"selector":"@i:abcdef0123456789abcdef0123456789:9007199254740993","condition":" [75%]","flags":["glowing"]}],"complete":true}
+```
+
+Locations are `inv` and `eq`. Pages start at zero, are contiguous within a
+location/revision, and replace that location only when `complete:true` arrives.
+Clients stage earlier pages; an incomplete empty page is not an empty inventory.
+A newer revision's page zero discards older unfinished staging. Revisions are
+lossless decimal strings shared by both locations in one replacement cycle.
+Session process/body boundaries also discard old views, pages and selectors.
+A new top-level revision's page zero also invalidates every previously requested
+nested view. A mutation/re-enable/resync generates a new selector scope.
+Bootstrap, re-enable and Get resync may replace state without advancing Session's
+entry generation. No prior item snapshot or event history is replayed.
+
+`available:false` invalidates that location rather than claiming ownership is
+empty: wraithform has no inventory/equipment presentation, and the native
+inventory/equipment posture gates differ. An available completed `items:[]` is
+an authoritative empty *visible* list. Inventory omits unseen/hitched objects;
+unseen equipped slots retain the normal `Something.` placeholder with no
+selector or condition. No hidden contents, vnum, identification statistics,
+artifact timer or storage record is included.
+
+Each real object has quantity one. Descriptions are plain text bounded to 383
+bytes. Equipment includes its numeric worn `slot` and established text `slotName`.
+`condition` reuses the ordinary display string (empty when no damage indicator
+is shown), rather than inventing a precise hidden healthy condition. Flags are
+an allowlist of normally visible invisible/glowing/humming/illuminating/magic
+markers; magic still requires the viewer's normal detection privilege.
+
+Selectors are opaque snapshot-scoped words accepted by the existing object
+lookup paths, including ordinary wear/remove/drop/give commands. The `@i:`
+namespace never falls back to an item keyword, including after expiry. Identity
+is lossless text, and the random scope changes on replacement; clients must not
+parse it as a global identifier or retain it as a cross-snapshot target. Resolution
+requires the current connection/body, mutation epoch, visibility policy and owner,
+then the native command's ordinary list/access/action gates still apply. Tokens
+are convenience targets, not permission grants. A stale token is rejected rather
+than selecting another duplicate. Ordinary keyword/ordinal targeting is unchanged.
+
+The existing two-pulse pass emits at most one 16 KiB page per descriptor and eight
+page attempts globally, rotating participants. Each page inspects at most 128
+entries, including hidden entries; no recursive push or periodic world-item scan
+is added. Unchanged/uninterested lists construct nothing. Accepted FIFO admission
+alone advances the cursor; allocation or queue failure retries the same page.
+Any ownership, presentation, body or relevant visibility mutation invalidates the
+cursor and selectors before reuse. A completed bulk operation coalesces into one
+replacement, independently of persistence dirty flags and save acknowledgements.
+
+Publication observes real attachment/removal/equip/container/property owners.
+Detached rewards are absent until the existing durable publisher attaches them;
+serialization never reads a repository, calls that publisher, or cancels its
+pending/offline work. Native string edits hold their item row until completion;
+completion resolves the item's UID once and notifies its current holder, including
+a transfer during editing. Ordinary extraction adds no editor scan; an edited
+object retires its native editor pointers before its strings are released.
+
+After both top-level lists complete, `Char.Items.Get ["<selector>"]` requests only
+that container's direct visible contents. The response uses that exact selector
+as `location`, starts at page zero, and has a newer revision. The selector scope
+stays valid across nested requests until an item/body/visibility mutation or
+resync. A container returned in a requested page may itself be requested; nothing
+is pushed recursively. Each connection keeps only its latest pending request;
+sending another abandons the earlier request and its staging. Reject malformed,
+stale-scope, multi-selector and premature requests without changing state.
+
+The existing scheduler searches only owned inventory/equipment trees, at most
+128 traversal steps per work slot (including ascents), then pages in later slots.
+It never scans the world object list or constructs an unbounded captured result.
+Normal look-in posture, vision, object visibility, closed/transparent-container
+and locker authorization apply. Missing/inaccessible/non-container targets return
+one `available:false,items:[],complete:true` page; they never claim a known-empty
+container. Authorization is checked again before each page, including ancestors.
+Access revocation during a request produces an unavailable page, while a normal
+item mutation cancels it in favor of fresh top-level state and selectors. Native
+open/close and staff container-flag edits retire the old scope. Private chests
+remain room/storage owned and gain no contents API through this owner-only stream.
+
+## Proof and remaining qualification
+
+`tests/async/test_gui_gmcp_contract.py` executes the production parser, cache,
+bootstrap and framing/send functions with controlled world/transport services.
+It covers both transports, unknown versions, malformed/oversized arrays, flood
+limits, preference changes, phase boundaries, authoritative control clears,
+idle silence, lifecycle/body ordering, JSON allocation failure and failed-queue
+retry. `--sanitize` enables ASan/UBSan for the full native fixture. Its emitted examples are executable fixture
+output; the examples above use the same field shapes.
+
+The GMCP fuzz target exercises the production input handler with ASan/UBSan.
+The booted `tests/async/test_gmcp_control_journey.py` journey covers real Telnet
+and WebSocket dispatch, character entry/return/reconnect, preference changes,
+staff clock mutation and invalid WebSocket module input on disposable state.
+The original-socket copyover journey verifies context/generation continuity
+with and without MCCP, and the native copyover matrix covers versions 12-18.
+The [local cost check](#short-local-cost-check--2026-11-01) records matched
+event-loop/serializer measurements; [#498](https://github.com/LuminariMUD/Duris/issues/498)
+retains the client handoff and delivery scope. These focused checks do not establish
+general player capacity or negligible overhead.
+
+The existing latency trace reports `gmcp_protocol` around the initial/item, room
+and ship protocol flushes, ending before queued ship saves and other persistence
+completion work. The older `gmcp_flush` span includes that additional work and
+must not be treated as serialization time. Both use the existing bounded tracer.
+
+## Short local cost check — 2026-11-01
+
+A matched reference/delivery check used the existing isolated minimal-world
+helpers, one staff descriptor, two combat NPCs and a controlled NPC carrying
+3,000 equal objects. Both binaries used g++ 13.3, development `-Og`, and the
+client-free flatfile backend on the same WSL host. A setup window was discarded;
+each case then collected 300 ticks and 150 protocol flushes over about 75 seconds.
+Cases ran sequentially against each binary. The new trace span uses the existing
+bounded statistics, with one extra clock read/record per protocol flush.
+
+Measured whole-tick averages (reference -> delivery), followed by delivery
+protocol average/max, all in microseconds:
+
+- Idle, items uninterested: 221 -> 211; protocol 6/10.
+- GMCP disabled: 195 -> 219; protocol 7/66.
+- Active combat: 227 -> 236; protocol 8/37.
+- Subscribed 3,000-item owner: 218 -> 244; protocol 55/669.
+- Nonreading peer with repeated resync requests: 211 -> 245; protocol 95/576.
+
+There were zero tick overruns in either run. The largest delivery tick was
+1,078 us (1.078 ms), against the existing 250 ms tick deadline. Idle/uninterested
+item JSON construction is separately asserted by the native allocation-count
+regression; existing legacy packets still run normally. Whole-process CPU was
+0.08-0.09 seconds per delivery window, versus 0.06-0.09 for the reference.
+The nonreading window's peak RSS was 37,708 KiB, versus 36,628 KiB for the preceding
+item window. The existing Telnet writer caps pending output at 1 MiB and tears
+down on overflow (`net/mccp.c`, `raw_write_to_descriptor`); the item stream adds
+one bounded in-progress page rather than another output queue. The suspended
+peer was not read during that window, so zero received bytes is not zero output,
+and this check does not measure a transport queue peak or successful delivery.
+
+This is a short local check, not a production capacity or percentile claim.
+There is one active descriptor; the existing separate native 100-descriptor test
+proves fair scheduling/page limits, not loaded-game timing. The reference predates
+some merged non-protocol fixes, and whole-loop deltas include those changes;
+`gmcp_protocol` isolates the delivered protocol work. No p95/p99 was collected.
+No material deadline/CPU cost was observed at this workload; larger deployments
+still depend on their real population, world and packet interest.
+
+Reference source: `881853d21f3d44f4e4c1c8853f330f1e4eb621d1`; binary SHA-256
+`d36c21621faa164f7c75cc5336765b99fd2d3fdf39eb7643a38fd39fffe10611`. Delivery source:
+`c532b739c755b3a36591a47b7fa3b17bf6c13ea8`; binary SHA-256
+`cd8de89073b509a34b68a4de7c31ca874c7a42d69f33265eaea9414a47f24601`.
+
+The local driver, configuration, raw latency summaries and result JSON remain
+under ignored `bin/qualification/issue498/short-cost/`. The driver is
+`python3 bin/qualification/issue498/short-cost/run.py`; it reuses the existing
+minimal-server, character, promotion and combat fixtures and preserves completed
+legs. No general benchmark framework or periodic telemetry service was added.
+
+After this measurement, the focused worn-container selector lookup was corrected
+without changing any measured flush/workload path. Its native regression and
+both builds pass; the short timing evidence remains applicable.

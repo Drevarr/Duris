@@ -35,6 +35,8 @@ PROFILE_DEFINE(short_affect_liveness)
 void set_short_affected_by(P_char, int, int) {}
 char *getString(char **) { std::abort(); }
 void str_free(const char *) { std::abort(); }
+static int group_invalidations;
+void update_groupies(P_char, bool) { ++group_invalidations; }
 void affect_to_char_with_messages(P_char, affected_type *, const char *, const char *) { std::abort(); }
 char affect_total(P_char, int) { return 0; }
 int checked_appendf(char *, size_t, const char *, ...) { return 0; }
@@ -176,7 +178,9 @@ static void web(P_char ch, int moves = 7) {
     affected_type af{};
     af.type = TAG_WEB_SPRAY; af.modifier = moves;
     af.flags = AFFTYPE_SHORT | AFFTYPE_NODISPEL; af.duration = 30 * WAIT_SEC;
+    const int before_group = group_invalidations;
     affect_to_char(ch, &af);
+    assert(group_invalidations > before_group);
 }
 int main() {
     char_data first{}, second{}, victim{}, opponent{}, named_spray{};

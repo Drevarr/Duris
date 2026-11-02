@@ -33,6 +33,7 @@ def section(text: str, start: str, end: str) -> str:
 
 HARNESS = r'''
 #include "world/world_recovery_pipeline.h"
+#include "world/handler.h"
 #include "core/utils.h"
 #include "item/storage_lockers.h"
 #include "core/prototypes.h"
@@ -1439,7 +1440,8 @@ assert "redis_world_store_release_fence" in cleanup
 assert "world_recovery_capture_forget_character(ch);" in HANDLER
 assert "world_recovery_capture_forget_object(obj);" in HANDLER
 assert "redis_world_recovery_pulse();" in COMM
-assert "redis_world_recovery_drain(3000)" in COMM and "redis_world_recovery_drain(3000)" in COPYOVER
+assert "redis_world_recovery_drain(shutdown_writer_remaining_msec(3000))" in COMM
+assert "redis_world_recovery_drain(3000)" in COPYOVER
 print("[PASS] fenced publisher owns atomic floor handoff and cancel/join lifecycle is fail closed")
 
 print("[PASS] file/Redis nested corpse metadata, mortal takeability, and ordinal selection")

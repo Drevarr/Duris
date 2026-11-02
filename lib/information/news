@@ -3,12 +3,133 @@
 &+W======================================================================&n
 &+R                   PWIPE HAPPENED &+YOCT 28TH 1800 UTC!&n
 &+G                     A NEW SEASON OF BLOOD BEGINS&n
-      The slate is clean. The grudges survived. Make your mark.
 &+W======================================================================&n
-&+WUpdated: October 31, 2026&n
+&+WUpdated: November 02, 2026&n
 
-Welcome back! Race for your faction, secure your loot and visit the tavern.
-Newest first; later updates replace older rules. Archive back to 12/14/25.
+Welcome back! Browse the races, take flight and check the shops.
+Newest first; later updates replace older rules. Longer archive on web.
+
+&+R11/02/26&n &+L-&n &+YKnow your race, keep your ride&n
+&+W----------------------------------------------------------------------&n
+
+&+CRaces at a glance&n
+&+Y-&n Use &+C'race list'&n for the racewar roster,
+  &+C'race info <race name>'&n for traits, valid classes and race-specific
+  specializations, or &+C'race innates <race name>'&n for racial abilities
+  and unlock levels. Disabled and special races show their restrictions.
+
+&+COne ticket, one passenger&n
+&+Y-&n Flight carriers return after losing a passenger, including when nobody
+  remains aboard. A passenger who enters combat keeps the paid ride
+  without needing Mounted Combat. Ordinary combat and movement rules apply.
+&+Y-&n You cannot mount a flight carrier or its passenger directly, bring a
+  rider on your back, or hitch another passenger onto a paid flight.
+  Dismount an existing rider before boarding your own flight.
+
+&+CShops and lockers keep their footing&n
+&+Y-&n Clean cold reboots can refill missing finite shop stock to the normal
+  starting quantity while keeping saved items and player-sold goods.
+  Crashes, copyovers and the first boot after this upgrade preserve saved
+  stock instead. Buying a saved shop item no longer fails by trying to
+  create the same item again.
+&+Y-&n Locker work can delay idle removal or staff ghost cleanup until your
+  belongings are ready. A bounded shutdown now retains unfinished locker
+  contents for recovery at startup instead of leaving them behind.
+
+&+CSharper signals in a fight&n
+&+Y-&n Headbutts report when they do no damage, including harmless backfires.
+  Sleeping victims receive a wake-up notice when damage wakes them.
+&+Y-&n Taunt requires the target to reach you in a single-file room, and its
+  forced focus ends safely when the taunter leaves the game.
+&+Y-&n ASK quest sharing accepts more equipment whose special effects act
+  only in combat or periodically. Items that interfere with asking can
+  still block it; the other sharing requirements remain.
+
+&+CClient panels, quieter when you choose&n
+&+Y-&n MSP group panels refresh for resource, combat, progression and derived
+  stat changes without repeating unchanged group displays on every prompt.
+  Maps refresh after departures, failed follows and visibility changes.
+&+Y-&n Use &+C'toggle terminal msp quiet'&n for MSP prompts and maps with group
+  displays only on &+C'group'&n. Use &+C'toggle terminal msp'&n to restore
+  automatic group updates. Quiet mode lasts for this connection.
+&+Y-&n Deaths no longer reduce leaderboard scores or appear on that board.
+  In-game news shows the newest portion and links to the full web archive.
+
+&+CMore ways into the help library&n
+&+Y-&n Read &+C'help burrow'&n, &+C'help racial'&n, &+C'help epic bonus'&n and
+  &+C'help epic bonus cargo'&n for racial abilities and earned-epic bonuses.
+  Cargo discounts grow with eligible earnings; changing your selection
+  resets the earning start time.
+&+Y-&n New pointers include &+C'help anti-paladin spells'&n, &+C'help grey-elf'&n,
+  &+C'help tavern'&n, &+C'help torrhan'&n, &+C'help list weapons'&n,
+  &+C'help stoneskin'&n and &+C'help sv spell'&n.
+  Songs and Lyre help now place Song of Healing at level &+Y31&n.
+
+&+R11/01/26&n &+L-&n &+YThe tavern pays in treasure&n
+&+W----------------------------------------------------------------------&n
+
+&+CAn item for a job well done&n
+&+Y-&n Completing a bartender KILL task now guarantees &+Yone personal item&n.
+  Each required kill after the first adds an independent &+Y10%&n chance
+  of another item. A nine-kill task averages &+Y1.8 items&n; all arrive
+  together when you complete the task, rather than dropping on corpses.
+&+Y-&n ASK and one-kill tasks award one item. Eligible companions each earn
+  their own rewards; experience and coin rewards remain per completion.
+  If delivery is pending, wait and retry as directed: the whole batch
+  waits together, and retrying does not reroll its item count.
+  Existing completed tasks keep their original item entitlement.
+&+Y-&n Tavern reward catalogs now withhold the top &+Y5%&n of item values
+  instead of 20%. Level requirements and other exclusions still apply.
+  More valuable possibilities do not guarantee a particular reward.
+&+Y-&n Free replacement tasks use your &+Ycurrent level&n when choosing a
+  new target. Ordinary random armor no longer prevents an ASK task or
+  free replacement from finding a suitable target. Your earned progress,
+  original quota, remaining shares and purchased map stay with the task.
+  Read &+C'help quest'&n for rewards, sharing and travel limits.
+
+&+CSpellcraft, rest and a dry place for your pipe&n
+&+Y-&n Racial spell-damage bonuses and resistances now apply to the intended
+  damage type. Cold no longer reads the lightning modifier, and Earth
+  receives its racial adjustments. This does not change Frostbite's
+  base formula or promise every race the same damage.
+&+Y-&n Spell-granted, upgraded and refreshed rest bonuses now survive a
+  crash after a later automatic checkpoint saves them. Normal duration,
+  offline aging and login eligibility still apply.
+&+Y-&n Surface rain and snow no longer stop smoking underground or in
+  sheltered rooms. Exposed surface storms still matter, as do water,
+  visibility and racial restrictions. Read &+C'help smoke'&n.
+
+&+CClient panels that know what you are doing&n
+&+Y-&n Compatible clients can receive current game time, separate opponent
+  and tank health, and clearer character-entry and controlled-body
+  changes. Knockdowns now refresh your position and group vitals after
+  the fall, including a ward that absorbs the damage or a failed bash.
+&+Y-&n Clients that opt in can also receive applied-damage events and
+  inventory/equipment pages, including requested visible bag contents.
+  Closed containers, darkness and locker access keep their normal limits.
+  These feeds require client support; ordinary text commands still work.
+  A full damage-event feed pauses independently of health panels; a client
+  can subscribe again, but missed events are not replayed.
+&+Y-&n Web clients handle controlling NPC bodies safely and clear character
+  creation state after a refused entry. Hotboot-aware panels can retain
+  the same character session while refreshing their current views.
+
+&+CReturning safely, reading clearly&n
+&+Y-&n When email password recovery is enabled, it confirms success only
+  after saving the new password, and failed saves leave the code for
+  retry. Temporary mail transport timeouts can also be retried.
+  &+WEmail password resets remain disabled on this server.&n
+&+Y-&n Old locker save or sorting work no longer reaches into a later
+  locker visit. A departed visit can finish saving its own contents
+  without moving items in the room you entered afterward.
+&+Y-&n When paging is off, &+C'news'&n and &+C'zlist'&n now point you to the
+  correct command: &+C'toggle paging on'&n.
+
+&+CFind the right shelf in the help library&n
+&+Y-&n Try &+C'help starter kit'&n (or &+C'help starter'&n),
+  &+C'help conjurer spells'&n, &+C'help firemagus'&n and &+C'help rifts'&n
+  for pointers to the full guides. &+C'help quest'&n now explains the
+  current treasure, replacement, sharing and geographic travel rules.
 
 &+R10/30/26 - 10/31/26&n &+L-&n &+YThree days to win your faction's next level&n
 &+W----------------------------------------------------------------------&n

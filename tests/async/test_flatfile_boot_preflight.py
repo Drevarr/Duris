@@ -305,6 +305,7 @@ with tempfile.TemporaryDirectory(prefix="duris-flatfile-build-") as build_tmp:
                 "operations/wal",
                 "domains",
                 "manifests",
+                "locker-shutdown",
             }
             actual_dirs = {
                 str(path.relative_to(state_root))

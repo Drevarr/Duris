@@ -237,7 +237,11 @@ static void toggle_matrix()
 		assert(!desc.msp_group_output);
 		assert(desc.last_group_update == (type == TERM_MSP));
 	}
-	for (const char *invalid : { "invalid", "ansi extra" })
+	run("terminal msp quiet");
+    assert(desc.term_type == TERM_MSP && desc.msp_group_manual);
+    assert(run("terminal msp").find("MSP markup") != std::string::npos);
+    assert(!desc.msp_group_manual);
+    for (const char *invalid : { "invalid", "ansi extra", "msp quiet extra" })
 	{
 		desc.msp_group_output = str_dup("previous group display");
 		assert(run(std::string("terminal ") + invalid).find("USAGE") != std::string::npos);

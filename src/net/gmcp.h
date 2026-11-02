@@ -47,6 +47,43 @@ struct ShipData;
 #define GMCP_MAX_INPUT_SIZE (1024 * 1024)
 #define GMCP_MAX_PACKAGE_SIZE 128
 
+constexpr size_t GMCP_CONTROL_MAX_INPUT_SIZE = 8192;
+constexpr size_t GMCP_CONTROL_MAX_ENTRIES = 64;
+constexpr size_t GMCP_CONTROL_MAX_ENTRY_BYTES = 96;
+struct cJSON;
+// WebSocket already decoded the envelope; do not serialize and parse control twice.
+bool gmcp_handle_control_json(struct descriptor_data *d, const cJSON *message, const char *raw,
+			      size_t len, const char *json_end);
+
+// New streams are explicitly versioned and opt-in. These bits are descriptor-local.
+constexpr uint32_t GMCP_SUPPORT_CAPABILITIES = 1U << 0;
+constexpr uint32_t GMCP_SUPPORT_TIME = 1U << 1;
+constexpr uint32_t GMCP_SUPPORT_SESSION = 1U << 2;
+constexpr uint32_t GMCP_SUPPORT_COMBAT = 1U << 3;
+constexpr uint32_t GMCP_SUPPORT_ITEMS = 1U << 4;
+constexpr uint32_t GMCP_IMPLEMENTED_SUPPORTS = GMCP_SUPPORT_CAPABILITIES | GMCP_SUPPORT_TIME |
+					       GMCP_SUPPORT_SESSION | GMCP_SUPPORT_COMBAT |
+					       GMCP_SUPPORT_ITEMS;
+constexpr uint32_t GMCP_INTEREST_STREAMS = GMCP_SUPPORT_TIME | GMCP_SUPPORT_COMBAT |
+					   GMCP_SUPPORT_ITEMS;
+
+// Invalidate only protocol presentation; never cancel durable item work.
+void gmcp_items_changed(struct char_data *ch);
+void gmcp_item_changed(struct obj_data *object);
+void gmcp_item_edit_begin(struct descriptor_data *d, struct obj_data *object);
+void gmcp_item_edit_done(struct descriptor_data *d);
+void gmcp_item_edit_extracted(struct obj_data *object);
+bool gmcp_item_selector_matches(struct char_data *ch, struct obj_data *object,
+				const char *selector);
+
+// Observe real descriptor state/owning-player identity, then queue control before data.
+void gmcp_session_update(struct descriptor_data *d);
+// Copyover adopts the preserved entry without incrementing its generation.
+void gmcp_session_restored(struct descriptor_data *d);
+
+void gmcp_preferences_changed(struct descriptor_data *d);
+void gmcp_time_changed(void);
+
 /* negotiation */
 
 /* send gmcp will to start negotiation (called during connection setup) */
@@ -109,7 +146,10 @@ void gmcp_char_affects(struct char_data *ch);
 void gmcp_combat_update(struct char_data *ch, struct char_data *victim, int damage,
 			const char *damage_type, int critical);
 
-/* send target health update */
+// Send one outgoing applied hit using its authoritative delivery metadata.
+void gmcp_combat_damage(struct char_data *ch, struct char_data *victim, int damage,
+			const struct damage_messages *messages);
+/* schedule target/tank state */
 void gmcp_combat_target(struct char_data *ch, struct char_data *victim);
 
 /* combat ended */

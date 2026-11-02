@@ -26,6 +26,12 @@ live database proves that stopped writers are absolutely necessary.** Finish the
 entire build and all independent preparation before any migration outage. The normal
 announced reboot remains the final cutover; do not turn it into a build outage.
 
+**Use one planned player interruption. Feedback cleanup failure never authorizes
+another countdown, reboot, shutdown, or service stop.** Leave the healthy game
+running, preserve the batch and its dispositions, and report cleanup as pending
+until the next independently required restart. Do not retry a cutover to finish
+bookkeeping or claim that deferred cleanup was completed.
+
 A pending migration, migration number (including 0041), newer runtime contract,
 missing online flag, or runner quiescence refusal is **not** proof that downtime is
 necessary. Never automatically fall back to stopping services. If tooling lacks a
@@ -260,9 +266,13 @@ its restart boundary. Do not restart after a failed build.
 
 Use the cleanup records returned by `$help-update` and `$bug-triage` and the shared
 [feedback cleanup procedure](../references/player-feedback.md#clear-processed-feedback).
-Prepare it before announcing the reboot and execute it at the already-required
-restart or proven offline-migration boundary. Restore normal launching promptly
-even if cleanup fails; report each file's verified result for steps 5 and 6.
+Use an already-verified cleanup handoff, prepared before announcing the reboot.
+Validate a new or changed handoff with small local process/file fixtures first:
+live logger threads, delayed thread exit, cleanup failure, and launcher release.
+Do not improvise or debug cleanup guards during the production cutover. If no
+verified handoff is ready, defer cleanup and perform only the planned deployment
+restart. Execute ready cleanup at that boundary; always release the launcher
+promptly on failure, retain the records, and report each file's actual result.
 
 ### Normal reboot as Veridian (no offline migration)
 

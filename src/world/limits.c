@@ -795,6 +795,7 @@ static void advance_level_impl(P_char ch, bool notify_player, bool process_boons
 		check_boon_completion(ch, NULL, 0, BOPT_LEVEL);
 
 	// Send GMCP update for level change
+	update_group_vitals(ch);
 	gmcp_char_status(ch);
 
 	/* Schedule a deferred save to avoid lag from large inventories */
@@ -865,6 +866,7 @@ static void lose_level_impl(P_char ch, std::uint64_t threshold_xp,
 	balance_affects(ch);
 
 	// Send GMCP update for level change
+	update_group_vitals(ch);
 	gmcp_char_status(ch);
 }
 
@@ -1968,6 +1970,9 @@ void point_update(void)
 			// Void if mortal idle for 15 min, or Immortal linkdead and idle for over 15 min.
 			if ((i->specials.timer > 15) && (GET_LEVEL(i) < MINLVLIMMORTAL || !i->desc))
 			{
+				if (!locker_leave_for_extraction(i))
+					continue;
+
 				act("$n disappears into the void.", TRUE, i, 0, 0, TO_ROOM);
 				send_to_char("You have been idle, and are pulled into a void.\r\n",
 					     i);

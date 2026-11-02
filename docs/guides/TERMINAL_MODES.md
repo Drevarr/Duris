@@ -38,6 +38,21 @@ always displays the group, and leaving sends an empty frame to clear it.
 The display cache resets on terminal selection, game entry, and new connections
 (including copyover recovery).
 
+For MSP clients that only need tagged prompts/maps, use
+`TOGGLE terminal msp quiet`. This connection mode sends group frames only in
+response to an explicit `group` command. It keeps the normal prompt and map
+formats and introduces no delay to health updates in prompts. Use
+`TOGGLE terminal msp` to restore automatic group frames. Clients that populate
+a group panel from automatic frames should keep ordinary MSP mode.
+The quiet selection belongs to the connection, like terminal selection; a fresh
+connection/copyover starts with automatic group updates enabled.
+
+Group notifications belong to resource/membership mutation paths, independently
+of the GMCP send function. Mana/ward-only changes do not request an MSP group
+render. HP/movement changes request MSP group output only for recipients sharing
+the member's room. Group membership, rank and room changes still invalidate the
+full display, and comparison against the last frame suppresses identical output.
+
 Explicit map requests still produce text when
 `toggle map` is off; automatic maps respect that toggle.
 

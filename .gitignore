@@ -10,6 +10,7 @@
 # ------------------------------------------------------------------------------
 /areas/de/src/cscope.out
 /bin/*
+/shopkeeper-boot/
 !/bin/.gitignore
 /build
 /gmon.out
@@ -71,6 +72,7 @@ logs/valgrind/
 /runtime/personal-data-exports/
 /runtime/critical-command-journal/
 /runtime/player-journal/
+/runtime/locker-shutdown/
 /runtime/maintenance-scheduler.state*
 
 # ------------------------------------------------------------------------------

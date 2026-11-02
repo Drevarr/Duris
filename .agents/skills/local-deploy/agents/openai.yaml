@@ -1,0 +1,4 @@
+interface:
+  display_name: "Local Deploy"
+  short_description: "Pull master, rebuild, and restart the local MUD"
+  default_prompt: "Use $local-deploy to pull current master, apply local migrations, clean-build everything, install the binary, and restart the local MUD immediately with a fresh cycle_mud.sh launcher."

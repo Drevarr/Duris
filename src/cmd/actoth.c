@@ -5468,11 +5468,12 @@ void do_toggle(P_char ch, char *arg, int /*cmd*/)
 		          */
 	{
 		char *rest = lohrr_chop(arg, Gbuf3);
+		const bool quiet = !str_cmp(Gbuf3, "msp") && !str_cmp(skip_spaces(rest), "quiet");
 		while (isspace(static_cast<unsigned char>(*rest)))
 			++rest;
-		if (*rest)
+		if (*rest && !quiet)
 		{
-			send_to_char("USAGE: TOGGLE terminal [ansi|gen|msp]\r\n", send_ch);
+			send_to_char("USAGE: TOGGLE terminal [ansi|gen|msp [quiet]]\r\n", send_ch);
 			return;
 		}
 		arg = Gbuf3;
@@ -5492,14 +5493,15 @@ void do_toggle(P_char ch, char *arg, int /*cmd*/)
 			send_ch->desc->term_type = 1;
 		else
 		{
-			send_to_char("USAGE: TOGGLE terminal [ansi|gen|msp]\r\n", send_ch);
+			send_to_char("USAGE: TOGGLE terminal [ansi|gen|msp [quiet]]\r\n", send_ch);
 			return;
 		}
+		send_ch->desc->msp_group_manual = quiet;
 		if (send_ch->desc->msp_group_output)
 			FREE(send_ch->desc->msp_group_output);
 		if (send_ch->desc->term_type == TERM_MSP)
 			send_ch->desc->last_group_update = 1;
-		strcpy(Gbuf3, term_name(send_ch));
+		strcpy(Gbuf3, quiet ? "MSP markup (manual group)" : term_name(send_ch));
 		result = TRUE;
 		break;
 	}
@@ -5810,6 +5812,8 @@ void do_toggle(P_char ch, char *arg, int /*cmd*/)
 		break;
 	case 64: /* gmcp */
 		result = plr_tog(PLR3_FLAGS(ch), PLR3_NOGMCP, arg, 1);
+		if (result >= 0)
+			gmcp_preferences_changed(send_ch->desc);
 		if (result == 1)
 			gmcp_send_initial_state(send_ch);
 		break;
@@ -6242,7 +6246,7 @@ void try_to_bury(P_char ch, P_obj obj_object)
 	CharWait(ch, 20); /*
 	                   * 20 second delay
 	                   */
-	SET_BIT(obj_object->extra_flags, ITEM_BURIED);
+	set_obj_extra_flags(obj_object, obj_object->extra_flags | (ITEM_BURIED));
 	/*  writeSavedItem(obj_object);*/
 	return;
 }
@@ -6295,7 +6299,7 @@ void do_dig(P_char ch, char * /*argument*/, int /*cmd*/)
 		if (IS_SET(k->extra_flags, ITEM_BURIED) &&
 		    (number(1, 100) < ((GET_C_LUK(ch) / 2) + number(1, 50))))
 		{
-			REMOVE_BIT(k->extra_flags, ITEM_BURIED);
+			set_obj_extra_flags(k, k->extra_flags & ~(ITEM_BURIED));
 			/*      PurgeSavedItemFile(k);*/
 			act("You dig up $p!", FALSE, ch, k, 0, TO_CHAR);
 			act("$n digs up $p!", FALSE, ch, k, 0, TO_ROOM);
@@ -6324,7 +6328,7 @@ void try_to_hide(P_char ch, P_obj obj_object)
 
 	CharWait(ch, PULSE_VIOLENCE << 1);
 
-	SET_BIT(obj_object->extra_flags, ITEM_SECRET);
+	set_obj_extra_flags(obj_object, obj_object->extra_flags | (ITEM_SECRET));
 	return;
 }
 

@@ -3719,12 +3719,12 @@ string strip_ansi(const char *str)
 				str += 2;
 				continue;
 			}
-			if ((*(str + 1) == '-') || (*(str + 1) == '+'))
+			if (((*(str + 1) == '-') || (*(str + 1) == '+')) && str[2])
 			{
 				str += 3;
 				continue;
 			}
-			if ((*(str + 1) == '='))
+			if ((*(str + 1) == '=') && str[2] && str[3])
 			{
 				str += 4;
 				continue;
@@ -5243,7 +5243,7 @@ int GET_CHAR_SKILL_P(P_char ch, int skl)
 
 #ifdef STANCES_ALLOWED
 	if (skllvl > 0 && IS_PC(ch) && (ch->only.pc->frags > 0))
-		mod = (int)(ch->only.pc->frags / 500);
+		mod += (int)(ch->only.pc->frags / 500);
 
 	if (skllvl > 0)
 	{
@@ -5264,10 +5264,8 @@ int GET_CHAR_SKILL_P(P_char ch, int skl)
 		}
 	}
 
-	return MAX(0, (skllvl + mod));
-#else
-	return skllvl;
 #endif
+	return MAX(0, (skllvl + mod));
 }
 
 int GET_LVL_FOR_SKILL(P_char ch, int skill)
