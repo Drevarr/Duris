@@ -86,6 +86,7 @@ void gmcp_mark_room_dirty(int) {}
 std::vector<bool> gmcp_fighting;
 int gmcp_targets=0, gmcp_ends=0;
 void gmcp_char_vitals(P_char ch) { gmcp_fighting.push_back(IS_FIGHTING(ch)); }
+void update_group_vitals(P_char) {}
 void gmcp_combat_target(P_char ch, P_char victim) { assert(GET_OPPONENT(ch)==victim); ++gmcp_targets; }
 void gmcp_combat_end(P_char) { ++gmcp_ends; }
 void update_pos(P_char) {}
