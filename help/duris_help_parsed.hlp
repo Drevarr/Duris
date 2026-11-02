@@ -4873,8 +4873,7 @@ Emote, Social Actions, commands
 Class
 Class - Last Edited: 2026-11-02
 ============================================================
-Browse the live class and specialization guide. Reference browsing is open
-regardless of your race, level, class, or staff status.
+Browse classes, specializations, and their abilities.
 
 ==Syntax==
 
@@ -4885,28 +4884,24 @@ regardless of your race, level, class, or staff status.
   class specs <class>
   class innates <class or specialization>
 
-Bare class shows the roster, including disabled and special/legacy entries.
-Race filters show current creation-policy choices and alignment requirements;
-transport alignment and account admission remain character-creation checks.
-Alignment is separate from racewar side. Disabled races cannot be selected.
+Bare class lists every class, including disabled and retired classes.
+Use class list <race> to see the classes that race can create and their
+alignment requirements. Alignment is separate from racewar side.
 
-Profiles combine authored help with current creation availability, eligible
-races, specialization paths, and class innates. Specialization profiles show
-only changes from the base class: skill levels/caps, spell circles, lost or
-added grants, and innate changes. The complete effective catalogs remain in
-skills <class or specialization> and spells <class or specialization>.
+Class info shows a class's abilities, allowed races, and specializations.
+Specialization profiles show the skills, spells, and innate abilities added,
+changed, or lost compared with the base class. For the complete ability lists,
+use skills <class or specialization> and spells <class or specialization>.
 
-Your race permission is a reference annotation, not readiness to specialize.
-Selection requires level 30, an appropriate teacher, no existing specialization
-or secondary class, and an expired respecialization timer. Specialize performs
-the final checks. Innates include inherited class grants, unlock levels and
-active/passive markers; use help <ability name> for usage and conditions.
-Racial abilities are listed separately by race innates <race>.
+Use specialize at level 30. See help specialization for requirements.
+Class innates lists inherited abilities, unlock levels, and active/passive
+markers. Use help <ability name> for usage, or race innates <race> for racial
+abilities.
 
 Names accept case-insensitive full names, spaces/hyphens and unique prefixes.
 Ambiguous names list candidates. Assassin and Thief resolve to Rogue
 specializations, whose help topics are Rogue Assassin and Rogue Thief.
-Standalone legacy IDs are explicitly labelled roster notes.
+The roster labels the retired standalone Assassin and Thief classes.
 
 ==Examples==
 

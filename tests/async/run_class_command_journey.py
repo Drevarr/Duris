@@ -115,8 +115,13 @@ def run(binary, backend):
                         break
                     assert time.monotonic() < deadline, roster
                     time.sleep(.1)
-                assert "THE CLASS ROSTER" in roster and "Disabled in character creation" in roster
-                assert "standalone legacy ID 14" in roster and "Special / legacy" in roster
+                assert "THE CLASS ROSTER" in roster
+                for row in ("  Thief (Retired ID 17: Special/Legacy) - Standalone theft/stealth class.",
+                            "  Theurgist (Disabled: Special/Legacy) - Celestial invocations and divine/arcane magic.",
+                            "  Summoner - Bound creatures, planar magic, and barriers.",
+                            "  Dragoon (Disabled) - Mounted draconic martial combat and invocations."):
+                    assert row in roster.splitlines(), roster
+                assert "Available in" not in roster
                 listed = command(player, "class list")
                 assert roster.split("THE CLASS ROSTER", 1)[1].split("Inspect:", 1)[0] == listed.split("THE CLASS ROSTER", 1)[1].split("Inspect:", 1)[0]
                 human = command(player, "class list human")
@@ -133,20 +138,30 @@ def run(binary, backend):
                 assert "skills Guardian" in guardian and "spells Guardian" in guardian
                 assert guardian.index("Availability") < guardian.index("Class features") < guardian.index("Further reading")
                 warrior = command(player, "class info warrior")
-                assert "BASE CLASS" in warrior and "Your race permission (Human): allowed" in warrior
+                assert "BASE CLASS" in warrior and "Guardian - Protects allies with a shield." in warrior
                 assert warrior.index("Specializations") < warrior.index("Class features")
                 specs = command(player, "class specs warrior")
-                assert "Guardian" in specs and "Swashbuckler" in specs and "class info Guardian" in specs
-                assert "readiness to specialize" in specs
+                assert "Guardian" in specs and "Swashbuckler" in specs and "class info <specialization>" in specs
+                assert "Use specialize at level 30." in specs
+                theurgist = command(player, "class info theurgist")
+                theurgist_specs = command(player, "class specs theurgist")
+                for text in (theurgist, theurgist_specs):
+                    for name in ("Medium", "Templar", "Thaumaturge"):
+                        assert "  " + name + " (Not available to Human)" in text.splitlines(), text
+                    assert " is a Theurgist specialization" not in text
+                    assert "Description unavailable" not in text
+                medium = command(player, "class info medium")
+                assert "Added spell: return soul" in medium and "Added innate: summon host" in medium
+                assert " is a Theurgist specialization" not in medium
                 assert "Not Used" not in command(player, "class specs rogue")
                 assert "No named specializations" in command(player, "class specs warlock")
                 missing = command(player, "class info wildmage")
-                assert "Description unavailable" in missing and "Parent class: Sorcerer" in missing
+                assert "Parent class: Sorcerer" in missing
                 assert "Added innate: wildmagic" in missing
                 assert "Deliberately stale" not in missing and "Authored mechanics" not in missing
                 for name in ("assassin", "thief"):
                     text = command(player, "class info " + name)
-                    assert "Parent class: Rogue" in text and "Rogue specialization" in text
+                    assert "Parent class: Rogue" in text and "is a Rogue specialization" not in text
                     assert "Standalone" not in text
                     assert "help Rogue " + name.title() in text
                 assert "Anti-Paladin" in command(player, "class info DaRk-KnIgHt")
@@ -179,6 +194,8 @@ def run(binary, backend):
                 for form in ("class list <race>", "class info <class or specialization>",
                              "class innates <class or specialization>"):
                     assert form in help_text
+                for removed in ("transport alignment", "account admission", "readiness"):
+                    assert removed not in help_text.lower()
                 assert "creation" in command(player, "help classes").lower()
                 assert "Guardian" in command(player, "skills guardian")
                 assert "SPECIALIZATION" in command(player, "spells guardian")
@@ -196,12 +213,20 @@ def run(binary, backend):
                 assert b"\x1b[" in player.raw_transcript
                 for name, text in (("roster", roster), ("guardian", guardian), ("wizard", wizard),
                                    ("warrior", warrior), ("specs", specs), ("innates", innates),
-                                   ("forbidden", forbidden), ("human", human)):
+                                   ("forbidden", forbidden), ("human", human),
+                                   ("theurgist", theurgist), ("theurgist-specs", theurgist_specs),
+                                   ("medium", medium)):
+                    for removed in ("Transport alignment", "account admission", "readiness",
+                                    "does not establish", "effective definitions", "Authored mechanics"):
+                        assert removed not in text, text
                     (ROOT / "bin/tests" / ("class-" + name + "-" + backend + ".txt")).write_text(text)
                     generated = text.split("Score information", 1)[0]
-                    assert max(map(len, generated.splitlines()), default=0) <= 79, generated
+                    for line in generated.splitlines():
+                        if name in ("roster", "human", "warrior", "specs", "theurgist", "theurgist-specs") and line.startswith("  ") and " - " in line:
+                            continue
+                        assert len(line) <= 79, generated
                 print("PASS: " + backend + " real staff/mortal class dispatcher, live policy, spec deltas, "
-                      "inherited innates, redirected/missing help, legacy collisions, navigation, color, width and paging", flush=True)
+                      "inherited innates, redirected/missing help, legacy collisions, navigation, color, single-line roster and paging", flush=True)
             except BaseException:
                 print(output_path.read_text(errors="replace")[-5000:])
                 for client in clients:

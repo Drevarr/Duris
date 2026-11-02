@@ -41,6 +41,10 @@ int fill_word(char *) { return 0; }
 std::string wiki_help_prose(std::string name, std::string section) {
     topic = name;
     if (!help_available) return "";
+    if (name == "Theurgist" && section.empty())
+        return "Celestial invocations and\ndivine/arcane magic.\n\nStale creation claims.";
+    if (name == "Medium" || name == "Templar" || name == "Thaumaturge")
+        return section.empty() ? name + " is a Theurgist specialization. Selection requires level 30." : "";
     if (section.empty()) return name + " authored focus.\n\nStale creation claims.";
     return "Distinctive authored mechanics.";
 }
@@ -49,8 +53,16 @@ static pc_only_data pc;
 static std::string run(std::string args) {
     output.clear(); do_class(&ch, args.data(), 0);
     auto text = strip_ansi(output.c_str());
+    bool roster = text.find("THE CLASS ROSTER") != std::string::npos ||
+                  text.find(" : CLASS CHOICES") != std::string::npos ||
+                  text.find("\n  Specializations\n") != std::string::npos;
+    for (auto removed : {"Transport alignment", "account admission", "readiness",
+                         "does not establish", "effective definitions", "Authored mechanics"})
+        assert(text.find(removed) == std::string::npos);
     std::istringstream lines(text);
     for (std::string line; std::getline(lines, line);) {
+        if (roster && line.rfind("  ", 0) == 0 && line.find(" - ") != std::string::npos)
+            continue;
         if (line.size() > 79) fprintf(stderr, "Overflow: %s\n", line.c_str());
         assert(line.size() <= 79);
     }
@@ -78,9 +90,7 @@ static void check_filters() {
         }
         for (int cls = 1; cls <= CLASS_COUNT; ++cls) {
             bool expected = creation_class_enabled(cls) && creation_class_align(race, cls) != 5;
-            std::string label = std::string("  ") + strip_ansi(class_names_table[cls].ansi);
-            label += (cls == flag2idx(CLASS_ASSASSIN) || cls == flag2idx(CLASS_THIEF)) ?
-                " (standalone legacy ID " + std::to_string(cls) + ")\n" : "\n";
+            std::string label = std::string("\n  ") + strip_ansi(class_names_table[cls].ansi) + " (";
             if ((text.find(label) != std::string::npos) != expected)
                 fprintf(stderr, "Missing/mislabelled race %d class %d: %s\n%s\n", race, cls, label.c_str(), text.c_str());
             assert((text.find(label) != std::string::npos) == expected);
@@ -96,10 +106,23 @@ int main() {
     auto roster = run("");
     assert(roster == run("list"));
     assert(roster.find("THE CLASS ROSTER") != std::string::npos);
-    assert(roster.find("Disabled in character creation") != std::string::npos);
-    assert(roster.find("Special / legacy") != std::string::npos);
-    assert(roster.find("standalone legacy ID 14") != std::string::npos);
-    assert(roster.find("Warrior authored focus") != std::string::npos);
+    for (auto row : {"  Warrior - Warrior authored focus.\n",
+                     "  Assassin (Retired ID 14: Special/Legacy) - Assassin authored focus.\n",
+                     "  Thief (Retired ID 17: Special/Legacy) - Thief authored focus.\n",
+                     "  Theurgist (Disabled: Special/Legacy) - Celestial invocations and divine/arcane magic.\n",
+                     "  Summoner - Summoner authored focus.\n",
+                     "  Dragoon (Disabled) - Dragoon authored focus.\n"})
+        assert(roster.find(row) != std::string::npos);
+    assert(roster.find("Available") == std::string::npos);
+    std::istringstream rows(roster);
+    int row_count = 0;
+    for (std::string row; std::getline(rows, row);)
+        if (row.find(" - ") != std::string::npos) ++row_count;
+    assert(row_count == CLASS_COUNT);
+    assert(roster.find("\n  Alignment is separate from racewar side.\n") != std::string::npos);
+    for (auto removed : {"creation-policy choices", "transport alignment",
+                         "Assassin and Thief lookups", "legacy IDs above"})
+        assert(roster.find(removed) == std::string::npos);
     assert(output.find("&+") != std::string::npos);
     check_filters();
     assert(run("list GrEy-ElF") == run("list greyelf"));
@@ -118,8 +141,17 @@ int main() {
     assert(run("specs assassin").find("Provide a base class") != std::string::npos);
     auto specs = run("specs warrior");
     assert(specs.find("Swashbuckler") != std::string::npos);
-    assert(specs.find("not allowed") != std::string::npos);
-    assert(specs.find("readiness to specialize") != std::string::npos);
+    assert(specs.find("Not available to Goblin") != std::string::npos);
+    assert(specs.find("class info <specialization>") != std::string::npos);
+    assert(specs.find("Use specialize at level 30.") != std::string::npos);
+    auto theurgist = run("info theurgist");
+    assert(theurgist.find(" is a Theurgist specialization") == std::string::npos);
+    assert(theurgist.find("Selection requires") == std::string::npos);
+    assert(theurgist.find("Description unavailable") == std::string::npos);
+    for (auto name : {"Medium", "Templar", "Thaumaturge"}) {
+        assert(theurgist.find(std::string("  ") + name + " (Not available to Goblin)\n") != std::string::npos);
+        assert(run(std::string("info ") + name).find(" is a Theurgist specialization") == std::string::npos);
+    }
     assert(run("info swashbuckler").find("Parent class: Warrior") != std::string::npos);
     assert(run("specs warlock").find("No named specializations") != std::string::npos);
     assert(run("specs rogue").find("Not Used") == std::string::npos);
@@ -158,13 +190,13 @@ int main() {
         assert(text.find(part) != std::string::npos);
     assert(run("innates conjurer").find("None. No class innates") != std::string::npos);
     help_available = false;
-    assert(run("info guardian").find("Description unavailable") != std::string::npos);
     assert(run("info guardian").find("Lost skill: lost access") != std::string::npos);
     assert(run("").find("THE CLASS ROSTER") != std::string::npos);
     setenv("CREATION_ALL_RACES", "TRUE", 1); check_filters();
     assert(run("list lich").find("normally restricted") != std::string::npos);
     setenv("CREATION_ALL_CLASSES", "TRUE", 1); check_filters();
-    assert(run("list human").find("normally restricted (override enabled)") != std::string::npos);
+    assert(run("list human").find("normally restricted") != std::string::npos);
+    assert(run("").find("Theurgist (Special/Legacy; Override)") != std::string::npos);
     assert(run("info swashbuckler").find("Race permission override enabled") != std::string::npos);
     unsetenv("CREATION_ALL_RACES"); check_filters();
     unsetenv("CREATION_ALL_CLASSES");
@@ -172,6 +204,7 @@ int main() {
         "creation.race.gnome.enabled=false\n";
     boot_creation_availability_config(); check_filters();
     assert(run("list gnome").find("Disabled") != std::string::npos);
+    assert(run("").find("Warrior (Disabled) - ") != std::string::npos);
     std::ofstream config("lib/creation_availability.cfg");
     for (int cls = 1; cls <= CLASS_COUNT; ++cls) {
         std::string name = class_names_table[cls].normal;
@@ -227,7 +260,6 @@ int main() {
     ch.only.pc = &pc; ch.player.race = RACE_HUMAN; ch.player.level = 1;
     add(SKILL_RESCUE, "rescue", 0, 0, 30, 100);
     auto text = run("info guardian");
-    assert(text.find("Description unavailable") != std::string::npos);
     assert(text.find("Added skill: rescue") != std::string::npos);
     assert(text.find("Parent class: Warrior") != std::string::npos);
     puts("PASS: real unavailable flat-file help preserves the class profile and grant differences");

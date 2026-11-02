@@ -91,6 +91,17 @@ void paragraph(std::ostringstream &out, const string &text, int indent = 2)
 	}
 }
 
+void list_entry(std::ostringstream &out, const string &text)
+{
+	std::istringstream words(text);
+	string word;
+	words >> word;
+	out << "  " << word;
+	while (words >> word)
+		out << ' ' << word;
+	out << "&n\n";
+}
+
 bool named_spec(int cls, int spec)
 {
 	return *specdata[cls][spec - 1] && strcmp(specdata[cls][spec - 1], "Not Used");
@@ -114,6 +125,13 @@ string description(int cls, int spec, bool brief)
 	const string topic = help_topic(cls, spec);
 	string text = wiki_help_prose(topic, "");
 	text = text.substr(0, text.find("\n\n"));
+	if (spec)
+	{
+		const string intro = strip_ansi(specdata[cls][spec - 1]) + " is a " +
+				     class_names_table[cls].normal + " specialization.";
+		if (!strncasecmp(text.c_str(), intro.c_str(), intro.size()))
+			text.clear();
+	}
 	if (brief)
 	{
 		const string mechanics = wiki_help_prose(topic, "Class mechanics");
@@ -123,7 +141,7 @@ string description(int cls, int spec, bool brief)
 		if (end != string::npos)
 			text.erase(end + 1);
 	}
-	return text.empty() ? "Description unavailable; see the live facts below." : text;
+	return text.empty() && !spec ? "Description unavailable." : text;
 }
 
 bool normal_race(int race)
@@ -155,10 +173,8 @@ bool eligible(int race, int cls)
 	       creation_class_align(race, cls) != 5;
 }
 
-string class_status(int cls)
+string class_status(int cls, bool brief = false)
 {
-	if (!creation_class_enabled(cls))
-		return "Disabled in character creation";
 	bool normal = false, current = false, override = false;
 	for (int race = 1; race <= RACE_PLAYER_MAX; ++race)
 	{
@@ -170,6 +186,23 @@ string class_status(int cls)
 				    !creation_class_normally_available(race, cls);
 		}
 	}
+	if (brief)
+	{
+		string status;
+		if (legacy_class(cls))
+			status = "Retired ID " + std::to_string(cls);
+		else if (!creation_class_enabled(cls) || !current)
+			status = "Disabled";
+		if (!normal)
+			status += string(status.empty() ? "" : ": ") + "Special/Legacy";
+		else if (creation_class_enabled(cls) && !current)
+			status += ": no eligible races";
+		if (current && override)
+			status += string(status.empty() ? "" : "; ") + "Override";
+		return status;
+	}
+	if (!creation_class_enabled(cls))
+		return "Disabled in character creation";
 	if (current)
 		return override ? "Available in creation (includes normally restricted choices)" :
 				  "Available in character creation";
@@ -225,28 +258,24 @@ void roster(std::ostringstream &out, int race)
 		if (race && !eligible(race, cls))
 			continue;
 		string label = class_names_table[cls].ansi;
-		if (legacy_class(cls))
-			label += "&n (standalone legacy ID " + std::to_string(cls) + ")";
-		paragraph(out, label);
-		string status = class_status(cls);
+		string status = class_status(cls, true);
 		if (race)
 		{
-			status = string("Alignment: ") + alignment(creation_class_align(race, cls));
+			if (!status.empty())
+				status += "; ";
+			status +=
+				string("Alignment: ") + alignment(creation_class_align(race, cls));
 			if (!creation_class_normally_available(race, cls))
-				status += "; normally restricted (override enabled)";
+				status += "; normally restricted";
 		}
-		paragraph(out, status, 4);
-		paragraph(out, description(cls, 0, true), 4);
+		if (!status.empty())
+			label += "&n (" + status + ")";
+		list_entry(out, label + "&n - " + description(cls, 0, true));
 		++shown;
 	}
 	if (!shown)
 		paragraph(out, "None under current creation policy.");
-	paragraph(
-		out,
-		"\nCurrent creation-policy choices; transport alignment and account admission\nremain character-creation checks. Alignment is separate from racewar side.");
-	paragraph(
-		out,
-		"Assassin and Thief lookups describe Rogue specializations. Standalone\nlegacy IDs above are reference notes.");
+	paragraph(out, "\nAlignment is separate from racewar side.");
 	paragraph(out, "\nInspect: &+Wclass info <name>&n | &+Wclass specs <class>&n");
 }
 
@@ -265,17 +294,25 @@ void specializations(std::ostringstream &out, P_char ch, int cls)
 	{
 		if (!named_spec(cls, spec))
 			continue;
-		paragraph(out, specdata[cls][spec - 1]);
-		paragraph(out, description(cls, spec, true), 4);
-		paragraph(out, race_permission(ch, cls, spec), 4);
-		paragraph(out, "&+Wclass info " + strip_ansi(specdata[cls][spec - 1]) + "&n", 4);
+		string row = specdata[cls][spec - 1];
+		if (!is_allowed_race_spec(GET_RACE(ch), 1U << (cls - 1), spec))
+			row += string("&n (Not available to ") +
+			       race_names_table[GET_RACE(ch)].normal + ")";
+		const string text = description(cls, spec, true);
+		if (!text.empty())
+			row += "&n - " + text;
+		list_entry(out, row);
 		++shown;
 	}
 	if (!shown)
 		paragraph(out, "No named specializations.");
-	paragraph(
-		out,
-		"Race permission does not establish readiness to specialize. Selection\nrequires level 30, an appropriate teacher, no existing specialization or\nsecondary class, and an expired respecialization timer. Use &+Wspecialize&n\nand &+Whelp specialization&n for selection and final checks.");
+	else
+	{
+		paragraph(out, "\nInspect: &+Wclass info <specialization>&n");
+		paragraph(
+			out,
+			"Use &+Wspecialize&n at level 30. See &+Whelp specialization&n for requirements.");
+	}
 }
 
 int innate_level(int innate, int cls, int spec)
@@ -315,7 +352,7 @@ void innates(std::ostringstream &out, int cls, int spec)
 		paragraph(out, "None. No class innates assigned.");
 	paragraph(
 		out,
-		"\n'*' Designates passive ability. Includes inherited class grants.\nUse &+Whelp <ability name>&n for conditions and usage. A grant does not\nestablish equipment or combat readiness. Racial grants: &+Wrace innates <race>&n.");
+		"\n'*' Designates passive ability. Includes inherited class abilities.\nUse &+Whelp <ability name>&n for usage. Racial abilities: &+Wrace innates <race>&n.");
 }
 
 bool grant_available(const ClassSkillInfo &data, int spec, int maximum)
@@ -325,7 +362,7 @@ bool grant_available(const ClassSkillInfo &data, int spec, int maximum)
 
 void differences(std::ostringstream &out, int cls, int spec)
 {
-	out << "\n&+W  Changes from the base class (effective definitions)&n\n";
+	out << "\n&+W  Changes from the base class&n\n";
 	int shown = 0;
 	for (int id = 0; id <= MAX_AFFECT_TYPES; ++id)
 	{
@@ -404,12 +441,10 @@ void profile(std::ostringstream &out, P_char ch, int cls, int spec)
 		}
 	if (!shown)
 		paragraph(out, "None under current creation policy.", 4);
-	paragraph(
-		out,
-		"Alignment is separate from racewar side. Transport alignment and account\nadmission remain character-creation checks.");
+	paragraph(out, "Alignment is separate from racewar side.");
 	if (spec)
 	{
-		out << "\n&+W  Specialization race permissions (existing characters)&n\n";
+		out << "\n&+W  Allowed specialization races&n\n";
 		string races;
 		for (int race = 1; race <= RACE_PLAYER_MAX; ++race)
 			if (is_allowed_race_spec(race, 1U << (cls - 1), spec))
@@ -423,7 +458,7 @@ void profile(std::ostringstream &out, P_char ch, int cls, int spec)
 				"Race permission override enabled (includes normally restricted paths).");
 		paragraph(
 			out,
-			"Race permission is separate from creation eligibility and readiness.\nSelection requires level 30, an appropriate teacher, no existing specialization\nor secondary class, and an expired respecialization timer. &+Wspecialize&n\nperforms final checks; see &+Whelp specialization&n and &+Whelp unspecialization&n.");
+			"Use &+Wspecialize&n at level 30. See &+Whelp specialization&n for requirements.");
 	}
 	else
 		specializations(out, ch, cls);
@@ -445,7 +480,6 @@ void profile(std::ostringstream &out, P_char ch, int cls, int spec)
 	const string mechanics = wiki_help_prose(help_topic(cls, spec), "Class mechanics");
 	if (!mechanics.empty())
 	{
-		paragraph(out, "Authored mechanics (help):");
 		paragraph(out, mechanics, 4);
 	}
 	if (spec)
