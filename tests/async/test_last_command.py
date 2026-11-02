@@ -185,10 +185,11 @@ def main():
     # The running-game journey exercises dispatch too; keep the numeric command table aligned.
     interp = (ROOT / 'src/cmd/interp.c').read_text()
     assert re.search(r'CMD_GRT\(CMD_LAST, STAT_DEAD \+ POS_PRONE, do_last, AVATAR\)', interp)
-    assert '"last",\n\t"\\n"' in interp
     command_id = int(re.search(r'#define CMD_LAST (\d+)', (ROOT / 'src/cmd/interp.h').read_text())[1])
     maximum = int(re.search(r'#define MAX_CMD (\d+)', (ROOT / 'src/core/config.h').read_text())[1])
-    assert maximum == command_id + 1
+    commands = re.search(r'const char \*command\[MAX_CMD\] = \{(.*?)\n\};', interp, re.S)[1]
+    names = re.findall(r'"([^"]+)"', commands)
+    assert names[command_id - 1] == 'last' and maximum == len(names)
     build = ROOT / 'bin/tests'
     build.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix='last-', dir=build) as temporary:

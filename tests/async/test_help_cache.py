@@ -20,6 +20,7 @@ def function(signature, start=0):
 sql_branch = source.index('#else')
 lookup = function('string wiki_help(string str)', sql_branch)
 render = function('string wiki_help_single(string str)', sql_branch)
+race_description = function('string wiki_race_description(')
 assert 'qry(' not in lookup + render and 'mysql_' not in lookup + render
 actinf = (ROOT / 'src/cmd/actinf.c').read_text()
 help_body = actinf.split('void do_help(', 1)[1].split('void do_wizhelp', 1)[0]
@@ -60,6 +61,7 @@ void add(string title,string text,string category="1") {
  pages.push_back({{title,text,category,"2026-09-10","Editor"}}); }
 int main() {
  assert(wiki_help("help").find("unavailable")!=string::npos);
+ assert(wiki_race_description("Human").empty());
  ready=true; add("help","welcome"); add("Fire","burn","9"); add("Fire shield","protect");
  add("Alias","Redirect: Fire shield"); add("Cycle","Redirect: Cycle");
  assert(wiki_help("").find("welcome")!=string::npos);
@@ -73,6 +75,12 @@ int main() {
  assert(wiki_help("Fire").find("dynamic1")!=string::npos);
  dynamic_version=2;
  assert(wiki_help("Fire").find("dynamic2")!=string::npos);
+ add("Human", "Human lore.\n\n==Class list==\nStale class list.\n==Innate abilities==\nStale abilities.");
+ assert(wiki_race_description("hUmAn")=="Human lore.");
+ add("Grey Elf", "Grey Elf - Last Edited: 2026-11-02 by editor\n======================\n"
+                 "The elves' opening lore.\n\n==Class list==\nStale classes.");
+ assert(wiki_race_description("Grey Elf")=="The elves' opening lore.");
+ assert(wiki_race_description("missing").empty());
  for(int i=0;i<150;++i) add("bulk"+to_string(i),"text");
  auto result=wiki_help("bulk");
  assert(result.find("bulk100\n")!=string::npos);
@@ -100,7 +108,7 @@ int main() {
     for name, files in [('refresh', [ROOT / 'tests/async/refresh_cache_harness.cpp']),
                         ('help', [temp / 'help.cpp'])]:
         if name == 'help':
-            files[0].write_text(prefix + lookup + '\n' + render + main)
+            files[0].write_text(prefix + lookup + '\n' + render + '\n' + race_description + main)
         binary = temp / name
         subprocess.run(['g++','-std=c++20','-Wall','-Wextra','-Werror','-pthread',
                         '-Isrc', *map(str,files), '-o',str(binary)],cwd=ROOT,check=True)

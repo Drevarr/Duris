@@ -20,6 +20,7 @@
 
 string wiki_help(string str);
 string wiki_help_single(string str);
+string wiki_race_description(string title);
 string wiki_classes(string str);
 string wiki_innates(string title, int type);
 string wiki_multiclass(string title);
