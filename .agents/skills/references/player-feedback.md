@@ -55,6 +55,9 @@ verified writer-free window before changing bytes. During deployment, serialize
 cleanup with the existing restart: the old child and logger must have exited,
 and the launcher must not start a new child until the short file operation ends.
 Do not assume a polling gap or the launcher's delay is an exclusive window.
+On Linux, a zombie process leader can coexist with remaining logger threads.
+Check that every remaining task has exited; wait through transient task entries
+instead of assuming `/proc/<pid>/task` must immediately contain exactly one entry.
 
 Standalone cleanup can use an already-stopped runtime only after verifying that
 its writers have exited and cannot restart during the operation. If no such
@@ -74,6 +77,10 @@ and mode. If none remain, truncate the file to zero bytes rather than deleting
 its path. Verify the resulting bytes against the intended remainder before
 marking cleanup complete. Resume normal launching promptly; do not hold the game
 down to research or fix a cleanup failure.
+If the boundary is missed or cleanup fails, keep the batch and dispositions for
+the next independently required restart. Never schedule another countdown, reboot,
+shutdown, or service stop for feedback cleanup, and never mark retained entries
+as cleared.
 
 Return processed (including rejected), new, and blocked counts, the disposition
 record, and each file's cleanup result to the caller. Never claim a retained file
