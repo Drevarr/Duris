@@ -50,9 +50,8 @@ ready for review; do not merge or tag a release as part of this task.
    with revisions 9 and 3. `test_item_ownership_runtime.py` and
    `test_shop_trade_transaction.py` pass; `make -C src -j4` passed.
    Audit: the only other runtime-apply caller is `item_movement_transaction.c`,
-   used for creation grants and adopted-object operator repair. Its generic
-   result still contains only a maximum: mixed-revision memory-held repair
-   publication needs separate treatment before calling the revision audit done.
+   used for creation grants and adopted-object operator repair. Its summary-only
+   results are handled explicitly in chunk 9 below.
 4. **NPC containers:** review-ready in
    [PR #592](https://github.com/LuminariMUD/Duris/pull/592), stacked on #591.
    Removed both cache vetoes: newly received bags can organize inventory,
@@ -118,8 +117,9 @@ ready for review; do not merge or tag a release as part of this task.
    identity, missing trustworthy payload proof and damaged custody.
    `test_artifact_creation_admission.py`, `test_player_load_items.py`, and
    `make -C src -j4` passed.
-9. **Generic revision audit:** implemented on `branch/issue-583-transfer-revisions`,
-   stacked on #596. The only remaining caller is the creation-grant runtime,
+9. **Generic revision audit:** review-ready in
+   [PR #597](https://github.com/LuminariMUD/Duris/pull/597), stacked on #596.
+   The only remaining caller is the creation-grant runtime,
    including adopted-object operator repair. Fresh creation has exact revision 1;
    a one-item result's maximum is exact. A memory-held multi-item repair has no
    exact per-item results, so its cache revisions now become explicitly unknown
@@ -130,16 +130,61 @@ ready for review; do not merge or tag a release as part of this task.
    both matching/misleading single-item cache entries with committed revision 9.
    `test_item_ownership_runtime.py`, `test_shop_trade_transaction.py`,
    `test_item_movement_input_queue.py`, and `make -C src -j4` passed.
-10. **Remaining:** pet/NORENT compatibility review; backend and end-to-end
-    acceptance journeys listed below.
+10. **Read refresh and serving handoffs:** implemented on
+    `branch/issue-583-memory-acceptance`, stacked on #597. Both maintained server
+    backends build. Private serving journeys found that an unrelated login write
+    could invalidate a valid artifact read and bounce its player. Delivery now
+    resubmits the original request through the existing queue, preserving the
+    request ID, account identity, callback and original deadline. No new retry
+    queue or extension of the timeout. Native offline tests prove no premature
+    callback/materialization and bounded submission failure; the real threaded
+    admission harness proves old cuts still cannot admit a second body.
+    Private MariaDB/flat-file handoff/relogin/restart journeys passed, including
+    two ordinary handoffs, repeated recipient login in the same uptime, all four
+    stale tracking modes, exactly one elite-award feed per restart, UID/timer/soul
+    preservation and unrelated nested starter gear. MariaDB also passed legacy
+    conflict recovery, current-owner offline expiry with saved duplicates,
+    duplicate cleanup and a fresh generation across repeated restarts.
+    The first attempts corrected synthetic name, carry-capacity, visibility and
+    camp-location setup rather than changing those gameplay rules.
+    These operate disposable schemas/state and loopback servers, never `.env` or
+    the shared development server.
+    Pet teardown's explicit stable-pet/committed-return exception remains: its
+    live link-break, aggression and extraction tests pass with revision zero.
+    NORENT capture keeps active durable items even with unknown cached revision;
+    intentional key rent still sends temporary keys to the writer. Expanded
+    `test_player_snapshot_capture.py` and `test_pet_control_drop.py` passed.
+    Final disposable MariaDB save/load claims and flat-file ownership repository
+    tests passed; `test_artifact_mana_game.py` passed UID/owner, conservation and
+    reload controls. Logs are under `bin/tests/memory-authority-583/`.
+11. **Remaining acceptance:** finish exact-revision shop handoff/sale/buyback and
+    pet restart journeys, plus the focused backend payload/retention checks;
+    record final links/results here. The initial MariaDB shop attempt selected a
+    resident merchant after restart; the fixture now uses the established
+    merchant-free room 45016, also used by shop stock-reboot tests.
+
+Serving artifact commands passed with both builds:
+
+```sh
+bash tests/async/with_disposable_mariadb.sh python3 tests/async/test_artifact_owner_restart_journey.py --backend mariadb --server bin/server/dms_new
+python3 tests/async/test_artifact_owner_restart_journey.py --backend flatfile --server bin/memory-authority-flat/server/dms_new
+```
+
+Both server builds used `make -C src -j4`; the flat-file build additionally used
+`PERSISTENCE_BACKEND=flatfile BIN_ROOT="$PWD/bin/memory-authority-flat"`.
+Evidence: `bin/tests/memory-authority-583/serving-{mariadb,flatfile}.log` and
+`bin/analysis/artifact-owner/{mariadb,flatfile}.json`. Those private servers have
+stopped; the shared local development server was not changed.
 
 ### Existing staff recovery path
 
 Use `artifact hunt <initial>` for read-only saved-source inspection, then the
 matching `artifact_identity/source` record in the artifact log. Source, captured
 custody and optional cache values are distinct; a cache disagreement alone no
-longer prevents admission. `writer_overlap_requires_fresh_read` requires a fresh
-ordinary login/offline load after writes settle and creates no retained row.
+longer prevents admission. Delivery automatically refreshes invalidated reads
+through the original queue/deadline. `writer_overlap_requires_fresh_read` at a
+direct materialization boundary likewise requires a fresh ordinary load after
+writes settle and creates no retained row.
 For a genuine identity, source or topology defect, preserve the retained source,
 correct the owning data through its authorized workflow, then load afresh through
 the same qualifier and recovery factory. Existing retained sources are re-read
@@ -471,7 +516,8 @@ affects/enhancements, timer, soul, mana, nesting, and unrelated inventory on bot
 MariaDB and flat-file paths. Existing duplicate,
 retired-identity, corrupted-source, and rollback controls must continue to pass.
 
-No full serving-MUD handoff/relogin or restart journey was performed in this
-investigation, and no production incident was independently re-inspected. The
-specific historical cache fields in #583 remain unavailable. No production
-repair, deployment, migration, or implementation claim is made by this report.
+The original investigation had no serving-MUD handoff/relogin or restart proof;
+the implementation handoff above records the subsequent private-server journeys.
+No production incident was independently re-inspected. The specific historical
+cache fields in #583 remain unavailable. No production repair, deployment,
+migration or release has occurred.

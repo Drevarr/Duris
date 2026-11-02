@@ -158,6 +158,28 @@ int main() {
     result.request_id=request_id; result.outcome=player_load_outcome::applied;
     player_load_source_item raw; raw.row_id=10; raw.quantity=7; result.item_sources={raw};
     assert(player_load_offline_complete(result) && inspected==1);
+    // An invalidated saved cut refreshes in the existing queue. It preserves
+    // identity/deadline and callback ownership without constructing a body.
+    size_t refreshed=0;
+    assert(player_load_offline_inspect_for(actor,"Refresh",[&](P_char,const player_load_result &cut) {
+        assert(cut.outcome==player_load_outcome::applied); ++refreshed;
+    }));
+    result.request_id=request_id; result.request=submitted;
+    const auto original_request=submitted;
+    result.item_sources[0].extra_flags=ITEM_ARTIFACT;
+    result.item_read_writer_sequence=0;
+    assert(player_load_offline_complete(result) && refreshed==0 && allocated==before_allocated);
+    assert(submitted.request_id==original_request.request_id && submitted.pid==original_request.pid &&
+           submitted.deadline_usec==original_request.deadline_usec);
+    result.item_read_writer_sequence=1;
+    assert(player_load_offline_complete(result) && refreshed==1 && allocated==before_allocated);
+    assert(player_load_offline_inspect_for(actor,"Expired",[&](P_char,const player_load_result &cut) {
+        assert(cut.outcome==player_load_outcome::retryable_failure && cut.error_code==EAGAIN); ++refreshed;
+    }));
+    result.request_id=request_id; result.request=submitted;
+    result.item_read_writer_sequence=0; submit_allowed=false;
+    assert(player_load_offline_complete(result) && refreshed==2 && allocated==before_allocated);
+    result.item_read_writer_sequence=UINT64_MAX; submit_allowed=true;
     online=false;
     assert(player_load_offline_inspect_for(actor,"Offline",[&](P_char,const player_load_result &) { ++inspected; }));
     result.request_id=request_id;

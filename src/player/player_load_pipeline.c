@@ -246,6 +246,7 @@ void worker_main()
 			try
 			{
 				result = execute_callback(job.request, execute_context);
+				result.request = job.request;
 			}
 			catch (const std::bad_alloc &)
 			{
@@ -487,6 +488,7 @@ bool player_load_pipeline_execute_sync(player_load_request request, player_load_
 	try
 	{
 		*result_out = execute(request, context);
+		result_out->request = request;
 	}
 	catch (const std::bad_alloc &)
 	{

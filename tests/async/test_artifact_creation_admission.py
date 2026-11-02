@@ -638,7 +638,7 @@ void owner_reconciliation_cases() {
  std::cout<<"qualified worn/carried/nested owner reconciliation, first feed, conflicts and cancellation: PASS\n";
 }
 """)
-source=HARNESS.replace("// PLAYER_ATTACHMENT", "\n".join(extract_function("player_load_items.c", sig) for sig in ("void attach_loaded_inventory(", "void clear_item_uids(", "void player_load_items_discard(", "unsigned int player_load_items_qualify(")))
+source=HARNESS.replace("// PLAYER_ATTACHMENT", "\n".join(extract_function("player_load_items.c", sig) for sig in ("void attach_loaded_inventory(", "void clear_item_uids(", "void player_load_items_discard(", "bool player_load_items_read_current(", "unsigned int player_load_items_qualify(")))
 source=source.replace("// RESTORE_CARRIED",extract_function("handler.c","static void append_obj_to_list(")+"\n"+extract_function("handler.c","void obj_to_char_at_end("))
 source=source.replace("// CONSTRUCTORS","\n".join(extract_function("db.c",sig) for sig in (
  "static P_obj instantiate_object_template_impl(","P_obj instantiate_object_template(const object_template &prototype)",
@@ -1170,6 +1170,7 @@ void recovery_cases(const std::vector<artifact_population_template> &prototypes)
  bag_cut.item_sources={bag_raw,old_artifact,sibling_raw};
  for(int login=0;login<2;++login) {
   auto qualified=bag_cut;
+  if(login) qualified.item_sources[1].custody_owner_revision_found=false; // flat foreign cut
   assert(!player_load_items_qualify(&qualified) && qualified.snapshot.items.size()==2 &&
          qualified.snapshot.retained_items.rows.empty() && qualified.snapshot.items[1].parent_index==0);
  }
@@ -1221,6 +1222,12 @@ void recovery_cases(const std::vector<artifact_population_template> &prototypes)
  extract_char_after_terminal_save(&recipient);
  assert(!artifact_rows.at(900).live_object && !object_list && !pool.objs_used);
  auto reply=finish_read();
+ assert(!player_load_items_read_current(reply) && reply.request.pid==77 &&
+        reply.request.request_id==reply.request_id && reply.request.deadline_usec>0);
+ auto pet_cut=reply; pet_cut.snapshot.pets.resize(1);
+ pet_cut.snapshot.pets[0].items=pet_cut.snapshot.items;
+ pet_cut.snapshot.items.clear(); pet_cut.item_sources.clear();
+ assert(!player_load_items_read_current(pet_cut));
  assert(reply.item_read_writer_sequence==read_sequence &&
         reply.item_read_writer_sequence!=persistence_writer_read_sequence());
  assert(player_load_items_qualify(&reply)==EAGAIN && reply.snapshot.items.size()==1 &&
@@ -1233,6 +1240,7 @@ void recovery_cases(const std::vector<artifact_population_template> &prototypes)
  cut.item_sources[0].custody.owner.id=88;
  for(int login=0;login<2;++login) {
   start_read(88,cut); reply=finish_read();
+  assert(player_load_items_read_current(reply));
   assert(!player_load_items_qualify(&reply) && reply.snapshot.items.size()==1 &&
          reply.snapshot.retained_items.rows.empty() && reply.item_admission_sources.size()==1);
   first=read_object_for_recovery(reply.item_admission_sources[0]); assert(first);
