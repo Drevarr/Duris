@@ -31,7 +31,6 @@ int main(int argc, char **argv)
     if (argc == 1)
         return config->death_max_count == 1 &&
                config->bonus_hp_per_level == 2 &&
-               config->score_death_penalty_points == 25 &&
                config->score_display_divisor == 100 &&
                config->score_epic_points == 100 &&
                config->disable_in_ctf &&
@@ -43,7 +42,6 @@ int main(int argc, char **argv)
     if (argc == 2)
         return config->death_max_count == 5 &&
            config->bonus_hp_per_level == 7 &&
-           config->score_death_penalty_points == 40 &&
            config->score_display_divisor == 250 &&
            config->score_epic_points == 300 &&
            !config->disable_in_ctf &&
@@ -89,7 +87,6 @@ with tempfile.TemporaryDirectory(prefix="hardcore-config-runtime-") as directory
     overridden = (root / "lib/hardcore.cfg").read_text()
     overridden = overridden.replace("death.max.count=1", "death.max.count=5")
     overridden = overridden.replace("bonus.hp.per.level=2", "bonus.hp.per.level=7")
-    overridden = overridden.replace("score.death.penalty.points=25", "score.death.penalty.points=40")
     overridden = overridden.replace("score.display.divisor=100", "score.display.divisor=250")
     overridden = overridden.replace("score.epic.points=100", "score.epic.points=300")
     overridden = overridden.replace("mode.disable.in.ctf=true", "mode.disable.in.ctf=false")

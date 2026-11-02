@@ -59,7 +59,6 @@ for key in (
     "score.epic.points=",
     "score.multiclass.multiplier=",
     "score.killer.bonus=",
-    "score.death.penalty.points=",
     "score.invalid.frag.threshold=",
     "mode.disable.in.ctf=",
     "mode.disable.in.chaos=",
@@ -85,12 +84,10 @@ for symbol in (
     "score_invalid_frag_threshold",
     "score_frag_points",
     "score_epic_points",
-    "score_death_penalty_points",
 ):
     assert symbol in s, symbol
 assert "pd.secondary_class" in hardcore_source
 assert "2147483648" in hardcore_source
-assert "CAST(COALESCE(pd.numb_deaths, 0) AS SIGNED)" in hardcore_source
 assert "hardcore_config_get()->score_display_divisor" in hardcore_source
 assert "atof(row[1]) / 100.0" not in hardcore_source
 assert actoth.count("IS_HARDCORE(ch) && hardcore_config_get()->death_hall_of_fame") == 2
@@ -130,7 +127,6 @@ for field in (
     "score_epic_points",
     "score_multiclass_multiplier",
     "score_killer_bonus",
-    "score_death_penalty_points",
     "score_invalid_frag_threshold",
     "disable_in_ctf",
     "disable_in_chaos",

@@ -134,14 +134,14 @@ struct fixture
 	long expected;
 };
 static const fixture players[] = {
-	{ "Adventurer", 50, 1234567, 125, 37, 240, 12, 90023 },
-	{ "Debtor", 1, 0, -200, 0, 0, 1000, -44000 },
-	{ "Veteran", 56, 0, 0, 50000000, 0, 100000000, 2500056000L },
+	{ "Adventurer", 50, 1234567, 125, 37, 240, 12, 90323 },
+	{ "Debtor", 1, 0, -200, 0, 0, 1000, -19000 },
+	{ "Veteran", 56, 0, 0, 50000000, 0, 100000000, 5000056000L },
 	{ "Epicmaster", 50, 0, 0, 0, 2000000001, 0, 200000050100L },
 	{ "Wideearner", 50, 0, 0, INT_MAX, INT_MAX, 0, 429496779400L },
 	{ "Badfrags", 10, 0, 100000, 0, 10, 0, 11000 },
 	{ "Badlosses", 10, 0, -100000, 0, 10, 0, 11000 },
-	{ "Alphatie", 10, 9999, 0, 0, 0, 0, 10000 },
+	{ "Alphatie", 10, 9999, 0, 0, 0, 4000000000UL, 10000 },
 	{ "Betatie", 10, 0, 0, 0, 0, 0, 10000 },
 	{ "Experience", 10, 10000, 0, 0, 0, 0, 10001 },
 	{ "Avatarstaff", AVATAR, 0, 99999, 99999999, 2000000001, 0, 0 },
@@ -165,6 +165,10 @@ static void check_live_scores()
 		pc.numb_deaths = player.deaths;
 		pc.epics = 999999999; // Spendable balance never determines earned credit.
 		earned.modifier = player.earned;
+		assert(getLeaderBoardPtsWithShipFrags(&ch, player.ship_frags) == player.expected);
+		pc.numb_deaths = 0;
+		assert(getLeaderBoardPtsWithShipFrags(&ch, player.ship_frags) == player.expected);
+		pc.numb_deaths = ULONG_MAX;
 		assert(getLeaderBoardPtsWithShipFrags(&ch, player.ship_frags) == player.expected);
 		pc.epics = 0;
 		assert(getLeaderBoardPtsWithShipFrags(&ch, player.ship_frags) == player.expected);
@@ -270,13 +274,19 @@ static void check_database_scores(P_char viewer)
 				assert(std::stol(standings[i][1]) == player.expected);
 	}
 	assert(output.find("2000000501.00") != std::string::npos);
-	assert(output.find("900.23") != std::string::npos);
-	assert(output.find("-440.00") != std::string::npos);
+	assert(output.find("903.23") != std::string::npos);
+	assert(output.find("-190.00") != std::string::npos);
 	assert(output.find("1.25") != std::string::npos);
-	assert(output.find("Rank") != std::string::npos &&
-	       output.find("Deaths") != std::string::npos);
+	assert(output.find("Rank") != std::string::npos);
+	assert(output.find("Deaths") == std::string::npos);
+	assert(output.find("death penalties") == std::string::npos);
 	assert(output.find("Avatarstaff") == std::string::npos);
 	assert(output.find("Overlordstaff") == std::string::npos);
+	const std::string before_deaths = output;
+	execute("UPDATE player_data SET numb_deaths=0");
+	output.clear();
+	displayLeader(viewer, nullptr, 0);
+	assert(output == before_deaths);
 	const std::string before_spending = output;
 	execute("UPDATE player_data SET epics=0");
 	output.clear();
@@ -322,7 +332,7 @@ int main()
 		execute("DROP DATABASE " + database);
 		mysql_close(connection);
 		std::cout
-			<< "PASS: command SQL, ranking, staff exclusion, signed penalties, epic spending and live score parity\n";
+			<< "PASS: command SQL, ranking, staff exclusion, death-independent scores and display, epic spending and live score parity\n";
 	}
 	std::cout
 		<< "PASS: live scoring, arithmetic width, earned epics and ship ownership outside top 20\n";
