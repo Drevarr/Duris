@@ -399,6 +399,7 @@ int main()
     captured.obj_uid = 800;
     captured.R_num = 0;
     captured.type = ITEM_CONTAINER;
+    captured.loc_p = LOC_ROOM; captured.loc.room = 0;
     std::array<unsigned char, WORLD_RECOVERY_MAX_RECORD_BYTES> capture_buffer = {};
     int captured_size = world_recovery_write_object_to_buffer(
         &captured, 100, reinterpret_cast<char *>(capture_buffer.data()),
@@ -435,7 +436,7 @@ int main()
     memcpy(&captured_item,
            captured_native.data() + sizeof(world_recovery_object_record),
            sizeof(captured_item));
-    assert(captured_item.flags == WORLD_RECOVERY_ITEM_AUTHORITY_REQUIRED);
+    assert(captured_item.flags == 0);
     // A completed player save may leave the former active ownership row behind
     // after a drop. Capture the physical floor tree; recovery checks saved holdings.
     lookup_entry.owner = {item_owner_type::player, 1, 0};
@@ -451,7 +452,7 @@ int main()
     memcpy(&captured_item, captured_native.data() + sizeof(world_recovery_object_record),
            sizeof(captured_item));
     assert(captured_item.item_uid == 800 && captured_item.flags == 0);
-    for (int conflict = 0; conflict != 4; ++conflict) {
+    for (int conflict = 0; conflict != 7; ++conflict) {
         lookup_entry.owner = {item_owner_type::player, 1, 0};
         lookup_entry.state = item_custody_state::active;
         lookup_entry.vnum = 1000;
@@ -459,9 +460,19 @@ int main()
         if (conflict == 1) lookup_entry.owner = {item_owner_type::auction, 1, 0};
         if (conflict == 2) ++lookup_entry.vnum;
         if (conflict == 3) lookup_entry.owner = {item_owner_type::room, 101, 0};
+        if (conflict == 4) lookup_entry.owner = {item_owner_type::corpse, 77, 0};
+        if (conflict == 5) lookup_entry.owner = {item_owner_type::locker, 77, 0};
+        if (conflict == 6) lookup_entry.owner = {item_owner_type::pet, 77, 42};
         assert(world_recovery_write_object_to_buffer(
                    &captured, 100, reinterpret_cast<char *>(capture_buffer.data()),
-                   capture_buffer.size()) == 0);
+                   capture_buffer.size()) > 0);
+        int native_size = copyover_write_obj_to_buffer(&captured,
+            reinterpret_cast<char *>(capture_buffer.data()), capture_buffer.size());
+        assert(native_size > 0);
+        world_recovery_copyover_tree native;
+        assert(world_recovery_read_copyover_object_record(
+            reinterpret_cast<char *>(capture_buffer.data()),native_size,&native));
+        assert(native.items.size()==1 && native.items[0].item_uid==800 && native.custody.empty());
     }
     lookup_succeeds = false;
 
@@ -969,10 +980,12 @@ int main()
     gloves.value[0] = 8; gloves.timer[0] = 12345;
     fixed.obj_uid = 903; fixed.type = ITEM_OTHER; fixed.wear_flags = 0;
     corpse.contains = &bag; bag.contains = &gloves; bag.next_content = &fixed;
+    bag.loc_p = gloves.loc_p = fixed.loc_p = LOC_INSIDE;
+    bag.loc.inside = fixed.loc.inside = &corpse; gloves.loc.inside = &bag;
     char_data mortal = {}; mortal.player.level = 20;
     auto buffer = std::vector<char>(WORLD_RECOVERY_MAX_RECORD_BYTES, static_cast<char>(0xa5));
     const char *scratch_address = buffer.data();
-    for (int mode = 0; mode != 6; ++mode) {
+    for (int mode = 0; mode != 7; ++mode) {
         // 0=file copyover; 1=clean restart; 2=crash recovery (same Redis codec).
         assert(buffer.data() == scratch_address);
         const bool file_copyover = mode == 0 || mode >= 3;
@@ -987,10 +1000,15 @@ int main()
                               mode == 5 ? 100U : 77U, 12};
         lookup_entry.state = item_custody_state::active;
         lookup_entry.item_revision = 29; lookup_entry.owner_revision = 31;
-        reconcile_succeeds = !file_copyover; // Models unavailable SQL/flatfile-primary.
-        if (lookup_succeeds) {
-            assert(world_recovery_write_object_to_buffer(&corpse, 100, buffer.data(), buffer.size()) == 0);
+        if(mode==6) {
+            // Actual PC corpse contents use logical roots below the wrapper.
+            corpse.value[1]=PC_CORPSE; corpse.value[3]=77; corpse.value[6]=12;
+            lookup_entry.root_item_uid=901;
+            lookup_entry.parent_item_uid=901;
+            lookup_entry.owner={item_owner_type::corpse,item_corpse_owner_id(77,12),0};
         }
+        reconcile_succeeds = !file_copyover; // Models unavailable SQL/flatfile-primary.
+        assert(world_recovery_write_object_to_buffer(&corpse, 100, buffer.data(), buffer.size()) > 0);
         int size = file_copyover ? copyover_write_obj_to_buffer(&corpse, buffer.data(), buffer.size()) :
             world_recovery_write_object_to_buffer(&corpse, 100, buffer.data(), buffer.size());
         assert(size > 0);
@@ -1005,7 +1023,7 @@ int main()
             assert(!copyover_restore_obj_from_buffer(buffer.data(), size, &consumed));
             assert(consumed == 0 && object_list == nullptr);
             hydrate_succeeds = true;
-            if (lookup_succeeds) {
+            if (mode==6) {
                 auto bad = lookup_entry;
                 bad.item_uid++;
                 std::memcpy(buffer.data() + size - sizeof(bad), &bad, sizeof(bad));
@@ -1013,8 +1031,8 @@ int main()
                 assert(consumed == 0 && object_list == nullptr);
             }
             restored = read_obj_entry(file);
-            assert(hydrated_entries.size() == (lookup_succeeds ? 1U : 0U));
-            if (lookup_succeeds) {
+            assert(hydrated_entries.size() == (mode==6 ? 1U : 0U));
+            if (mode==6) {
                 const auto &entry = hydrated_entries.front();
                 assert(entry.item_uid == lookup_entry.item_uid);
                 assert(entry.root_item_uid == lookup_entry.root_item_uid);
@@ -1232,7 +1250,8 @@ int get_number(char **name) {
 }
 '''
 TEXT_RESTORE = section(PIPELINE, "void replace_object_text", "P_obj materialize_object")
-HARNESS = HARNESS.replace("int main()", TEXT_RESTORE + COPYOVER_HELPERS + TAKEABILITY + SELECTOR_STUBS + SELECTOR + "\nint main()", 1)
+HARNESS = HARNESS.replace("int main()", TEXT_RESTORE + COPYOVER_HELPERS + TAKEABILITY + SELECTOR_STUBS + SELECTOR +
+    extract_function("item_transfer_command.c", "uint64_t item_corpse_owner_id(") + "\nint main()", 1)
 
 with tempfile.TemporaryDirectory(prefix="duris-world-recovery-") as temp_dir:
     source = Path(temp_dir) / "world_recovery_test.cpp"

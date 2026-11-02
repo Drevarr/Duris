@@ -53,16 +53,28 @@ ready for review; do not merge or tag a release as part of this task.
    used for creation grants and adopted-object operator repair. Its generic
    result still contains only a maximum: mixed-revision memory-held repair
    publication needs separate treatment before calling the revision audit done.
-4. **NPC containers:** implemented on `branch/issue-583-npc-containers`, stacked
-   on #591. Removed both cache vetoes: newly received bags can organize inventory,
+4. **NPC containers:** review-ready in
+   [PR #592](https://github.com/LuminariMUD/Duris/pull/592), stacked on #591.
+   Removed both cache vetoes: newly received bags can organize inventory,
    and newly received ordinary items can enter carried bags. Reuses normal `put()`
    permissions, equipment evaluation and trap handling. Real organizer/put/cache
    regression cases pass alongside `test_put_trap_lifecycle.py`,
    `test_get_trap_lifecycle.py`, `test_items_move_in_memory.py`,
    `test_item_movement_input_queue.py`, and `make -C src -j4`.
-5. **Remaining:** artifact source admission plus delayed-read/save/unload proof;
+5. **Floor/copyover capture:** implemented on `branch/issue-583-floor-capture`,
+   stacked on #592. Recovery captures no longer ask the partial cache whether a
+   physical floor tree may exist. Restore still excludes saved holdings, and
+   legacy marked records keep their reconciliation path. Native copyover retains
+   only metadata matching the actual room or logical PC-corpse domain/topology;
+   stale metadata is omitted without dropping the live tree. Removed the obsolete
+   whole-tree skip flag. The existing ASan/UBSan recovery suite passes former
+   player/corpse/pet/locker/room and bad cache state/vnum cases, native round trips,
+   logical PC-corpse roots, metadata preservation, duplicate controls and rollback.
+   `python3 tests/async/test_world_recovery_pipeline.py` and `make -C src -j4`
+   passed. Updated the persistence guide and ADR's obsolete capture description.
+6. **Remaining:** artifact source admission plus delayed-read/save/unload proof;
    old-holder source cleanup versus damaged-component retention; generic repair
-   revision publication; physical floor/copyover capture;
+   revision publication;
    pet/NORENT compatibility review; specific refusal diagnostics and existing
    inspection; backend and end-to-end acceptance journeys listed below.
 
