@@ -25,6 +25,10 @@
 #include <cerrno>
 
 #define HARNESS_STUB __attribute__((weak))
+HARNESS_STUB player_save_worker_health player_save_worker_health_copy()
+{
+	return {};
+}
 // Fixtures without the player-save pipeline have no pending quest transition.
 HARNESS_STUB bool player_save_pipeline_world_quest_pending(int)
 {

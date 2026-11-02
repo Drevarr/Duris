@@ -61,8 +61,9 @@ ready for review; do not merge or tag a release as part of this task.
    regression cases pass alongside `test_put_trap_lifecycle.py`,
    `test_get_trap_lifecycle.py`, `test_items_move_in_memory.py`,
    `test_item_movement_input_queue.py`, and `make -C src -j4`.
-5. **Floor/copyover capture:** implemented on `branch/issue-583-floor-capture`,
-   stacked on #592. Recovery captures no longer ask the partial cache whether a
+5. **Floor/copyover capture:** review-ready in
+   [PR #593](https://github.com/LuminariMUD/Duris/pull/593), stacked on #592.
+   Recovery captures no longer ask the partial cache whether a
    physical floor tree may exist. Restore still excludes saved holdings, and
    legacy marked records keep their reconciliation path. Native copyover retains
    only metadata matching the actual room or logical PC-corpse domain/topology;
@@ -72,7 +73,25 @@ ready for review; do not merge or tag a release as part of this task.
    logical PC-corpse roots, metadata preservation, duplicate controls and rollback.
    `python3 tests/async/test_world_recovery_pipeline.py` and `make -C src -j4`
    passed. Updated the persistence guide and ADR's obsolete capture description.
-6. **Remaining:** artifact source admission plus delayed-read/save/unload proof;
+6. **Artifact source admission:** implemented on
+   `branch/issue-583-artifact-admission`, stacked on #593. The shared qualifier and
+   constructor no longer compare the optional ownership cache. Canonical UID,
+   active captured custody, source owner/topology, retirement, competing body and
+   pending creation checks remain. Async and synchronous pipeline reads capture
+   the existing writer submission/replacement count only when no writes are
+   queued/in flight. Artifact admission requires that cut still to be current;
+   otherwise `EAGAIN` refuses the whole load without retaining sources. The
+   existing fresh login/offline-load path performs recovery. This conservatively
+   retries after unrelated concurrent writes too; no new queue or retry service.
+   Boot/direct repository projections keep their existing quiescent contract.
+   The real threaded reader plus real canonical construction, handoff, terminal
+   save admission and unload now reproduce the delayed reply boundary. The old
+   reply requires refresh and retains nothing; two fresh recipient admissions
+   succeed. The writer/storage boundary remains stubbed in this harness, so it
+   does not replace the required backend or serving-MUD journeys.
+   `test_artifact_creation_admission.py` (ASan/UBSan),
+   `test_player_load_pipeline.py`, and `make -C src -j4` passed.
+7. **Remaining:**
    old-holder source cleanup versus damaged-component retention; generic repair
    revision publication;
    pet/NORENT compatibility review; specific refusal diagnostics and existing
