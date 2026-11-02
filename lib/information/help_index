@@ -25982,6 +25982,11 @@ invisibility may be needed. Handing a ticket to someone else does not teach
 its destination or bypass
 that character's access rules. Old route tickets may need to be replaced.
 
+A flight takes one ticketed passenger. You cannot mount the carrier or
+its passenger directly, or board with another rider on your back.
+Entering combat does not require Mounted Combat to keep this paid ride.
+If the passenger leaves or is lost, the carrier returns home on its own.
+
 Discovery experience grows with the number of ordinary stops you have found:
 base reward = your current EXP-gain cap * discovery count / 27.
 Normal racial, rested, well-rested and difficulty modifiers and EXP limits
@@ -27599,4 +27604,73 @@ Several different abilities use the word rift. Read 'help ethereal rift',
 'help cosmic rift' or 'help shadow gate' for their separate rules.
 For world locations, read 'help tharnadia' or ask fellow players.
 These spell guides do not describe the Tharnadia Rift area's encounters.
+#
+Anti-Paladin Spells
+Read 'help anti-paladin skills' for the class's spell-circle and skill
+progression. Specializations can add or remove grants; read
+'help anti-paladin' for the class and its specialization choices.
+#
+Grey-Elf
+Read 'help grey elf' for the race's traits, abilities and class choices.
+#
+Tavern
+Bartenders offer ASK and KILL tasks. Read 'help quest' for buying a task,
+sharing it, rewards, maps and abandonment. Use 'quest' to view your task.
+#
+Burrow
+Syntax: innate burrow
+
+Halflings gain this active racial innate at level 1. It hides you by
+blending into the ground. It does not move you to another room or create
+an underground passage. Being hidden does not make you undetectable.
+You cannot activate it again while already hidden or during its cooldown.
+Read 'help hide' for hiding and 'help innate' for using racial abilities.
+#
+Racial
+Read 'help innate' for racial and class abilities. Type 'innates' to see
+your own abilities, and read 'help <race name>' for that race's traits.
+The race browser also offers 'race innates <race name>' for racial
+abilities and unlock levels, and 'race info <race name>' for its profile.
+#
+Epic Bonus
+Syntax: epic bonus
+        epic bonus <cargo|shop|exp|epic|health|moves|none>
+
+Choose one bonus supported by recently earned epics. With no choice,
+'epic bonus' shows your current bonus and the available maximums.
+Every selection resets the earning start time, even if you select the
+same bonus again. Earlier earnings do not build the new selection.
+Bottle epics do not contribute.
+
+The current settings use a 5-day window of daily epic earnings, after
+your selection, up to 10,000 epics. The bonus grows proportionally toward
+its maximum as you earn epics, and falls as those earnings expire.
+'none' removes your selection. Read 'help epic bonus cargo' for cargo.
+#
+Epic Bonus Cargo
+Syntax: epic bonus cargo
+
+Select the Cargo Discount epic bonus. It reduces eligible cargo purchase
+prices by up to 40% at the current settings. The discount grows with
+eligible recent epic earnings; selecting it resets the earning start
+time. It does not increase a ship's cargo capacity.
+Use 'epic bonus' to see your current bonus and 'help epic bonus' for
+the earning window, other choices and reset rules.
+#
+Torrhan
+Torrhan is a city and a shipbuilding port. Read 'help ships' for buying
+and using ships, and 'help ferries' for scheduled passenger transport.
+This help is a pointer to travel guides, rather than a city walkthrough.
+#
+List Weapons
+At a shipwright, 'list weapons' lists ship weapons and their prices,
+weight, ammunition, range and damage. Read 'help ship weapons' for the
+full guide. For personal equipment, read 'help weapons'.
+#
+Stoneskin
+Read 'help stone skin' for the spell, Earth Magus layers and Stone innate.
+#
+SV Spell
+Spell save is your saving throw against spell attacks. Read
+'help saving throw' for the saving-throw categories and how they work.
 #

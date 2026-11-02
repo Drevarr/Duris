@@ -4,10 +4,66 @@
 &+R                   PWIPE HAPPENED &+YOCT 28TH 1800 UTC!&n
 &+G                     A NEW SEASON OF BLOOD BEGINS&n
 &+W======================================================================&n
-&+WUpdated: November 01, 2026&n
+&+WUpdated: November 02, 2026&n
 
-Welcome back! Finish a tavern task and make room in your bags.
+Welcome back! Browse the races, take flight and check the shops.
 Newest first; later updates replace older rules. Longer archive on web.
+
+&+R11/02/26&n &+L-&n &+YKnow your race, keep your ride&n
+&+W----------------------------------------------------------------------&n
+
+&+CRaces at a glance&n
+&+Y-&n Use &+C'race list'&n for the racewar roster,
+  &+C'race info <race name>'&n for traits, valid classes and race-specific
+  specializations, or &+C'race innates <race name>'&n for racial abilities
+  and unlock levels. Disabled and special races show their restrictions.
+
+&+COne ticket, one passenger&n
+&+Y-&n Flight carriers return after losing a passenger, including when nobody
+  remains aboard. A passenger who enters combat keeps the paid ride
+  without needing Mounted Combat. Ordinary combat and movement rules apply.
+&+Y-&n You cannot mount a flight carrier or its passenger directly, bring a
+  rider on your back, or hitch another passenger onto a paid flight.
+  Dismount an existing rider before boarding your own flight.
+
+&+CShops and lockers keep their footing&n
+&+Y-&n Clean cold reboots can refill missing finite shop stock to the normal
+  starting quantity while keeping saved items and player-sold goods.
+  Crashes, copyovers and the first boot after this upgrade preserve saved
+  stock instead. Buying a saved shop item no longer fails by trying to
+  create the same item again.
+&+Y-&n Locker work can delay idle removal or staff ghost cleanup until your
+  belongings are ready. A bounded shutdown now retains unfinished locker
+  contents for recovery at startup instead of leaving them behind.
+
+&+CSharper signals in a fight&n
+&+Y-&n Headbutts report when they do no damage, including harmless backfires.
+  Sleeping victims receive a wake-up notice when damage wakes them.
+&+Y-&n Taunt requires the target to reach you in a single-file room, and its
+  forced focus ends safely when the taunter leaves the game.
+&+Y-&n ASK quest sharing accepts more equipment whose special effects act
+  only in combat or periodically. Items that interfere with asking can
+  still block it; the other sharing requirements remain.
+
+&+CClient panels, quieter when you choose&n
+&+Y-&n MSP group panels refresh for resource, combat, progression and derived
+  stat changes without repeating unchanged group displays on every prompt.
+  Maps refresh after departures, failed follows and visibility changes.
+&+Y-&n Use &+C'toggle terminal msp quiet'&n for MSP prompts and maps with group
+  displays only on &+C'group'&n. Use &+C'toggle terminal msp'&n to restore
+  automatic group updates. Quiet mode lasts for this connection.
+&+Y-&n Deaths no longer reduce leaderboard scores or appear on that board.
+  In-game news shows the newest portion and links to the full web archive.
+
+&+CMore ways into the help library&n
+&+Y-&n Read &+C'help burrow'&n, &+C'help racial'&n, &+C'help epic bonus'&n and
+  &+C'help epic bonus cargo'&n for racial abilities and earned-epic bonuses.
+  Cargo discounts grow with eligible earnings; changing your selection
+  resets the earning start time.
+&+Y-&n New pointers include &+C'help anti-paladin spells'&n, &+C'help grey-elf'&n,
+  &+C'help tavern'&n, &+C'help torrhan'&n, &+C'help list weapons'&n,
+  &+C'help stoneskin'&n and &+C'help sv spell'&n.
+  Songs and Lyre help now place Song of Healing at level &+Y31&n.
 
 &+R11/01/26&n &+L-&n &+YThe tavern pays in treasure&n
 &+W----------------------------------------------------------------------&n
