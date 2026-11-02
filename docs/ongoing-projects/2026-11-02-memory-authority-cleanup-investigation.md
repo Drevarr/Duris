@@ -2,12 +2,12 @@
 
 [Issue #583](https://github.com/LuminariMUD/Duris/issues/583).
 Worktree: `/home/aiwithapex/projects/duris-issue-583-memory-authority-plan`.
-Current branch: `branch/issue-583-room-claim-recovery`, stacked on
-[PR #606](https://github.com/LuminariMUD/Duris/pull/606).
+Current branch: `branch/issue-583-room-claim-recovery`,
+[PR #607](https://github.com/LuminariMUD/Duris/pull/607), stacked on #606.
 
 **Status:** implementation and local acceptance review are complete; the stack is
 ready for PR review. Final review fixed missing raw-source diagnostics (#605),
-repaired-container batch admission (#606) and matching-room recovery (this branch).
+repaired-container batch admission (#606) and matching-room recovery (#607).
 Both server builds, focused native/backend regressions and the disposable
 MariaDB/Redis crash-recovery journey pass. All started checks have completed.
 The pet-only delayed-read finding is covered by the whole-load guard in #603.
@@ -85,7 +85,7 @@ These are the acceptance contract and the owning files, not another work queue.
 The aggregate diff from `5708e269974ab070ea224f720e7e2e787e2d6671` was reviewed
 against this contract and the assertions/results below. No implementation task
 remains open. Review the full stack: #603 addresses #594's pet-read finding,
-#606 addresses #597's repaired-container finding, and this branch addresses
+#606 addresses #597's repaired-container finding, and #607 addresses
 #593's room-recovery finding. These follow-ups must be included together.
 
 For requested review changes, reuse the existing paths/tests and repeat only
@@ -189,4 +189,5 @@ In dependency order, with details and history retained in Git/PRs:
 [#603](https://github.com/LuminariMUD/Duris/pull/603) →
 [#604](https://github.com/LuminariMUD/Duris/pull/604) →
 [#605](https://github.com/LuminariMUD/Duris/pull/605) →
-[#606](https://github.com/LuminariMUD/Duris/pull/606).
+[#606](https://github.com/LuminariMUD/Duris/pull/606) →
+[#607](https://github.com/LuminariMUD/Duris/pull/607).
