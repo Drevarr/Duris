@@ -68,6 +68,7 @@ void epic_skill_purchase_committed(P_char pl, bool committed, const epic_command
 	pl->only.pc->skills[context.skill].taught = learned;
 	pl->only.pc->skills[context.skill].learned = learned;
 	affect_total(pl, TRUE);
+	update_group_vitals(pl);
 	gmcp_char_vitals(pl);
 	char buffer[256];
 	snprintf(buffer, sizeof(buffer),

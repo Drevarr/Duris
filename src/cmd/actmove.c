@@ -4054,6 +4054,7 @@ void do_stand(P_char ch, char * /*argument*/, int /*cmd*/)
 	if (standing_and_resting(ch))
 		log_standing_resting_recovery(ch, "stand");
 	SET_POS(ch, POS_STANDING + STAT_NORMAL);
+	update_group_vitals(ch);
 	gmcp_char_vitals(ch);
 	stop_memorizing(ch, memorization_stop_reason::voluntary);
 	telemetry_gameplay_context_changed(ch);
@@ -4144,6 +4145,7 @@ void do_sit(P_char ch, char * /*argument*/, int /*cmd*/)
 		break;
 	}
 	SET_POS(ch, GET_STAT(ch) + POS_SITTING);
+	update_group_vitals(ch);
 	gmcp_char_vitals(ch);
 	telemetry_gameplay_context_changed(ch);
 }
@@ -4240,6 +4242,7 @@ void do_kneel(P_char ch, char * /*argument*/, int /*cmd*/)
 		break;
 	}
 	SET_POS(ch, GET_STAT(ch) + POS_KNEELING);
+	update_group_vitals(ch);
 	gmcp_char_vitals(ch);
 	telemetry_gameplay_context_changed(ch);
 }
@@ -4335,6 +4338,7 @@ void do_recline(P_char ch, char * /*argument*/, int /*cmd*/)
 		break;
 	}
 	SET_POS(ch, GET_STAT(ch) + POS_PRONE);
+	update_group_vitals(ch);
 	gmcp_char_vitals(ch);
 	stop_memorizing(ch, memorization_stop_reason::voluntary);
 	telemetry_gameplay_context_changed(ch);
@@ -4419,6 +4423,7 @@ void do_rest(P_char ch, char * /*argument*/, int /*cmd*/)
 	if (standing_and_resting(ch))
 		log_standing_resting_recovery(ch, "rest");
 	SET_POS(ch, resting_posture(ch) + STAT_RESTING);
+	update_group_vitals(ch);
 	gmcp_char_vitals(ch);
 	if ((GET_POS(ch) != POS_SITTING) && (GET_POS(ch) != POS_KNEELING))
 		stop_memorizing(ch, memorization_stop_reason::voluntary);
@@ -4568,6 +4573,7 @@ void do_sleep(P_char ch, char * /*argument*/, int /*cmd*/)
 	}
 
 	SET_POS(ch, GET_POS(ch) + STAT_SLEEPING);
+	update_group_vitals(ch);
 	gmcp_char_vitals(ch);
 	stop_memorizing(ch, memorization_stop_reason::voluntary);
 	telemetry_gameplay_context_changed(ch);
@@ -4648,6 +4654,7 @@ void do_wake(P_char ch, char *argument, int /*cmd*/)
 						    TO_CHAR);
 						SET_POS(tmp_char,
 							resting_posture(tmp_char) + STAT_RESTING);
+						update_group_vitals(tmp_char);
 						gmcp_char_vitals(tmp_char);
 						act("You are awakened by $n.", FALSE, ch, 0,
 						    tmp_char, TO_VICT);
@@ -4690,6 +4697,7 @@ void do_wake(P_char ch, char *argument, int /*cmd*/)
 				}
 
 				SET_POS(ch, resting_posture(ch) + STAT_RESTING);
+				update_group_vitals(ch);
 				gmcp_char_vitals(ch);
 				telemetry_gameplay_context_changed(ch);
 			}

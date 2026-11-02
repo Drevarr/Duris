@@ -274,7 +274,7 @@ int main()
     assert(last_vitals.find("\"position\":\"sitting\"") != std::string::npos);
 
     // Group observer must have last_group_update flagged
-    assert(desc_observer.last_group_update == 1);
+    assert(desc_observer.last_group_update != 0);
 
     // Sending group status must reflect sitting position
     gmcp_deliveries.clear();
@@ -312,7 +312,7 @@ int main()
         }
     }
     assert(found_vitals);
-    assert(desc_observer.last_group_update == 1);
+    assert(desc_observer.last_group_update != 0);
 
     // --- TEST 3: Attacker fails bash and topples over ---
     SET_POS(&attacker, POS_STANDING + STAT_NORMAL);
@@ -390,6 +390,7 @@ int main()
                 prelude,
                 json_build_char_vitals_fn,
                 update_groupies_fn,
+                extract_function("guild/group.c", "void update_group_vitals("),
                 gmcp_char_vitals_fn,
                 gmcp_send_group_status_fn,
                 update_pos_fn,

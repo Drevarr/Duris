@@ -602,6 +602,7 @@ int vamp(P_char ch, double fhits, double fcap, bool allow_improved_healing)
 		send_to_char(buf, ch);
 	}
 
+	update_group_vitals(ch);
 	gmcp_char_vitals(ch);
 
 	return hits;
@@ -5756,6 +5757,7 @@ int raw_damage(P_char ch, P_char victim, double dam, uint flags, struct damage_m
 				ch, victim, dam > 0.0 ? static_cast<std::uint64_t>(dam) : 0U, 0U);
 
 			/* Send GMCP updates for combat */
+			update_group_vitals(victim);
 			gmcp_char_vitals(victim);
 			gmcp_combat_damage(ch, victim, hit_before - GET_HIT(victim), messages);
 		}
@@ -7863,6 +7865,7 @@ void set_fighting(P_char ch, P_char vict)
 	GET_OPPONENT(ch) = victim;
 	disarm_char_nevents(ch, event_water_crossing);
 	disarm_char_nevents(victim, event_water_crossing);
+	update_group_vitals(ch);
 	gmcp_char_vitals(ch);
 	gmcp_combat_target(ch, victim);
 	ch->specials.next_fighting = combat_list;
@@ -8805,6 +8808,7 @@ void stop_fighting(P_char ch)
 	gmcp_combat_end(ch);
 
 	update_pos(ch);
+	update_group_vitals(ch);
 	gmcp_char_vitals(ch);
 }
 

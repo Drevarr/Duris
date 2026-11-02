@@ -1537,6 +1537,8 @@ void enter_game(P_desc d)
 	const bool new_character = ch && GET_LEVEL(ch) == 0;
 	if (d->msp_group_output)
 		FREE(d->msp_group_output);
+	if (d->term_type == TERM_MSP)
+		d->last_group_update = GROUP_UPDATE_ALL;
 	P_desc i;
 	P_nevent evp;
 	P_Guild guild;

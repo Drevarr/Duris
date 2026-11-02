@@ -734,6 +734,7 @@ void creation_grant_completion(P_char actor, bool committed, const item_transfer
 					     "Your starter kit is ready.\r\n",
 				     actor);
 			// The detached kit changes derived vitals after the initial entry snapshot.
+			update_group_vitals(actor);
 			gmcp_char_vitals(actor);
 			actor->desc->prompt_mode = TRUE;
 		}
@@ -838,6 +839,7 @@ void creation_grant_batch_completion(P_char actor, bool committed,
 	}
 	if (blocks_actor_commands && actor->desc)
 	{
+		update_group_vitals(actor);
 		gmcp_char_vitals(actor);
 		actor->desc->prompt_mode = TRUE;
 	}

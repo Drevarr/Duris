@@ -56,6 +56,7 @@ bool apply_tsunami_vitality(int wielder_level, P_char actor, P_char target)
 			update_pos(target);
 		}
 		af->duration = 15;
+		update_group_vitals(target);
 		gmcp_char_vitals(target);
 		gmcp_char_affects(target);
 		return true;

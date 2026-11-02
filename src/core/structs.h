@@ -1741,6 +1741,12 @@ struct gmcp_combat_subject
 	char name[256];
 };
 
+enum group_update_kind
+{
+	GROUP_UPDATE_ALL = 1,
+	GROUP_UPDATE_REMOTE_VITALS = 2
+};
+
 struct descriptor_data
 {
 	// Session-local cosmetic state, zeroed on allocation/reconnect/copyover.
@@ -1801,7 +1807,8 @@ struct descriptor_data
 	int movement_noise;
 	char client_str[MAX_INPUT_LENGTH]; /* CLIENT SPECIFIC STRING */
 	int last_map_update; /* CLIENT SPECIFIC INT */
-	int last_group_update; /* CLIENT SPECIFIC INT */
+	int last_group_update; /* Pending group_update_kind, or zero. */
+	bool msp_group_manual; /* Quiet MSP: group frames only on explicit request. */
 	char *msp_group_output; /* Last displayed group body; owned by this connection. */
 
 	/* WebSocket support */

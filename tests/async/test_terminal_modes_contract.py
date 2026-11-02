@@ -54,7 +54,7 @@ ok &= check(
 )
 ok &= check(
     "toggle usage documents the supported generic mode",
-    "USAGE: TOGGLE terminal [ansi|gen|msp]" in ACTOTH,
+    "USAGE: TOGGLE terminal [ansi|gen|msp [quiet]]" in ACTOTH,
 )
 ok &= check(
     "the guide documents presentation tags and the absence of audio triggers",

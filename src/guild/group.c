@@ -384,6 +384,8 @@ void do_appoint(P_char ch, char *argument, int /*cmd*/)
  * commands always send, including an empty frame to clear the client panel. */
 void send_msp_group(P_char ch, bool force)
 {
+	if (!force && ch->desc->msp_group_manual)
+		return;
 	char body[MAX_STRING_LENGTH] = "";
 	char row[MAX_STRING_LENGTH];
 	for (struct group_list *gl = ch->group; gl; gl = gl->next)
@@ -1104,9 +1106,31 @@ void update_groupies(P_char ch, bool only_in_room)
 	{
 		if (gl->ch && gl->ch->desc && (ch->in_room == gl->ch->in_room || !only_in_room))
 		{
-			if (gl->ch->desc->term_type == TERM_MSP || gl->ch->desc->gmcp_enabled)
+			if ((gl->ch->desc->term_type == TERM_MSP &&
+			     !gl->ch->desc->msp_group_manual) ||
+			    gl->ch->desc->gmcp_enabled)
 				gl->ch->desc->last_group_update = 1;
 		}
+	}
+}
+
+// Resource changes affect MSP rows only when the member is in the recipient's room.
+// Keep remote structured vitals delivery without rebuilding an unchanged MSP frame.
+void update_group_vitals(P_char ch)
+{
+	// Prompt-based health checkers still need current self vitals in quiet mode.
+	if (ch->desc && ch->desc->term_type == TERM_MSP && ch->desc->msp_group_manual)
+		ch->desc->prompt_mode = TRUE;
+	for (struct group_list *gl = ch->group; gl; gl = gl->next)
+	{
+		P_desc d = gl->ch ? gl->ch->desc : nullptr;
+		if (!d)
+			continue;
+		if (d->term_type == TERM_MSP && !d->msp_group_manual &&
+		    ch->in_room == gl->ch->in_room)
+			d->last_group_update = GROUP_UPDATE_ALL;
+		else if (GMCP_ENABLED(gl->ch) && !d->last_group_update)
+			d->last_group_update = GROUP_UPDATE_REMOTE_VITALS;
 	}
 }
 

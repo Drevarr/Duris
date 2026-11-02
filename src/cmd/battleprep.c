@@ -95,6 +95,7 @@ static void battle_stop_status(P_char staff, char *argument, bool stop)
 			if (GET_STAT(victim) == STAT_SLEEPING && GET_POS(victim) == POS_STANDING)
 			{
 				SET_POS(victim, STAT_SLEEPING + POS_SITTING);
+				update_group_vitals(victim);
 				gmcp_char_vitals(victim);
 			}
 			logit(LOG_WIZ, "%s stopped battle participant %s", GET_NAME(staff),

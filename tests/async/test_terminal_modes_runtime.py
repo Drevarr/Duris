@@ -56,7 +56,8 @@ int number(int a, int) { return a; }
 int flag2idx(int) { return 1; }
 int IS_MORPH(P_char) { return false; }
 bool ac_can_see(P_char, P_char target, bool) { return member_visible || target != hidden_member; }
-bool racewar(P_char, P_char) { return false; }
+static int row_visits;
+bool racewar(P_char, P_char) { ++row_visits; return false; }
 bool has_innate(P_char, int) { return false; }
 int get_real_race(P_char) { return 0; }
 const char *get_class_name(P_char, P_char) { return "Warrior"; }
@@ -205,12 +206,15 @@ int main()
         member.player.name = member_name;
         hidden_member = &member;
         member_visible = true;
-        auto automatic = [&]() {
+        auto automatic = [&](bool group_changed = true, bool structure = false) {
             output.clear(); group_updates = 0;
-            gmcp_char_vitals(&member); // Actual producer, including non-GMCP members.
-            assert(d.last_group_update);
+            if (structure) update_groupies(&member);
+            else if (group_changed) update_group_vitals(&member);
+            gmcp_char_vitals(&member);
+            assert(bool(d.last_group_update) == (group_changed &&
+                   (gmcp || structure || (!d.msp_group_manual && member.in_room == actor.in_room))));
             pending_group_update(&actor);
-            assert(!d.last_group_update && group_updates == int(gmcp));
+            assert(!d.last_group_update && group_updates == int(gmcp && group_changed));
             return output;
         };
         const std::string initial = automatic();
@@ -218,24 +222,24 @@ int main()
                           "\n(Front)  Member\n <&+G100h&n/&+G100H&n> <&+G100m&n/&+G100M&n>\n</group>\n");
         assert(automatic().empty());
         ++member.points.mana;
-        assert(automatic().empty()); // Mana is not in the MSP group display.
+        assert(automatic(false).empty()); // Mana is not in the MSP group display.
         --member.points.hit;
         assert(automatic().find("99h") != std::string::npos);
         assert(automatic().empty());
         --member.points.vitality;
         assert(automatic().find("99m") != std::string::npos);
         SET_BIT(member.specials.act2, PLR2_BACK_RANK);
-        assert(automatic().find("Back") != std::string::npos);
+        assert(automatic(true, true).find("Back") != std::string::npos);
         member_visible = false;
-        assert(automatic().find("Someone") != std::string::npos);
+        assert(automatic(true, true).find("Someone") != std::string::npos);
         member_visible = true;
-        assert(automatic().find("Member") != std::string::npos);
+        assert(automatic(true, true).find("Member") != std::string::npos);
         member.in_room = 0;
-        assert(!automatic().empty());
+        assert(!automatic(true, true).empty());
         --member.points.hit;
         assert(automatic().empty()); // Remote HP is not displayed to this observer.
         member.in_room = 1;
-        assert(automatic().find("98h") != std::string::npos);
+        assert(automatic(true, true).find("98h") != std::string::npos);
         std::string manual;
         for (int repeat = 0; repeat < 2; ++repeat) {
             output.clear(); group_updates = 0;
@@ -265,9 +269,46 @@ int main()
             assert(output == "<group>\n</group>\n");
         }
         actor.group = member.group = &head;
-        assert(!automatic().empty());
+        assert(!automatic(true, true).empty());
         assert(automatic().empty());
     }
+    d.term_type = TERM_MSP; d.last_group_update = 0;
+    reset_msp_entry(&d);
+    assert(!d.msp_group_output && d.last_group_update == GROUP_UPDATE_ALL);
+    // Quiet MSP has no automatic group frames, including on real HP changes.
+    d.gmcp_enabled = false; d.msp_group_manual = true;
+    actor.group = member.group = &head; actor.in_room = member.in_room = 1;
+    output.clear(); d.last_group_update = 0;
+    --member.points.hit;
+    update_group_vitals(&member);
+    assert(!d.last_group_update);
+    d.prompt_mode = false;
+    update_group_vitals(&actor);
+    assert(d.prompt_mode && !d.last_group_update);
+    update_groupies(&member);
+    assert(!d.last_group_update);
+    send_msp_group(&actor, false);
+    assert(output.empty());
+    do_group(&actor, writable_arg(""), 0);
+    assert(output.find("<group>") != std::string::npos);
+    d.msp_group_manual = false;
+    d.prompt_mode = false;
+    update_group_vitals(&actor);
+    assert(!d.prompt_mode); // Ordinary MSP retains its existing prompt policy.
+    d.last_group_update = 0;
+    row_visits = 0;
+    for (int tick = 0; tick < 8; ++tick) {
+        ++member.points.mana;
+        ++member.points.ward;
+        gmcp_char_vitals(&member); // A transport send owns no group invalidation.
+        pending_group_update(&actor);
+    }
+    assert(!d.last_group_update && row_visits == 0);
+    member.in_room = 0;
+    --member.points.hit;
+    update_group_vitals(&member);
+    pending_group_update(&actor);
+    assert(!d.last_group_update && row_visits == 0);
     FREE(d.msp_group_output);
     puts("PASS: terminal modes, unchanged automatic MSP groups, explicit groups, and leaving/rejoining");
 }
@@ -275,6 +316,10 @@ int main()
 
 
 def main():
+    entry = extract_function("nanny.c", "void enter_game(")
+    reset_start = entry.index("\tif (d->msp_group_output)")
+    reset_end = entry.index("\n\tP_desc i;", reset_start)
+    entry_reset = "void reset_msp_entry(P_desc d) {\n" + entry[reset_start:reset_end] + "\n}\n"
     group = extract_function("group.c", "void do_group(")
     display = group[group.index("\tif (!*name)"):group.index("\n\tif (ch->group)\n")]
     group_wrapper = r'''
@@ -295,7 +340,7 @@ void do_group(P_char ch, char *, int) {
     map_source = source("map.c").read_text()
     start = map_source.index("enum\n{")
     glyph_enum = map_source[start:map_source.index("};", start) + 2]
-    bodies = [PRELUDE, glyph_enum, "AnsiString sector_symbol[CONTAINS_MAX];",
+    bodies = [PRELUDE, entry_reset, glyph_enum, "AnsiString sector_symbol[CONTAINS_MAX];",
               extract_function("map.c", "template <size_t N> static inline void append_cstr("),
               extract_function("utility.c", "int BOUNDED(int a, int b, int c)"),
               extract_function("nanny.c", "void select_terminal("),
@@ -304,6 +349,7 @@ void do_group(P_char ch, char *, int) {
               extract_function("group.c", "void displayM("),
               extract_function("group.c", "void send_msp_group("),
               extract_function("group.c", "void update_groupies("),
+              extract_function("group.c", "void update_group_vitals("),
               extract_function("gmcp.c", "void gmcp_char_vitals("),
               group_wrapper, pending, death_menu,
               extract_function("map.c", "void display_map_room("),

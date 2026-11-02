@@ -2536,7 +2536,8 @@ static void run_combat_phase(game_loop_pulse_context &ctx)
 				{
 					gmcp_send_group_status(t_ch);
 				}
-				if (t_ch->desc->term_type == TERM_MSP)
+				if (t_ch->desc->term_type == TERM_MSP &&
+				    t_ch->desc->last_group_update == GROUP_UPDATE_ALL)
 				{
 					send_msp_group(t_ch, false);
 				}
