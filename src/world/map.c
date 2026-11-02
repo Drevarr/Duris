@@ -1294,6 +1294,9 @@ void map_look_room(P_char ch, int room, int show_map_regardless)
 	if ((n = map_view_distance(ch, room)) > 1)
 	{
 		display_map_room(ch, room, n, show_map_regardless, 0);
+		// A successful move/manual look has already refreshed this observer.
+		if (room == ch->in_room)
+			ch->desc->last_map_update = 0;
 	}
 }
 

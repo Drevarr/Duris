@@ -71,6 +71,7 @@ void __free(void *pointer, const char *, int) { assert(pointer); free(pointer); 
 void gmcp_send_room_map(P_char, const char *text) { ++map_updates; map_data = text; }
 void gmcp_send_quest_map(P_char ch, const char *text) { gmcp_send_room_map(ch, text); }
 P_ship get_ship_from_char(P_char) { return nullptr; }
+int map_view_distance(P_char, int) { return 3; }
 unsigned int calculate_relative_room(unsigned int, int, int) { return 1; }
 int whats_in_maproom(P_char, int, int, int) { return 0; }
 '''
@@ -163,6 +164,17 @@ int main()
             assert(output.find(std::string("</") + tag + ">") != std::string::npos);
         }
     }
+    d.term_type = TERM_MSP; d.gmcp_enabled = false;
+    actor.specials.act = PLR_MAP;
+    d.last_map_update = 1; output.clear();
+    map_look_room(&actor, actor.in_room, MAP_USE_TOGGLE);
+    assert(!d.last_map_update && output.find("<map>") != std::string::npos);
+    d.last_map_update = 1;
+    map_look_room(&actor, 0, MAP_IGNORE_TOGGLE); // A remote map is not our refresh.
+    assert(d.last_map_update);
+    actor.specials.act = 0; output.clear();
+    map_look_room(&actor, actor.in_room, MAP_AUTOMAP);
+    assert(d.last_map_update && output.empty());
     group_list tail{&member, nullptr}, head{&actor, &tail};
     for (int terminal : {TERM_GENERIC, TERM_ANSI, TERM_MSP})
     for (bool gmcp : {false, true})
@@ -294,7 +306,8 @@ void do_group(P_char ch, char *, int) {
               extract_function("group.c", "void update_groupies("),
               extract_function("gmcp.c", "void gmcp_char_vitals("),
               group_wrapper, pending, death_menu,
-              extract_function("map.c", "void display_map_room("), CASES]
+              extract_function("map.c", "void display_map_room("),
+              extract_function("map.c", "void map_look_room("), CASES]
     build = ROOT / "bin/tests"
     build.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix="terminal-modes-", dir=build) as directory:

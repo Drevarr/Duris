@@ -21,6 +21,7 @@ loop = handler[start:handler.index(
 HARNESS = r'''
 #include <cassert>
 #include <cstdio>
+#include <initializer_list>
 constexpr int NOWHERE = -1, TERM_MSP = 1, ZONE_MAP = 1, STAT_NORMAL = 0, POS_STANDING = 0;
 constexpr int AFF5_FOLLOWING = 1, VROOM_SHIPS_START = 40000, VROOM_SHIPS_END = 49999;
 struct room_data { int number; int zone; };
@@ -31,26 +32,28 @@ struct descriptor_data {
     int gmcp_enabled;
 };
 struct ship_data { int location; };
-struct char_data { int in_room; descriptor_data *desc; char_data *following; };
+struct char_data { int in_room; descriptor_data *desc; char_data *following; bool following_move = false; };
 using P_char = char_data *;
 using P_desc = descriptor_data *;
 using P_ship = ship_data *;
 room_data *world;
 zone_data zone_table[2] = {{ZONE_MAP, 5000}, {0, 1}};
-int top_of_world = 1;
+int top_of_world = 4;
+static bool visible = true;
 P_desc descriptor_list;
 #define IS_SET(flags, bit) ((flags) & (bit))
 #define IS_MAP_ROOM(r) (IS_SET(zone_table[world[r].zone].flags, ZONE_MAP))
 #define IS_SHIP_ROOM(r) \
     ((world[r].number >= VROOM_SHIPS_START) && (world[r].number <= VROOM_SHIPS_END))
 #define GMCP_ENABLED(ch) ((ch) && (ch)->desc && (ch)->desc->gmcp_enabled)
-#define CAN_SEE_Z_CORD(sub, obj) true
+#define CAN_SEE_Z_CORD(sub, obj) visible
 #define GET_STAT(ch) STAT_NORMAL
 #define GET_POS(ch) POS_STANDING
 #define CAN_ACT(ch) true
-#define IS_AFFECTED5(ch, bit) false
+#define IS_AFFECTED5(ch, bit) ((ch)->following_move)
 P_ship get_ship_from_char(P_char) { return nullptr; }
-int calculate_map_distance(int, int) { return 0; }
+int coordinates[5] = {0, 1, 0, 6, 2};
+int calculate_map_distance(int a, int b) { int delta = coordinates[a] - coordinates[b]; return delta * delta; }
 int map_view_distance(P_char, int) { return 5; }
 
 void map_update(P_char ch, int was_in)
@@ -62,7 +65,7 @@ void map_update(P_char ch, int was_in)
 int main()
 {
     // Room 0 is on a map, room 1 is not.
-    world = new room_data[2]{{500000, 0}, {1200, 1}};
+    world = new room_data[5]{{500000, 0}, {500001, 0}, {1200, 1}, {500006, 0}, {500002, 0}};
     descriptor_data at_menu = {nullptr, nullptr, TERM_MSP, 0, 0};
     char_data rented = {NOWHERE, &at_menu, nullptr};
     at_menu.character = &rented;
@@ -74,8 +77,47 @@ int main()
     char_data mob = {0, nullptr, nullptr};
     map_update(&mob, 1);
     assert(watching.last_map_update == 1 && at_menu.last_map_update == 0);
+    // Both arrival and departure can change the observed map.
+    for (int destination : {2, 3, 4}) {
+        watching.last_map_update = 0;
+        mob.in_room = destination;
+        map_update(&mob, 1);
+        assert(watching.last_map_update == 1);
+        map_update(&mob, 1); // Multiple moves coalesce into one pending refresh.
+        assert(watching.last_map_update == 1);
+    }
+    watching.last_map_update = 0;
+    mob.in_room = 3;
+    map_update(&mob, 3); // Neither old nor new location is visible.
+    assert(!watching.last_map_update);
+    visible = false;
+    mob.in_room = 1;
+    map_update(&mob, 0);
+    assert(!watching.last_map_update);
+    visible = true;
+    // A follower left behind (exhaustion or the forest lost branch) still refreshes.
+    player.following = &mob;
+    mob.in_room = 4;
+    map_update(&mob, 0);
+    assert(watching.last_map_update);
+    // A sibling's successful follow must not hide the departure from a failed sibling.
+    char_data leader{4, nullptr, nullptr};
+    mob.following = player.following = &leader;
+    mob.following_move = true;
+    watching.last_map_update = 0;
+    map_update(&mob, 0);
+    assert(watching.last_map_update);
+    // Once both arrive, keep the existing successful-follow optimization.
+    player.in_room = 4;
+    watching.last_map_update = 0;
+    map_update(&mob, 0);
+    assert(!watching.last_map_update);
+    // The leader at the destination also needs no intermediate follower frame.
+    mob.following = &player;
+    map_update(&mob, 0);
+    assert(!watching.last_map_update);
     delete[] world;
-    std::puts("the map update skips a character in no room");
+    std::puts("PASS: MSP map arrivals/departures, view boundaries, failed/successful follow and menu observers");
 }
 '''
 
