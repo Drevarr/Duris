@@ -20,7 +20,7 @@ def function(signature, start=0):
 sql_branch = source.index('#else')
 lookup = function('string wiki_help(string str)', sql_branch)
 render = function('string wiki_help_single(string str)', sql_branch)
-race_description = function('string wiki_race_description(')
+race_description = function('string wiki_help_prose(') + '\n' + function('string wiki_race_description(')
 assert 'qry(' not in lookup + render and 'mysql_' not in lookup + render
 actinf = (ROOT / 'src/cmd/actinf.c').read_text()
 help_body = actinf.split('void do_help(', 1)[1].split('void do_wizhelp', 1)[0]
@@ -82,6 +82,19 @@ int main() {
                  "The elves' opening lore.\n\n==Class list==\nStale classes.");
  assert(wiki_race_description("Grey Elf")=="The elves' opening lore.");
  assert(wiki_race_description("missing").empty());
+ add("Guardian", "Guardian focus.\n\n==Class mechanics==\nProtects two allies.\n\n==Skill changes==\nStale grants.");
+ add("Guard alias", "Redirect: Guardian");
+ assert(wiki_help_prose("Guard alias", "")=="Guardian focus.");
+ assert(wiki_help_prose("Guard alias", "Class mechanics")=="Protects two allies.");
+ assert(wiki_help_prose("Guardian", "Missing").empty());
+ assert(wiki_help_prose("Cycle", "").empty());
+ add("Parsed guard alias", "Parsed guard alias - Last Edited: 2026-11-02\n=====\nRedirect: Guardian");
+ assert(wiki_help_prose("Parsed guard alias", "")=="Guardian focus.");
+ assert(wiki_help_prose("Parsed guard alias", "Class mechanics")=="Protects two allies.");
+ add("No opening prose", "==Allowed races==\nStale race list.\n\n==Class mechanics==\nProtects allies.");
+ assert(wiki_help_prose("No opening prose", "").empty());
+ add("Empty mechanics", "A class.\n\n==Class mechanics==\n\n==Skill changes==\nStale grants.");
+ assert(wiki_help_prose("Empty mechanics", "Class mechanics").empty());
  for(int i=0;i<150;++i) add("bulk"+to_string(i),"text");
  auto result=wiki_help("bulk");
  assert(result.find("bulk100\n")!=string::npos);
