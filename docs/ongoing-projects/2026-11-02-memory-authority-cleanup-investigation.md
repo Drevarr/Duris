@@ -2,16 +2,20 @@
 
 [Issue #583](https://github.com/LuminariMUD/Duris/issues/583).
 Worktree: `/home/aiwithapex/projects/duris-issue-583-memory-authority-plan`.
-Current branch: `branch/issue-583-retained-source-diagnostics`, stacked on
-[PR #604](https://github.com/LuminariMUD/Duris/pull/604).
+Current branch: `branch/issue-583-repaired-container-grants`, stacked on
+[PR #605](https://github.com/LuminariMUD/Duris/pull/605).
 
 **Status:** final acceptance review is in progress. Damaged foreign artifact rows
 now log their refusal through the existing diagnostic function before retaining
 the component. The regression failed before the fix and passes afterward;
 `test_player_load_items.py` and both server builds also pass. Evidence:
 `bin/tests/memory-authority-583/review-retained-source{,-before}.log` and
-`review-load-items.log`. Existing PR feedback still needs two checks: matching-room
-claims during recovery and unknown revisions on repaired batch destinations.
+`review-load-items.log`. #597's unknown-revision destination refusal is also fixed:
+the existing public batch adapter, codec and MariaDB/flat-file repository tests
+pass with revision zero, including fifty SQL-created roots under one bag.
+Both server builds pass. Evidence: `review-container-{codec,input,flat,mysql,transfer-codec}.log`
+and `review-container-build-{mariadb,flatfile}.log` in the same directory.
+Matching-room claims during recovery remain the review finding to resolve.
 The pet-only delayed-read finding is covered by the whole-load guard in #603.
 No merge, release, deployment or production repair is included.
 
@@ -67,6 +71,8 @@ These are the acceptance contract and the owning files, not another work queue.
   unknown memory-held batch revisions are zero, never a guessed maximum.
   Custody remains available to pet/rent consumers. Artifact sales and full-bag
   sales are prohibited gameplay and do not justify extra machinery.
+  Creation batches accept unknown cached parent revisions; the existing writer
+  claim resolves the actual revision on both backends.
 - **NPC containers** — `src/mob/mobact.c` uses ordinary equipment and `put()`
   rules after loot movement, preserving capacity, artifact restrictions and traps.
   `src/world/handler.c` pet teardown and `src/player/player_snapshot_capture.c`
@@ -176,6 +182,7 @@ In dependency order, with details and history retained in Git/PRs:
 [#596](https://github.com/LuminariMUD/Duris/pull/596) →
 [#597](https://github.com/LuminariMUD/Duris/pull/597) →
 [#603](https://github.com/LuminariMUD/Duris/pull/603) →
-[#604](https://github.com/LuminariMUD/Duris/pull/604).
+[#604](https://github.com/LuminariMUD/Duris/pull/604) →
+[#605](https://github.com/LuminariMUD/Duris/pull/605).
 
 History: investigated and implemented November 2, 2026; paused after qualification.
