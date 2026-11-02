@@ -51,6 +51,7 @@ commands = {
     "CMD_GROUP": 14,
     "CMD_PUT": 15,
     "CMD_GET": 16,
+    "CMD_RACE": 17,
 }
 
 prelude = """
@@ -122,7 +123,7 @@ int main()
 {
     const int passive[] = {
         CMD_LOOK, CMD_GLANCE, CMD_EXITS, CMD_LISTEN, CMD_INVENTORY,
-        CMD_EQUIPMENT, CMD_SCORE, CMD_STAT, CMD_TIME, CMD_WEATHER, CMD_WHO,
+        CMD_EQUIPMENT, CMD_SCORE, CMD_STAT, CMD_TIME, CMD_WEATHER, CMD_WHO, CMD_RACE,
         CMD_READ, CMD_EXAMINE, CMD_GROUP,
     };
     for (int command : passive)

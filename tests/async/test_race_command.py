@@ -1,0 +1,175 @@
+#!/usr/bin/env python3
+"""Execute race browsing against the real race tables and creation policy."""
+from pathlib import Path
+import re
+import subprocess
+import tempfile
+
+from _paths import ROOT, extract_function
+
+HARNESS = r'''
+#include "core/prototypes.h"
+#include "core/utility.h"
+#include "core/utils.h"
+#include "cmd/race.h"
+#include "account/creation_availability_config.h"
+#include <cassert>
+#include <cstdarg>
+#include <cstdio>
+#include <cstdlib>
+#include <filesystem>
+#include <fstream>
+#include <sstream>
+#include <string>
+extern const struct race_names race_names_table[];
+extern const struct class_names class_names_table[];
+static std::string output;
+static int innate_race;
+float combat_by_race[LAST_RACE + 1][3];
+float spell_pulse_data[LAST_RACE + 1];
+void send_to_char(const char *text, P_char) { output += text; }
+void send_to_char_f(P_char, const char *format, ...) {
+    char text[8192]; va_list args; va_start(args, format);
+    vsnprintf(text, sizeof(text), format, args); va_end(args); output += text;
+}
+void logit(const char *, const char *, ...) {}
+void debug(const char *, ...) {}
+int fill_word(char *) { return 0; }
+const char *stat_to_string_damage_pulse(float) { return "average"; }
+const char *stat_to_string_spell_pulse(float) { return "average"; }
+std::string wiki_race_description(std::string) { return "Authored racial lore."; }
+std::string list_innates(int race, int cls, int spec) {
+    assert(race > 0 && race <= RACE_PLAYER_MAX && cls == 0 && spec == 0);
+    innate_race = race;
+    return "*passive ability\n active ability (obtained at level 31)\n";
+}
+static std::string plain(std::string text) {
+    for (size_t i = 0; i < text.size();) {
+        if (text[i] == '&' && i + 1 < text.size())
+            text.erase(i, text[i+1] == '+' ? 3 : 2);
+        else ++i;
+    }
+    return text;
+}
+static std::string run(std::string arguments) {
+    char_data ch{}; output.clear(); innate_race = 0;
+    do_race(&ch, arguments.data(), 0);
+    return plain(output);
+}
+static void check_classes(int race) {
+    auto text = run("info " + std::string(race_names_table[race].normal));
+    assert(text.find("[ " + std::string(race_names_table[race].normal) + " ]") != std::string::npos);
+    const auto start = text.find("Valid classes (current character creation rules)\n");
+    const auto end = text.find("Racial stat factors", start);
+    assert(start != std::string::npos && end != std::string::npos);
+    const auto classes = text.substr(start, end - start);
+    int expected = 0;
+    for (int cls = 1; cls <= CLASS_COUNT; ++cls) {
+        bool allowed = creation_class_enabled(cls) && creation_class_align(race, cls) != 5;
+        assert((classes.find("    " + plain(class_names_table[cls].ansi) + "\n") !=
+                std::string::npos) == allowed);
+        expected += allowed;
+    }
+    assert((classes.find("None.") != std::string::npos) == (expected == 0));
+}
+int main() {
+    unsetenv("CREATION_ALL_CLASSES"); unsetenv("CREATION_ALL_RACES");
+    std::filesystem::create_directory("lib");
+    std::ofstream("lib/creation_availability.cfg") << "creation.class.dragoon.enabled=false\n";
+    boot_creation_availability_config();
+    auto roster = run("");
+    assert(roster == run("list"));
+    const auto good = roster.find("GOOD RACES"), evil = roster.find("EVIL RACES");
+    const auto neutral = roster.find("NEUTRAL RACES"), special = roster.find("SPECIAL / LEGACY RACES");
+    assert(good < evil && evil < neutral && neutral < special);
+    assert(roster.find("Human", good) < evil);
+    assert(roster.find("Drow Elf", evil) < neutral);
+    assert(roster.find("Thri-Kreen", neutral) < special);
+    assert(roster.find("Lich", special) != std::string::npos);
+    assert(roster.find("Mountain Dwarf", good) < evil);
+    assert(roster.find("Duergar Dwarf", evil) < neutral);
+    assert(roster.find("Planetbound Illithid", special) != std::string::npos);
+    assert(output.find("&+C") != std::string::npos && output.find("&+R") != std::string::npos &&
+           output.find("&+Y") != std::string::npos);
+    std::istringstream lines(roster);
+    for (std::string line; std::getline(lines, line);) {
+        if (line.rfind("  |", 0) == 0 || line.rfind("  +", 0) == 0) {
+            if (line.size() != 72) fprintf(stderr, "Panel width %zu: %s\n", line.size(), line.c_str());
+            assert(line.size() == 72);
+        }
+    }
+    assert(run("info").find("provide a race name") != std::string::npos);
+    assert(run("innates").find("provide a race name") != std::string::npos);
+    assert(run("feats human").find("Usage:") != std::string::npos && innate_race == 0);
+    assert(run("list human").find("Usage:") != std::string::npos);
+    assert(run("info missing").find("No such player race") != std::string::npos);
+    assert(run("info fire elemental").find("No such player race") != std::string::npos);
+    assert(run("info gith").find("Matching races: Githyanki, Githzerai") != std::string::npos);
+    assert(run("info    GrEy ElF   ").find("Authored racial lore.") != std::string::npos);
+    assert(run("info GreyElf").find("Grey Elf") != std::string::npos);
+    assert(run("info mountain").find("Mountain Dwarf") != std::string::npos);
+    assert(run("innates planetbound illithid").find("obtained at level 31") != std::string::npos);
+    assert(innate_race == RACE_PILLITHID);
+    for (int race = 1; race <= RACE_PLAYER_MAX; ++race) {
+        check_classes(race);
+        run("innates " + std::string(race_names_table[race].normal));
+        assert(innate_race == race);
+    }
+    assert(run("info human").find("    Paladin\n") != std::string::npos);
+    assert(run("info human").find("    Anti-Paladin\n") == std::string::npos);
+    assert(run("info human").find("    Dragoon\n") == std::string::npos);
+    setenv("CREATION_ALL_CLASSES", "TRUE", 1);
+    for (int race = 1; race <= RACE_PLAYER_MAX; ++race) check_classes(race);
+    assert(run("info human").find("    Dragoon\n") != std::string::npos);
+    setenv("CREATION_ALL_RACES", "TRUE", 1);
+    for (int race = 1; race <= RACE_PLAYER_MAX; ++race) check_classes(race);
+    unsetenv("CREATION_ALL_CLASSES");
+    assert(run("info lich").find("    Necromancer\n") != std::string::npos);
+    assert(run("info lich").find("normally restricted") != std::string::npos);
+    unsetenv("CREATION_ALL_RACES");
+    assert(run("info lich").find("descend: necromancer") != std::string::npos);
+    std::ofstream("lib/creation_availability.cfg") << "creation.class.warrior.enabled=false\n"
+        "creation.race.gnome.enabled=false\n";
+    boot_creation_availability_config();
+    assert(run("info human").find("    Warrior\n") == std::string::npos);
+    assert(run("info gnome").find("Disabled in character creation") != std::string::npos);
+    assert(run("list").find("*Gnome") != std::string::npos);
+    puts("PASS: all 37 race profiles/innate routes, creation restrictions and overrides, "
+         "faction colors, ASCII panels and name resolution");
+}
+'''
+
+
+def main():
+    interp = (ROOT / "src/cmd/interp.c").read_text()
+    names = re.findall(r'"([^"\n]+)"', interp.split('const char *command[MAX_CMD] = {', 1)[1].split('};', 1)[0])
+    command_id = int(re.search(r"#define CMD_RACE (\d+)", (ROOT / "src/cmd/interp.h").read_text())[1])
+    maximum = int(re.search(r"#define MAX_CMD (\d+)", (ROOT / "src/core/config.h").read_text())[1])
+    assert names[command_id - 1] == "race" and maximum == len(names)
+    assert "CMD_Y(CMD_RACE, STAT_DEAD + POS_PRONE, do_race, 0, FALSE)" in interp
+    parser = extract_function("interp.c", "char *one_argument(")
+    parser += "\n" + extract_function("interp.c", "bool is_abbrev(")
+    parser += "\n" + extract_function("sparser.c", "char *skip_spaces(")
+    parser += "\n" + extract_function("utility.c", "string strip_ansi(")
+    parser += "\n" + extract_function("utility.c", "string pad_ansi(")
+    build = ROOT / "bin/tests"
+    build.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(prefix="race-command-", dir=build) as temporary:
+        directory = Path(temporary)
+        harness = directory / "race.cpp"
+        harness.write_text(HARNESS.replace("int main() {", parser + "\nint main() {", 1))
+        for backend in ("mariadb", "flatfile"):
+            binary = directory / backend
+            flags = ["-D__NO_MYSQL__", "-Isrc/no_mysql"] if backend == "flatfile" else []
+            subprocess.run(["g++", "-std=c++20", "-Wall", "-Wextra", "-Werror",
+                            "-ffunction-sections", "-fdata-sections", "-Wl,--gc-sections",
+                            "-fsanitize=undefined", "-fno-sanitize-recover=undefined", "-Isrc",
+                            "-I/usr/include/mysql", "-I/usr/include/libxml2", *flags,
+                            str(harness), "src/cmd/race.c", "src/core/common.c", "src/core/constant.c",
+                            "src/account/creation_availability_config.c",
+                            "-o", str(binary)], cwd=ROOT, check=True)
+            subprocess.run([str(binary)], cwd=directory, check=True)
+
+
+if __name__ == "__main__":
+    main()

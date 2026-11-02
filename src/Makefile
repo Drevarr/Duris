@@ -136,6 +136,7 @@ OBJS =  $(SHIP_OBJS) \
 				 combat/frag_cap_runtime.o \
 				 cmd/actcomm.o \
 				 cmd/actinf.o \
+				 cmd/race.o \
 				 cmd/actmove.o \
 				 cmd/actnew.o \
 				 cmd/actobj.o \
