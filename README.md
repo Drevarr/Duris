@@ -277,13 +277,16 @@ promotes the server to `bin/server/dms`, rotates prior executables under
 pending immutable migrations for an allow-listed local database, verifies the
 exact runtime schema on every restart, and only then starts it. Production
 startup performs the verification read-only; use the migration runbook to
-upgrade production. Without a configured user service it runs in the
-background and writes console output to `logs/duris-console.log`. The `--dev`
-quick-start listener is port 4000 and cannot select the production runtime role.
+upgrade production. Local startup uses `cycle_mud.sh` in the background and
+writes console output to `logs/duris-console.log`. It does not use systemd. The
+`--dev` quick-start listener is port 4000 and cannot select the production runtime role.
 
-Production deployments use the checked-in systemd service rather than the local
-user service. Its installer requires an explicit production configuration check,
-enables boot startup, and supervises every exit with an unlimited restart policy.
+Use [$local-deploy](.agents/skills/local-deploy/SKILL.md) to pull master, migrate,
+clean-build, install, and restart the local game with fresh `.env` settings.
+
+Production deployments use the checked-in systemd service. Its installer requires
+an explicit production configuration check, enables boot startup, and supervises
+every exit with an unlimited restart policy.
 See [Production systemd service](docs/operations/RUNBOOK.md#production-systemd-service)
 for installation and cutover instructions.
 

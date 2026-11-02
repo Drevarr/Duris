@@ -12,8 +12,7 @@ apply when separately requested; they do not extend that preparation task.
 ## Starting and stopping
 
 ```bash
-./scripts/start_mud.sh     # preferred: systemd user service if installed,
-                           # otherwise nohup cycle_mud.sh -> logs/duris-console.log
+./scripts/start_mud.sh     # detached cycle_mud.sh -> logs/duris-console.log
 ./scripts/cycle_mud.sh     # foreground supervised run (what start_mud wraps)
 ./scripts/cycle_mud.sh --dev   # development listener/build role on port 4000
 ./scripts/cycle_mud.sh --production  # require the production role on port 7777
@@ -120,22 +119,20 @@ path and verify both identities before comparing profiles.
 
 ### Stopping a local instance
 
-Use the same mode that started the instance:
+Local development uses `cycle_mud.sh`, directly or through `start_mud.sh`, without
+a systemd unit. The background wrapper uses `nohup setsid` and closes standard
+input so its launcher survives the calling shell. For a foreground session use
+Ctrl-C. For a background session,
+identify this checkout's launcher and game child using their working directories,
+command lines, and listener ownership, then send SIGTERM to the launcher PID. It
+forwards the signal, lets the game save and drain, and exits its restart loop.
+Do not use broad `kill` or `pkill` matches or stop a sibling checkout.
 
-```bash
-# systemd user service, when installed
-systemctl --user stop duris-mud.service
-
-# foreground cycle_mud.sh session
-Ctrl-C
-```
-
-For the fallback background mode started by `start_mud.sh`, use the in-game
-immortal `shutdown` command when possible. The fallback does not create a PID
-file; do not guess with a broad `kill` or `pkill` command. Check
-`logs/duris-console.log`, the listener port, and the process command line before
-stopping a specific local process. A normal shutdown lets the supervisor write
-its reboot record and rotate logs.
+Restart with `./scripts/start_mud.sh` and the same launch flags. A fresh launcher
+sources `.env`; an in-game reboot leaves the launcher's exported settings intact,
+which override the game's `.env` loader. Use
+[$local-deploy](../../.agents/skills/local-deploy/SKILL.md) for the pull, migration,
+full clean build, installation, and immediate local restart workflow.
 
 ### Production systemd service
 
