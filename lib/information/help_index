@@ -18027,13 +18027,15 @@ See also: "ETHEREAL GROUNDS"
 #
 TERMINAL (General Information)
 ===========================================================================
-Syntax:  toggle terminal
+Syntax:  toggle terminal [ansi|gen|msp [quiet]]
 
-This toggle lets you select if you want ANSI mode, which shows all the
-nifty colors and ANSI art we've added to the mud descriptions, objects
-and player lists.  Of course, your communications program must support
-this mode in order for it to work properly.  GEN mode is plain old
-black-and-white.
+ANSI shows colors and ANSI art. GEN is plain text. MSP adds tags around
+prompts, maps and group displays for clients that understand them.
+
+Use toggle terminal msp quiet to keep MSP prompts and maps while displaying
+group status only when you type group. Use toggle terminal msp to restore
+automatic group updates. Clients that use those updates for a group panel
+should keep ordinary MSP mode. Quiet mode lasts for this connection.
 ===========================================================================
 
 #
@@ -18383,7 +18385,8 @@ Spaces in these help spellings are accepted: battle alert, group needed,
 no locate, no level, save notify, ship map, show titles, and hint channel.
 Their single-word commands remain available.
 
-Terminal uses ansi, gen, or msp. Screensize uses 12-48, default, off, or 0;
+Terminal uses ansi, gen, msp, or msp quiet (manual group display).
+Screensize uses 12-48, default, off, or 0;
 no value resets the default. Color has its own channel and motion settings.
 Automatic fleeing (wimpy), smartprompt and retired specialization placeholders
 are unavailable. Use oldsmartprompt for prompt timing. Divine Boons apply

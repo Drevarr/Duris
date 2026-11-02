@@ -795,6 +795,7 @@ static void advance_level_impl(P_char ch, bool notify_player, bool process_boons
 		check_boon_completion(ch, NULL, 0, BOPT_LEVEL);
 
 	// Send GMCP update for level change
+	update_group_vitals(ch);
 	gmcp_char_status(ch);
 
 	/* Schedule a deferred save to avoid lag from large inventories */
@@ -865,6 +866,7 @@ static void lose_level_impl(P_char ch, std::uint64_t threshold_xp,
 	balance_affects(ch);
 
 	// Send GMCP update for level change
+	update_group_vitals(ch);
 	gmcp_char_status(ch);
 }
 

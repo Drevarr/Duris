@@ -72,6 +72,7 @@ void remove_aura_message(P_char ch, P_char) { ++ch->aura_removes; }
 void add_aura_message(P_char ch, P_char) { ++ch->aura_adds; }
 void mm_release(int, group_list *node) { released.push_back(node); delete node; }
 void send_to_char(const char *msg, P_char ch) { ch->messages.emplace_back(msg); }
+void update_group_vitals(P_char) {}
 void update_groupies(P_char ch, bool = false) { ++ch->updates; }
 void telemetry_runtime_game_context(P_char ch, void *) { ++ch->telemetry; }
 enum class telemetry_encounter_outcome { withdrawal = 5 };

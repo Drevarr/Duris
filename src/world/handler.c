@@ -2180,6 +2180,8 @@ P_obj unequip_char(P_char ch, int pos, bool saving)
 		return NULL;
 	}
 	obj = ch->equipment[pos];
+	const int old_hit = GET_HIT(ch), old_max_hit = GET_MAX_HIT(ch);
+	const int old_vitality = GET_VITALITY(ch), old_max_vitality = GET_MAX_VITALITY(ch);
 	// Temporary unequip preserves actions until an actual source departure.
 	if (!saving)
 		item_actions_source_leaving(obj);
@@ -2195,6 +2197,15 @@ P_obj unequip_char(P_char ch, int pos, bool saving)
 	obj->loc_p = LOC_NOWHERE;
 	obj->loc.wearing = NULL; // must clear full pointer, not just int-sized loc.room
 	all_affects(ch, TRUE);
+
+	// Temporary unequips used by saving must not publish intermediate vitals.
+	if (!saving &&
+	    (old_hit != GET_HIT(ch) || old_max_hit != GET_MAX_HIT(ch) ||
+	     old_vitality != GET_VITALITY(ch) || old_max_vitality != GET_MAX_VITALITY(ch)))
+	{
+		update_group_vitals(ch);
+		gmcp_char_vitals(ch);
+	}
 
 	balance_affects(ch);
 

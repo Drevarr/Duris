@@ -345,3 +345,7 @@ HARNESS_STUB bool obj_name_matches(P_char, P_obj object, const char *name)
 {
 	return object && name && strncasecmp(name, "@i:", 3) && isname(name, object->name);
 }
+
+void __attribute__((weak)) update_group_vitals(P_char) {}
+// Non-group fixtures do not deliver group observer notifications.
+HARNESS_STUB void update_groupies(P_char, bool) {}

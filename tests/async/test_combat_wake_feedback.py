@@ -63,6 +63,7 @@ void affect_from_char(P_char, int s) {
 void do_alert(P_char, char *, int) {}
 void do_stand(P_char, char *, int) {}
 void gmcp_char_vitals(P_char) {}
+void update_group_vitals(P_char) {}
 void stop_memorizing(P_char, memorization_stop_reason) {}
 void telemetry_gameplay_context_changed(P_char) {}
 P_char get_char_room_vis(P_char, const char *) { return &sleeper; }

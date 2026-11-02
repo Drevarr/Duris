@@ -1311,10 +1311,6 @@ void gmcp_char_vitals(struct char_data *ch)
 {
 	char *json;
 
-	/* Group observers need changes even when this member does not use GMCP. */
-	if (ch)
-		update_groupies(ch);
-
 	if (!ch || !ch->desc)
 		return;
 	if (!GMCP_ENABLED(ch))
