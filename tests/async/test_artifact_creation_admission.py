@@ -1193,6 +1193,7 @@ void recovery_cases(const std::vector<artifact_population_template> &prototypes)
  bag_cut.item_sources={bag_raw,old_artifact,sibling_raw};
  for(int login=0;login<2;++login) {
   auto qualified=bag_cut;
+  if(login) qualified.item_sources[1].custody_owner_revision_found=false; // flat foreign cut
   assert(!player_load_items_qualify(&qualified) && qualified.snapshot.items.size()==2 &&
          qualified.snapshot.retained_items.rows.empty() && qualified.snapshot.items[1].parent_index==0);
  }
@@ -1244,6 +1245,12 @@ void recovery_cases(const std::vector<artifact_population_template> &prototypes)
  extract_char_after_terminal_save(&recipient);
  assert(!artifact_rows.at(900).live_object && !object_list && !pool.objs_used);
  auto reply=finish_read();
+ assert(!player_load_items_read_current(reply) && reply.request.pid==77 &&
+        reply.request.request_id==reply.request_id && reply.request.deadline_usec>0);
+ auto pet_cut=reply; pet_cut.snapshot.pets.resize(1);
+ pet_cut.snapshot.pets[0].items=pet_cut.snapshot.items;
+ pet_cut.snapshot.items.clear(); pet_cut.item_sources.clear();
+ assert(!player_load_items_read_current(pet_cut));
  assert(reply.item_read_writer_sequence==read_sequence &&
         reply.item_read_writer_sequence!=persistence_writer_read_sequence());
  const auto diagnostics_before_refresh=source_diagnostics;
@@ -1256,6 +1263,7 @@ void recovery_cases(const std::vector<artifact_population_template> &prototypes)
  cut.item_sources[0].custody.owner.id=88;
  for(int login=0;login<2;++login) {
   start_read(88,cut); reply=finish_read();
+  assert(player_load_items_read_current(reply));
   assert(!player_load_items_qualify(&reply) && reply.snapshot.items.size()==1 &&
          reply.snapshot.retained_items.rows.empty() && reply.item_admission_sources.size()==1);
   first=read_object_for_recovery(reply.item_admission_sources[0]); assert(first);
