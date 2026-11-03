@@ -1,15 +1,15 @@
-# Memory authority cleanup: current plan
+# Memory authority cleanup: review and integration
 
 [Issue #583](https://github.com/LuminariMUD/Duris/issues/583).
-Worktree: `/home/aiwithapex/projects/duris-issue-583-memory-authority-plan`.
-Current branch: `branch/issue-583-repaired-container-grants`, stacked on
-[PR #605](https://github.com/LuminariMUD/Duris/pull/605).
+Delivery branch: `master`. Historical implementation worktree:
+`/home/aiwithapex/projects/duris-issue-583-memory-authority-plan`.
+The final integration record is in [PR #607](https://github.com/LuminariMUD/Duris/pull/607).
 
-**Status:** sequential PR review and integration are in progress. Focused native
-regressions and both server builds pass; serving acceptance is being repeated on
-the integrated source. Review fixes are included before their introducing PRs
-merge. The repaired-container creation fix and its adapter/backend regressions
-were brought forward into #597. No release, deployment or production repair is included.
+**Status:** review and local acceptance are complete. Runtime fixes are merged
+into `master`; this final PR records sequential integration of #593–#597 and
+#603–#607. Required companions were included before their introducing PRs merged.
+Both builds and all focused native/backend and serving checks pass; all started
+checks have completed. No release, deployment or production repair is included.
 
 ## Outcome and limits
 
@@ -50,12 +50,17 @@ These are the acceptance contract and the owning files, not another work queue.
 - **Old copies and expiry** — the artifact service and item qualifier omit only
   proven obsolete/retired copies, preserving independent bag contents and
   damaged or unresolved evidence. Successful live recovery discards obsolete
-  boot player locators, preserving pinned world sources and cancellation
+  boot player and pet locators, preserving pinned world sources and cancellation
   rollback. Offline expiry then follows the current holder.
 - **Floor/copyover capture** — `src/world/world_recovery_pipeline.c` captures
   the physical tree. Copyover includes cached metadata only when it matches the
   actual room or logical corpse root. Saved-duplicate exclusion stays at restore;
   legacy marked records keep their required compatibility path.
+  Restore accepts active room custody matching the captured room, vnum and
+  topology on both backends; conflicting or inactive custody still excludes it.
+  An item encountered twice across capture pulses invalidates the generation
+  instead of silently omitting the second tree and its unrelated contents.
+  The previous published generation remains available; a later capture retries.
 - **Shop revisions** — `src/economy/shop_trade_transaction.c` passes its
   existing per-item committed revisions to `src/item/item_ownership_runtime.c`.
   The other caller, creation/adopted-object repair in
@@ -76,25 +81,64 @@ These are the acceptance contract and the owning files, not another work queue.
   load afresh through the same qualifier. Resolve actual live/pending reservations
   before retrying; no bypass or unconditional release.
 
-## Shortest remaining path
+## Review handoff
 
-Final acceptance review:
+The aggregate diff from `5708e269974ab070ea224f720e7e2e787e2d6671` was reviewed
+against this contract and the assertions/results below. No implementation task
+remains open. The matching-room recovery companion from #607 was brought into
+#593 before its merge; the repaired-container companion from #606 was brought
+into #597. Current master already supplied #603's whole-load pet guard and
+original-deadline refresh; those controls were preserved while integrating #594.
+The later companion PRs retain their review history and acceptance documentation.
 
-1. Review the aggregate diff from `5708e269974ab070ea224f720e7e2e787e2d6671`
-   against the contract above and the proof below. Remove only task-owned
-   machinery with no required behavior. Do not reimplement completed chunks.
-2. Resolve specific review findings or uncovered acceptance conditions in the
-   existing code and tests. Reuse passing evidence; rerun only affected checks.
-   C/C++ edits require formatting and `make -C src`; shared persistence changes
-   also require the flat-file build. No new harness framework or blanket burn-in.
-3. Keep each resulting chunk committed, pushed and review-ready, stacking only
-   actual dependencies. Update this document with the result and any remaining
-   limit. Finish when the requirements are proven and the checkout/PRs are ready
-   for review; do not wait for CI or add a further cleanup phase.
+For requested review changes, reuse the existing paths/tests and repeat only
+affected checks. C/C++ edits require formatting and `make -C src`; shared
+persistence changes also require the flat-file build. Keep fixes committed,
+pushed and review-ready, with this document current. No blanket burn-in or CI wait.
+
+## November 3 integration verification
+
+The open PRs in the requested range were #593–#597 and #603–#607. #599 was
+already merged; #598 and #600–#602 are issues. Each delivery preserves ancestry,
+integrates current master without force pushes, and receives its own review and
+merge. Existing worktrees and unrelated source fixes are preserved.
+
+Review found an additional loss case in multi-pulse floor capture: a child moved
+from a captured bag into an unvisited bag caused the entire second tree to be
+silently omitted. The new regression fails with the original skip behavior and
+passes after capture rejects the inconsistent generation. A fresh capture then
+restores both bags and both children. Matching-room recovery was included in the
+same PR, with no unsafe intermediate merge.
+
+Focused executable checks passed for world capture/restore, artifact admission
+and diagnostics, player loading/refresh, exact/unknown transfer revisions,
+creation batches, shop publication, rent and pet teardown. Both maintained server
+builds, formatting, diff checks and the pre-commit clang-tidy checks passed.
+The current-master offline-load source assertion and overlapping test stubs were
+reconciled. Diagnostics tests distinguish whole-load refresh from a source-level
+construction refusal. The feeding journey bounds retries for an explicit random
+opening-attack fumble while retaining the exactly-once award assertion.
+
+Disposable serving checks passed for MariaDB/Redis outage, crash recovery and
+matching-room floor UID pickup/save; both artifact backends' ordinary handoffs,
+save/unload, repeated same-uptime login, stale tracking, feeding and restart; and
+both shop backends' exact-revision sale/buyback, batch purchases and restart with
+all 108 ration UIDs, nesting and wallet intact. MariaDB artifact conflict cleanup
+and current-holder offline expiry retain their separate serving coverage.
+
+This run's ignored evidence is in
+`/tmp/duris-review-pr593-607/bin/review-pr593-607/`: `overlap-before-fix.log`,
+`world-after-fix.log`, `world-journey.log`, `594-admission.log`,
+`595-admission.log`, `596-admission.log`, `596-serving-{mariadb,flatfile}.log`,
+`597-{flat-items,mysql-transfer}.log`, `603-admission.log`,
+`603-serving-{mariadb,flatfile}.log`, `604-shop-{mariadb,flatfile}.{log,json}`,
+`605-{admission,items}.log` and the corresponding build logs.
+The original acceptance evidence below remains historical; its proof limits
+still apply. No release, deployment or production mutation is part of this work.
 
 ## Required proof and existing evidence
 
-Acceptance still requires ordinary handoff, corpse loot, nested movement,
+Acceptance requires ordinary handoff, corpse loot, nested movement,
 save/unload/repeated login and feeding to work through admission and attachment.
 Also cover the former holder's stale save, handoff/save/unload during an outstanding
 read, current-holder offline expiry, floor/copyover after corpse or locker pickup,
@@ -131,6 +175,14 @@ Do not rerun the original investigation driver: it asserts the old failures.
   mana conservation/reload. `run_player_load_repository_mysql.sh`,
   `run_player_save_claim_mysql.sh`, `test_flatfile_player_repository.py` and
   `test_flatfile_item_repository.py` cover payloads, claims, retention and rollback.
+- **Final review follow-ups:** raw-source diagnostic regressions failed before
+  #605 and pass afterward. `test_item_transfer_creation_batch.py`, the real public
+  batch adapter, flat-file nested creation and the disposable MariaDB transfer
+  suite pass with an unknown parent revision (including fifty SQL-created roots).
+  Flat-file room recovery distinguishes matching custody from wrong room, vnum,
+  root and parent. `run_world_recovery_journey.py` passes real MariaDB/Redis
+  outage/recovery/crash and matching-room floor UID pickup/save. Formatting and
+  both server builds pass.
 
 All test paths above are under `tests/async/`; run Python files with `python3`
 and shell files with `bash`. Local evidence is under ignored
@@ -139,6 +191,9 @@ and shell files with `bash`. Local evidence is under ignored
 `shop-{mariadb,flatfile}.json`, `pet-restart.log`,
 `{norent,pet}-unknown.log` and `final-{mysql-payloads,flat-payloads,mysql-save-load,flat-items,mana}.log`.
 Artifact reports are `bin/analysis/artifact-owner/{mariadb,flatfile}.json`.
+Final review logs in the same test directory are `review-retained-source.log`,
+`review-load-items.log`, `review-container-{codec,input,flat,mysql,transfer-codec}.log`,
+`review-room-{pipeline,flat,serving}.log` and the corresponding `review-*-build-*.log`.
 Earlier chunk checks and builds are recorded in the PRs. Missing local evidence
 in a new checkout is not proof of failure or permission to claim a pass.
 
@@ -152,14 +207,15 @@ python3 tests/async/test_artifact_owner_restart_journey.py --backend flatfile --
 bash tests/async/with_disposable_mariadb.sh python3 tests/async/test_shop_multi_buy_journey.py --backend mariadb --server bin/server/dms_new --report bin/tests/memory-authority-583/shop-mariadb.json
 python3 tests/async/test_shop_multi_buy_journey.py --backend flatfile --server bin/memory-authority-flat/server/dms_new --report bin/tests/memory-authority-583/shop-flatfile.json
 TMPDIR="$PWD/bin/tests" python3 tests/async/test_pet_restart_journey.py "$PWD/bin/memory-authority-flat/server/dms_new"
+bash tests/async/with_disposable_mariadb.sh python3 tests/async/run_world_recovery_journey.py bin/server/dms_new
 ```
 
-Use disposable schemas/state and private loopback servers. Native codec coverage
-does not establish a serving Redis/copyover journey; the delayed-read harness
-does not establish a deliberately delayed real-database journey. Those broader
-claims remain unverified. Add proof only for an acceptance condition not already
-covered at its required boundary. The production incident and historical cache
-fields were not re-inspected.
+Use disposable schemas/state and private loopback servers. Redis crash recovery
+has the serving proof above; file copyover has native codec/restore coverage.
+The threaded delayed-read harness uses a stubbed writer/storage boundary,
+supported by separate serving save/login journeys on both backends. A deliberately
+delayed real-database journey and serving file copyover remain unverified.
+The production incident and historical cache fields were not re-inspected.
 
 ## Review stack
 
@@ -175,6 +231,6 @@ In dependency order, with details and history retained in Git/PRs:
 [#597](https://github.com/LuminariMUD/Duris/pull/597) →
 [#603](https://github.com/LuminariMUD/Duris/pull/603) →
 [#604](https://github.com/LuminariMUD/Duris/pull/604) →
-[#605](https://github.com/LuminariMUD/Duris/pull/605).
-
-History: investigated and implemented November 2, 2026; paused after qualification.
+[#605](https://github.com/LuminariMUD/Duris/pull/605) →
+[#606](https://github.com/LuminariMUD/Duris/pull/606) →
+[#607](https://github.com/LuminariMUD/Duris/pull/607).
