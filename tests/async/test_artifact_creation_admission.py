@@ -1081,7 +1081,7 @@ void recovery_cases(const std::vector<artifact_population_template> &prototypes)
  auto zero_revision=player; zero_revision.custody.owner_revision=0;
  assert(!artifact_player_source_error(zero_revision));
  const auto before_player_procedures=procedures;
- const char *expected_reasons[]={"captured_custody_unavailable","captured_owner_mismatch",
+ const char *expected_reasons[]={"captured_custody_unavailable","saved_copy_owned_elsewhere",
   "captured_state_not_active","captured_vnum_mismatch","captured_item_revision_missing",
   "captured_custody_unavailable","captured_parent_mismatch","captured_root_mismatch",
   "source_parent_missing","source_topology_mismatch","source_artifact_flag_missing",
@@ -1169,7 +1169,46 @@ void recovery_cases(const std::vector<artifact_population_template> &prototypes)
  raw.custody_found=raw.custody_owner_revision_found=true; raw.custody=player.custody; raw.custody.owner.id=88;
  foreign_only.item_sources={raw};
  assert(!player_load_items_qualify(&foreign_only) && foreign_only.snapshot.items.empty() &&
-  foreign_only.snapshot.retained_items.rows.size()==1 && foreign_only.snapshot.retained_items.rows[0].source_row_id==100);
+  foreign_only.snapshot.retained_items.rows.empty());
+ assert(!read_object_for_recovery([&]{auto old=player; old.custody.owner.id=88; return old;}()) && errno==EXDEV);
+ // Valid foreign artifacts do not withhold their old bag or ordinary sibling.
+ auto old_artifact=raw; old_artifact.parent_row_id=99; old_artifact.root_item_uid=6000;
+ player_load_result bag_cut={}; bag_cut.pid=77; bag_cut.outcome=player_load_outcome::applied;
+ bag_cut.authoritative_item_count=2;
+ player_item_snapshot bag={},sibling={};
+ bag.object_uid=6000; bag.vnum=903; bag.type=ITEM_CONTAINER;
+ sibling.object_uid=6001; sibling.vnum=901; sibling.parent_index=0;
+ bag_cut.snapshot.items={bag,sibling};
+ player_load_item_identity bag_id={},sibling_id={};
+ bag_id.database_id=99; bag_id.item_uid=bag_id.root_item_uid=6000;
+ bag_id.owner=player.payload_owner; bag_id.quantity=1; bag_id.state=item_custody_state::active;
+ sibling_id=bag_id; sibling_id.database_id=101; sibling_id.item_uid=6001; sibling_id.parent_item_uid=6000;
+ bag_cut.item_identities={bag_id,sibling_id};
+ auto bag_raw=raw; bag_raw.row_id=99; bag_raw.item_uid=bag_raw.root_item_uid=6000;
+ bag_raw.vnum=903; bag_raw.extra_flags=0;
+ bag_raw.custody={6000,6000,0,player.payload_owner,1,7,903,item_custody_state::active};
+ auto sibling_raw=bag_raw; sibling_raw.row_id=101; sibling_raw.parent_row_id=99;
+ sibling_raw.item_uid=6001; sibling_raw.vnum=901;
+ sibling_raw.custody={6001,6000,6000,player.payload_owner,1,7,901,item_custody_state::active};
+ bag_cut.item_sources={bag_raw,old_artifact,sibling_raw};
+ for(int login=0;login<2;++login) {
+  auto qualified=bag_cut;
+  assert(!player_load_items_qualify(&qualified) && qualified.snapshot.items.size()==2 &&
+         qualified.snapshot.retained_items.rows.empty() && qualified.snapshot.items[1].parent_index==0);
+ }
+ // Missing current identity/population proof and damaged foreign custody still
+ // retain the whole component; old-holder cleanup is not blanket deletion.
+ for(int damage=0;damage<4;++damage) {
+  auto damaged=bag_cut;
+  auto &known=artifact_rows.at(900); const auto prior=known;
+  if(damage==0) known.identity_state=artifact_identity_state::unresolved;
+  if(damage==1) { known.population_reason=artifact_population_reason::unqualified_payload; known.canonical_payloads.clear(); }
+  if(damage==2) damaged.item_sources[1].custody.state=item_custody_state::quarantined;
+  if(damage==3) damaged.item_sources[1].custody.root_item_uid=0;
+  assert(!player_load_items_qualify(&damaged) && damaged.snapshot.items.empty() &&
+         damaged.snapshot.retained_items.rows.size()==3);
+  known=prior;
+ }
  raw.vnum=901; raw.extra_flags=0; foreign_only.item_sources={raw}; foreign_only.snapshot.retained_items={};
  assert(!player_load_items_qualify(&foreign_only) && foreign_only.snapshot.retained_items.rows.size()==1);
  raw.item_uid=raw.root_item_uid=99999; raw.vnum=901; raw.extra_flags=0; raw.custody.item_uid=raw.custody.root_item_uid=99999; raw.custody.vnum=901;

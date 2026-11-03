@@ -12,6 +12,7 @@ struct artifact_payload_projection;
 // Zero also covers ordinary objects; a known canonical UID cannot clear its flag.
 // EIDRM identifies a durably retired copy: omit it and preserve its contents.
 // EAGAIN requires a fresh read after overlapping writer activity; do not retain it.
+// EXDEV is a confirmed old-holder copy: refuse construction and omit the saved row.
 unsigned int artifact_player_source_error(const artifact_payload_projection &source,
 					  P_obj object = nullptr, const char **reason = nullptr);
 // Restricted persistence diagnostics; no source or runtime state is changed.
