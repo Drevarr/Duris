@@ -58,8 +58,9 @@ extern int top_of_zone_table;
 extern bool sql_persistence_reconcile_world_recovery_items(
 	const world_recovery_authority_item *items, size_t count,
 	item_ownership_runtime_entry *authoritative, size_t authoritative_capacity);
-extern bool sql_persistence_world_recovery_items_owned(const std::vector<uint64_t> &item_uids,
-						       std::unordered_set<uint64_t> *owned);
+extern bool
+sql_persistence_world_recovery_items_owned(const std::vector<world_recovery_authority_item> &items,
+					   std::unordered_set<uint64_t> *owned);
 namespace
 {
 /* Recovery fixtures are intentionally linkable without the gameplay module;
@@ -583,7 +584,7 @@ void publisher_main()
 
 // An object that changes places while a capture runs can be met twice, in a container and
 // then by itself, and boot refuses a generation that holds an item twice. The capture
-// keeps the tree it met an item in first.
+// rejects the inconsistent generation rather than dropping an overlapping tree.
 bool capture_tree_is_new(int record_size)
 {
 	const size_t count = (record_size - sizeof(world_recovery_object_record)) /
@@ -648,7 +649,7 @@ bool capture_one_record()
 			try
 			{
 				if (size > 0 && !capture_tree_is_new(size))
-					return true;
+					return false;
 			}
 			catch (const std::bad_alloc &)
 			{
@@ -1275,17 +1276,19 @@ bool floor_record_repeats(const recovery_plan &plan, const std::vector<unsigned 
 // first holder would lose the item.
 bool leave_out_owned_trees(recovery_plan *plan)
 {
-	std::vector<uint64_t> item_uids;
+	std::vector<world_recovery_authority_item> items;
 	std::unordered_set<uint64_t> owned, left_out;
 	try
 	{
 		for (const planned_object &object : plan->objects)
 			for (const world_recovery_item_snapshot &item : object.items)
 				if (!(item.flags & WORLD_RECOVERY_ITEM_AUTHORITY_REQUIRED))
-					item_uids.push_back(item.item_uid);
-		if (item_uids.empty())
+					items.push_back({ item.item_uid, item.root_item_uid,
+							  item.parent_item_uid, object.room_vnum,
+							  item.vnum });
+		if (items.empty())
 			return true;
-		if (!sql_persistence_world_recovery_items_owned(item_uids, &owned))
+		if (!sql_persistence_world_recovery_items_owned(items, &owned))
 			return false;
 		std::erase_if(plan->objects,
 			      [&](const planned_object &object)

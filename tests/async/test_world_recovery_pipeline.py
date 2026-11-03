@@ -208,12 +208,14 @@ bool sql_persistence_reconcile_world_recovery_items(
 }
 
 std::unordered_set<uint64_t> owned_items;
-bool sql_persistence_world_recovery_items_owned(const std::vector<uint64_t> &item_uids,
+bool sql_persistence_world_recovery_items_owned(const std::vector<world_recovery_authority_item> &items,
                                                 std::unordered_set<uint64_t> *owned)
 {
-    for (uint64_t item_uid : item_uids)
-        if (owned_items.count(item_uid))
-            owned->insert(item_uid);
+    for (const auto &item : items) {
+        assert(item.room_vnum>0 && item.vnum>0 && item.root_item_uid);
+        if (owned_items.count(item.item_uid))
+            owned->insert(item.item_uid);
+    }
     return reconcile_succeeds;
 }
 
@@ -685,25 +687,42 @@ int main()
         assert(!completion.published && !completion.attempts && !completion.expired);
         assert(world_recovery_pipeline_health_copy().last_acknowledged_age_sec >= 0);
 
-        // An object taken out of a floor container while the capture runs is met twice: in
-        // the container, which is newer and so comes first, and then on the floor. It is
-        // written once, and boot takes the generation.
-        obj_data basket = {}, banana = {};
+        // Moving a captured child into an unvisited bag must not publish a generation
+        // which silently drops that bag and its other contents. Keep the prior generation
+        // and let a fresh capture recover both bags and every child.
+        obj_data basket = {}, banana = {}, second = {}, orange = {};
         basket.obj_uid = 90000;
         banana.obj_uid = 90001;
+        second.obj_uid = 90002;
+        orange.obj_uid = 90003;
         basket.loc_p = LOC_ROOM;
         basket.contains = &banana;
         banana.loc_p = LOC_INSIDE;
         banana.loc.inside = &basket;
+        second.loc_p = LOC_ROOM;
+        second.contains = &orange;
+        orange.loc_p = LOC_INSIDE;
+        orange.loc.inside = &second;
         basket.next = ground.data();
-        ground.back().next = &banana;
+        ground.back().next = &second;
         object_list = &basket;
         assert(world_recovery_pipeline_request());
         world_recovery_pipeline_pulse();
         assert(world_recovery_pipeline_health_copy().capture_active);
         basket.contains = nullptr;
-        banana.loc_p = LOC_ROOM;
-        banana.loc.room = 0;
+        second.contains = &banana;
+        banana.loc.inside = &second;
+        banana.next_content = &orange;
+        while (!world_recovery_pipeline_take_completion(&completion))
+        {
+            world_recovery_pipeline_pulse();
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        }
+        assert(!completion.published && !completion.attempts && !completion.expired);
+        world_recovery_header previous = {};
+        assert(world_recovery_validate(published.data(), published.size(), 300, 0, &previous));
+        assert(previous.sequence < completion.sequence);
+        assert(world_recovery_pipeline_request());
         while (!world_recovery_pipeline_take_completion(&completion))
         {
             world_recovery_pipeline_pulse();
@@ -713,14 +732,27 @@ int main()
         assert(completion.published);
         assert(world_recovery_validate(published.data(), published.size(), 300,
                                        completion.sequence, &large));
-        assert(large.object_count == ground.size() + 1);
+        assert(large.object_count == ground.size() + 2);
         assert(world_recovery_restore(published.data(), published.size(), 300,
                                       completion.sequence, nullptr));
+        int recovered = 0;
+        for (P_obj object = object_list; object; object = object->next)
+        {
+            if (object->obj_uid == basket.obj_uid || object->obj_uid == second.obj_uid)
+            {
+                assert(object->loc_p == LOC_ROOM);
+                ++recovered;
+            }
+            if (object->obj_uid == banana.obj_uid || object->obj_uid == orange.obj_uid)
+            {
+                assert(object->loc_p == LOC_INSIDE &&
+                       object->loc.inside->obj_uid == second.obj_uid);
+                ++recovered;
+            }
+        }
+        assert(recovered == 4);
         while (P_obj object = object_list)
         {
-            assert(object->obj_uid != banana.obj_uid ||
-                   (object->loc_p == LOC_INSIDE &&
-                    object->loc.inside->obj_uid == basket.obj_uid));
             while (object->loc_p == LOC_INSIDE)
                 object = object->loc.inside;
             extract_obj(object, FALSE);
