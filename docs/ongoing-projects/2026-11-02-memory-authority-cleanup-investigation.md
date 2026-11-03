@@ -2,13 +2,14 @@
 
 [Issue #583](https://github.com/LuminariMUD/Duris/issues/583).
 Worktree: `/home/aiwithapex/projects/duris-issue-583-memory-authority-plan`.
-Current branch: `branch/issue-583-retained-source-diagnostics`, stacked on
-[PR #604](https://github.com/LuminariMUD/Duris/pull/604).
+Current branch: `branch/issue-583-repaired-container-grants`, stacked on
+[PR #605](https://github.com/LuminariMUD/Duris/pull/605).
 
 **Status:** sequential PR review and integration are in progress. Focused native
 regressions and both server builds pass; serving acceptance is being repeated on
 the integrated source. Review fixes are included before their introducing PRs
-merge. No release, deployment or production repair is included.
+merge. The repaired-container creation fix and its adapter/backend regressions
+were brought forward into #597. No release, deployment or production repair is included.
 
 ## Outcome and limits
 
@@ -62,6 +63,8 @@ These are the acceptance contract and the owning files, not another work queue.
   unknown memory-held batch revisions are zero, never a guessed maximum.
   Custody remains available to pet/rent consumers. Artifact sales and full-bag
   sales are prohibited gameplay and do not justify extra machinery.
+  Creation batches accept unknown cached parent revisions; the existing writer
+  claim resolves the actual revision on both backends.
 - **NPC containers** — `src/mob/mobact.c` uses ordinary equipment and `put()`
   rules after loot movement, preserving capacity, artifact restrictions and traps.
   `src/world/handler.c` pet teardown and `src/player/player_snapshot_capture.c`
@@ -171,6 +174,7 @@ In dependency order, with details and history retained in Git/PRs:
 [#596](https://github.com/LuminariMUD/Duris/pull/596) →
 [#597](https://github.com/LuminariMUD/Duris/pull/597) →
 [#603](https://github.com/LuminariMUD/Duris/pull/603) →
-[#604](https://github.com/LuminariMUD/Duris/pull/604).
+[#604](https://github.com/LuminariMUD/Duris/pull/604) →
+[#605](https://github.com/LuminariMUD/Duris/pull/605).
 
 History: investigated and implemented November 2, 2026; paused after qualification.
