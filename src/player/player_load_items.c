@@ -1098,9 +1098,15 @@ unsigned int player_load_items_qualify(player_load_result *result)
 				connect(identity.database_id,
 					identities[item.parent_index].database_id);
 			}
-			const unsigned int error = artifact_player_source_error(projection);
+			const char *reason = nullptr;
+			const unsigned int error =
+				artifact_player_source_error(projection, nullptr, &reason);
 			if (error == EAGAIN)
+			{
+				artifact_log_source_error(projection, error, reason,
+							  "fresh_read_required");
 				return error; // Fresh login/read; never turn a delayed reply into retention.
+			}
 			if (error == EIDRM)
 			{
 				// Durable retirement proves this copy cannot return. Omit it from
@@ -1112,10 +1118,6 @@ unsigned int player_load_items_qualify(player_load_result *result)
 				if (raw == source_by_id.end())
 					return ENODATA; // No trustworthy retention selector: do not save a loss.
 				sources[raw->second].retain = true;
-				const char *reason =
-					error == EEXIST ? "physical_copy_exists" :
-					error == ESTALE ? "custody_or_topology_mismatch" :
-							  "canonical_or_source_unavailable";
 				if (!alerted)
 				{
 					persistence_alert(
@@ -1126,10 +1128,8 @@ unsigned int player_load_items_qualify(player_load_result *result)
 						(unsigned long long)identity.database_id);
 					alerted = true;
 				}
-				logit(LOG_ARTIFACT,
-				      "artifact_identity/player_load: pid=%d vnum=%d uid=%llu row=%llu error=%u reason=%s outcome=source_retained",
-				      result->pid, item.vnum, (unsigned long long)item.object_uid,
-				      (unsigned long long)identity.database_id, error, reason);
+				artifact_log_source_error(projection, error, reason,
+							  "source_retained");
 			}
 		}
 		std::vector<bool> held(sources.size(), false);

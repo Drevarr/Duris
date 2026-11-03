@@ -64,6 +64,13 @@ static std::vector<std::vector<flatfile_artifact_record>> captures;
 static bool booting=false, writer_admission=true;
 static player_save_worker_health writer_state={};
 player_save_worker_health player_save_worker_health_copy() { return writer_state; }
+static std::string source_diagnostics;
+void logit(const char *,const char *format,...) {
+ if(std::string(format).find("artifact_identity/source:")!=0) return;
+ char message[8192]; va_list args; va_start(args,format);
+ std::vsnprintf(message,sizeof(message),format,args); va_end(args);
+ source_diagnostics+=message; source_diagnostics+='\n';
+}
 bool sql_async_booting() { return booting; }
 static bool fail_invalidation=false;
 bool redis_invalidate_artifact_cache() {
@@ -1074,6 +1081,11 @@ void recovery_cases(const std::vector<artifact_population_template> &prototypes)
  auto zero_revision=player; zero_revision.custody.owner_revision=0;
  assert(!artifact_player_source_error(zero_revision));
  const auto before_player_procedures=procedures;
+ const char *expected_reasons[]={"captured_custody_unavailable","captured_owner_mismatch",
+  "captured_state_not_active","captured_vnum_mismatch","captured_item_revision_missing",
+  "captured_custody_unavailable","captured_parent_mismatch","captured_root_mismatch",
+  "source_parent_missing","source_topology_mismatch","source_artifact_flag_missing",
+  "canonical_identity_unavailable"};
  for(int kind=0;kind<12;++kind) {
   auto bad=player;
   switch(kind) {
@@ -1090,7 +1102,8 @@ void recovery_cases(const std::vector<artifact_population_template> &prototypes)
    case 10: bad.extra_flags=0; break;
    case 11: ++bad.item_uid; bad.payload_root_item_uid=bad.item_uid; bad.custody.item_uid=bad.item_uid; bad.custody.root_item_uid=bad.item_uid; break;
   }
-  assert(artifact_player_source_error(bad));
+  const char *reason=nullptr;
+  assert(artifact_player_source_error(bad,nullptr,&reason) && std::string(reason)==expected_reasons[kind]);
   assert(!read_object_for_recovery(bad));
   assert(procedures==before_player_procedures && !object_list && !pool.objs_used);
  }
@@ -1116,6 +1129,9 @@ void recovery_cases(const std::vector<artifact_population_template> &prototypes)
  auto delayed=player; delayed.read_writer_sequence=persistence_writer_read_sequence();
  writer_state.submitted++;
  assert(artifact_player_source_error(delayed)==EAGAIN && !read_object_for_recovery(delayed) && errno==EAGAIN);
+ assert(source_diagnostics.find("reason=writer_overlap_requires_fresh_read outcome=construction_refused")!=std::string::npos);
+ assert(source_diagnostics.find("captured(found=1 uid=4242 vnum=900 state=1 owner=")!=std::string::npos);
+ assert(source_diagnostics.find("cache(bookkeeping_only=1 found=")!=std::string::npos);
  delayed.read_writer_sequence=0;
  assert(artifact_player_source_error(delayed)==EAGAIN);
  delayed.read_writer_sequence=persistence_writer_read_sequence();
@@ -1191,8 +1207,11 @@ void recovery_cases(const std::vector<artifact_population_template> &prototypes)
  auto reply=finish_read();
  assert(reply.item_read_writer_sequence==read_sequence &&
         reply.item_read_writer_sequence!=persistence_writer_read_sequence());
+ const auto diagnostics_before_refresh=source_diagnostics;
  assert(player_load_items_qualify(&reply)==EAGAIN && reply.snapshot.items.size()==1 &&
         reply.snapshot.retained_items.rows.empty() && !reply.item_sources[0].retain);
+ // Whole-load refresh happens before any source is qualified or retained.
+ assert(source_diagnostics==diagnostics_before_refresh);
  // A fresh recipient read follows the ordinary admission/construction path.
  cut.pid=88; cut.item_identities[0].owner.id=88;
  cut.item_sources[0].custody.owner.id=88;
