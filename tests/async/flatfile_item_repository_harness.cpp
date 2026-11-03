@@ -437,6 +437,39 @@ int main(int argc, char **argv)
 	require(batch_applied.outcome == critical_apply_outcome::already_applied &&
 			transfer_result_of(batch_applied).to_owner_revision == 1,
 		"multi-root item creation replay was not idempotent");
+	// A repaired player's bag has custody but no exact cached revision. The
+	// repository still claims the parent and persists every created root under it.
+	item_transfer_payload into_repaired = {};
+	require(item_transfer_command_decode_payload(batch_create, &into_repaired),
+		"could not decode repaired-container creation fixture");
+	into_repaired.expected_from_revision = into_repaired.expected_to_revision = 1;
+	into_repaired.target_root_item_uid = into_repaired.target_parent_item_uid = 200;
+	into_repaired.expected_target_parent_revision = 0;
+	into_repaired.item_count = 2;
+	into_repaired.items[0] = { 204, 204,
+				   0,	ITEM_TRANSFER_ABSENT_REVISION,
+				   704, item_custody_state::absent };
+	into_repaired.items[1] = { 205, 205,
+				   0,	ITEM_TRANSFER_ABSENT_REVISION,
+				   705, item_custody_state::absent };
+	critical_command repaired_create = {};
+	require(item_transfer_command_build(&repaired_create, operation(17), into_repaired,
+					    critical_source_site::command,
+					    critical_deadline_class::interactive),
+		"could not build creation into unknown-revision container");
+	repaired_create.accepted_at_usec = 17;
+	require(flatfile_item_repository_apply(creation_batch_root.string(), repaired_create)
+				.outcome == critical_apply_outcome::applied,
+		"creation into unknown-revision container failed");
+	require(flatfile_item_repository_load_owner(creation_batch_root.string(),
+						    { item_owner_type::player, 44, 0 },
+						    &batch_owner_revision, &batch_items, &error) ==
+				flatfile_item_repository_result::ok &&
+			batch_items.size() == 6 && batch_items[4].root_item_uid == 200 &&
+			batch_items[4].parent_item_uid == 200 &&
+			batch_items[5].root_item_uid == 200 &&
+			batch_items[5].parent_item_uid == 200,
+		"unknown-revision destination lost batch parentage");
 
 	const critical_command create = creation(1);
 	critical_apply_result applied = flatfile_item_repository_apply(root.string(), create);
