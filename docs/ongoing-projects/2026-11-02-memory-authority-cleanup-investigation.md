@@ -67,9 +67,20 @@ ready for review; do not merge or tag a release as part of this task.
    finishes. ASan/UBSan coverage includes trusted/untrusted senders and recipients,
    removal/replacement, decay, refused/redirected placement and fatal/nonfatal
    crumbleloot hits. Matching standalone fixtures use the new return signature.
-5. **Remaining:** artifact source admission plus delayed-read/save/unload proof;
+5. **Floor/copyover capture:** implemented on `branch/issue-583-floor-capture`,
+   stacked on #592. Recovery captures no longer ask the partial cache whether a
+   physical floor tree may exist. Restore still excludes saved holdings, and
+   legacy marked records keep their reconciliation path. Native copyover retains
+   only metadata matching the actual room or logical PC-corpse domain/topology;
+   stale metadata is omitted without dropping the live tree. Removed the obsolete
+   whole-tree skip flag. The existing ASan/UBSan recovery suite passes former
+   player/corpse/pet/locker/room and bad cache state/vnum cases, native round trips,
+   logical PC-corpse roots, metadata preservation, duplicate controls and rollback.
+   `python3 tests/async/test_world_recovery_pipeline.py` and `make -C src -j4`
+   passed. Updated the persistence guide and ADR's obsolete capture description.
+6. **Remaining:** artifact source admission plus delayed-read/save/unload proof;
    old-holder source cleanup versus damaged-component retention; generic repair
-   revision publication; physical floor/copyover capture;
+   revision publication;
    pet/NORENT compatibility review; specific refusal diagnostics and existing
    inspection; backend and end-to-end acceptance journeys listed below.
 
