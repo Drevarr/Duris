@@ -183,8 +183,16 @@ def run(binary, backend, inspector, conflicts_only=False):
                     command(god, 'setbit char raoul level 53')
                     command(god, 'setbit char raoul npcact ELITE 1')
                     command(god, 'setbit char raoul hit 1')
-                    player.send('kill raoul')
-                    player.expect('You have gained 4 epic points.', timeout=60)
+                    # Low luck can end the opening attack with a random fumble.
+                    # Retry that explicit outcome; the award must still feed once.
+                    for _ in range(5):
+                        player.send('kill raoul')
+                        outcome, _ = player.expect_any(
+                            ('You have gained 4 epic points.', 'You stumble'), timeout=60)
+                        if outcome == 'You have gained 4 epic points.':
+                            break
+                    else:
+                        raise AssertionError('elite-award fixture repeatedly fumbled')
                     player.expect('sense of satisfaction', timeout=30)
                     expected['timer'] += 3600
                     settle(lambda: artifact() == expected, f'first award did not feed exactly once: expected={expected}')
