@@ -11,6 +11,12 @@
 #include "flatfile/flatfile_identity_repository.h"
 #include "flatfile/flatfile_item_repository.h"
 #include "flatfile/flatfile_artifact_repository.h"
+#include "flatfile/flatfile_account_reward_summon_repository.h"
+#include "flatfile/flatfile_association_repository.h"
+#include "flatfile/flatfile_frag_leaderboard_repository.h"
+#include "flatfile/flatfile_locker_repository.h"
+#include "flatfile/flatfile_recipe_repository.h"
+#include "flatfile/flatfile_spellbook_repository.h"
 #include "flatfile/flatfile_player_domain_repository.h"
 #include "flatfile/flatfile_world_item_repository.h"
 #include "persistence/persistence_observability.h"
@@ -179,7 +185,7 @@ static void inspect_authority(const std::string &root, int32_t pid)
 	flatfile_authority_lock lock;
 	require(lock.acquire(root, &error), "inspect authority lock: " + error);
 	std::cout << "{\"revision\":" << snapshot.revision << ",\"intent\":" << snapshot.save_intent
-		  << ",\"room\":" << snapshot.room_vnum
+		  << ",\"room\":" << snapshot.room_vnum << ",\"name\":\"" << identity.name << '"'
 		  << ",\"membership_level\":" << identity.level;
 	for (const auto &entry : snapshot.status_strings)
 		if (entry.field == player_status_string_field::last_read_news_hash)
@@ -251,17 +257,24 @@ static void inspect_authority(const std::string &root, int32_t pid)
 			field.field == player_status_field::birthplace ? "birthplace" :
 			field.field == player_status_field::original_birthplace ?
 									 "original_birthplace" :
-			field.field == player_status_field::race       ? "race" :
-			field.field == player_status_field::deaths     ? "death_count" :
-			field.field == player_status_field::experience ? "experience" :
-			field.field == player_status_field::level      ? "level" :
+			field.field == player_status_field::race	  ? "race" :
+			field.field == player_status_field::class_primary ? "m_class" :
+			field.field == player_status_field::alignment	  ? "alignment" :
+			field.field == player_status_field::racewar	  ? "racewar" :
+			field.field == player_status_field::deaths	  ? "death_count" :
+			field.field == player_status_field::experience	  ? "experience" :
+			field.field == player_status_field::level	  ? "level" :
 			field.field == player_status_field::learned_flight_stops ?
 								    "learned_flight_stops" :
 								    nullptr;
 		if (name)
-			std::cout
-				<< ",\"" << name << "\":"
-				<< (field.is_unsigned ? field.unsigned_value : field.signed_value);
+		{
+			std::cout << ",\"" << name << "\":";
+			if (field.is_unsigned)
+				std::cout << field.unsigned_value;
+			else
+				std::cout << field.signed_value;
+		}
 	}
 	for (const auto &owner :
 	     { item_owner_identity{ item_owner_type::player, static_cast<uint64_t>(pid), 0 },
@@ -285,7 +298,8 @@ static void inspect_authority(const std::string &root, int32_t pid)
 			first = false;
 			std::cout << "{\"uid\":" << item.item_uid << ",\"vnum\":" << item.vnum
 				  << ",\"root\":" << item.root_item_uid
-				  << ",\"parent\":" << item.parent_item_uid << '}';
+				  << ",\"parent\":" << item.parent_item_uid
+				  << ",\"revision\":" << item.item_revision << '}';
 		}
 		std::cout << ']';
 		std::cout
@@ -1309,6 +1323,67 @@ int main(int argc, char **argv)
 			"seed stale membership: " + error);
 		return 0;
 	}
+	if (argc == 4 && std::string(argv[2]) == "seed-pet-artifact")
+	{
+		// Disposable serving fixture, with its server stopped. Move an existing
+		// leaf UID into a durable pet, preserving that pet's original equipment.
+		std::string error;
+		player_snapshot snapshot;
+		require(flatfile_player_snapshot_read(argv[1], std::stoi(argv[3]), &snapshot,
+						      &error) == flatfile_player_load_result::ok,
+			"read pet artifact fixture: " + error);
+		auto pet = std::find_if(snapshot.pets.begin(), snapshot.pets.end(),
+					[](const auto &row)
+					{ return row.hold_reason == pet_hold_reason::none; });
+		require(pet != snapshot.pets.end() && !pet->items.empty(),
+			"fixture needs durable pet equipment");
+		// Earlier restart controls intentionally seed legacy pets. Upgrade this
+		// isolated fixture through the normal save/claim path.
+		if (!pet->pet_uid)
+			pet->pet_uid = 100001;
+		auto leaf = std::find_if(
+			snapshot.items.begin(), snapshot.items.end(),
+			[&](const auto &row)
+			{
+				const auto index = &row - snapshot.items.data();
+				return row.parent_index == PLAYER_SNAPSHOT_NO_PARENT &&
+				       row.type != ITEM_CONTAINER &&
+				       std::none_of(snapshot.items.begin(), snapshot.items.end(),
+						    [&](const auto &child)
+						    { return child.parent_index == index; });
+			});
+		require(leaf != snapshot.items.end(), "fixture needs an inventory leaf");
+		auto artifact = *leaf;
+		const auto index = leaf - snapshot.items.begin();
+		snapshot.items.erase(leaf);
+		for (auto &item : snapshot.items)
+			if (item.parent_index > index)
+				--item.parent_index;
+		artifact.equipment_slot = 0;
+		artifact.extra_flags |= ITEM_ARTIFACT;
+		pet->items.push_back(artifact);
+		++snapshot.revision;
+		snapshot.components = PLAYER_CHECKPOINT_COMPONENT_ALL;
+		snapshot.encoded_size_bound = PLAYER_SNAPSHOT_MAX_BYTES;
+		require(flatfile_player_snapshot_apply(argv[1], snapshot, &error).outcome ==
+				player_save_apply_outcome::applied,
+			"save pet artifact fixture: " + error);
+		flatfile_artifact_record record;
+		record.vnum = artifact.vnum;
+		record.owned = true;
+		record.location_type = FLATFILE_ARTIFACT_ON_NPC;
+		record.location = pet->mob_vnum;
+		record.timer = 1;
+		record.type = 1;
+		record.last_update = time(nullptr);
+		record.canonical_item_uid = artifact.object_uid;
+		record.identity_state = artifact_identity_state::present;
+		require(flatfile_artifact_snapshot_apply(argv[1], { record }, &error) ==
+				flatfile_artifact_result::ok,
+			"seed pet artifact: " + error);
+		std::cout << artifact.vnum << '|' << artifact.object_uid << '\n';
+		return 0;
+	}
 	if ((argc == 4 || argc == 5) && std::string(argv[2]) == "artifact-owner")
 	{
 		std::string error;
@@ -1353,11 +1428,41 @@ int main(int argc, char **argv)
 			"advance creation bank revision: " + error);
 		return 0;
 	}
-	if (argc == 3 && std::string(argv[2]) == "seed-combat")
+	if (argc == 3 &&
+	    (std::string(argv[2]) == "seed-combat" || std::string(argv[2]) == "seed-hardcore"))
 	{
 		std::string error;
 		require(flatfile_boon_establish(argv[1], {}, &error) == flatfile_boon_result::ok,
 			"seed empty combat boon catalog: " + error);
+		if (std::string(argv[2]) == "seed-hardcore")
+		{
+			// Minimal boot skips these catalogs; permanent character deletion needs
+			// the same initialized authorities as a normally provisioned world.
+			require(flatfile_account_reward_summon_establish(argv[1], {}, &error) ==
+					flatfile_account_reward_summon_result::ok,
+				"seed empty reward summon catalog: " + error);
+			require(flatfile_artifact_establish(argv[1], {}, &error) ==
+					flatfile_artifact_result::ok,
+				"seed empty artifact catalog: " + error);
+			require(flatfile_association_establish(argv[1], {}, &error) ==
+					flatfile_association_result::ok,
+				"seed empty association catalog: " + error);
+			require(flatfile_frag_leaderboard_establish(argv[1], {}, &error) ==
+					flatfile_frag_leaderboard_result::ok,
+				"seed empty frag leaderboard: " + error);
+			require(flatfile_locker_establish(argv[1], {}, {}, &error) ==
+					flatfile_locker_result::ok,
+				"seed empty locker catalog: " + error);
+			require(flatfile_ship_establish(argv[1], {}, &error) ==
+					flatfile_ship_result::ok,
+				"seed empty ship catalog: " + error);
+			require(flatfile_recipe_establish(argv[1], {}, &error) ==
+					flatfile_recipe_result::ok,
+				"seed empty recipe catalog: " + error);
+			require(flatfile_spellbook_establish(argv[1], {}, &error) ==
+					flatfile_spellbook_result::ok,
+				"seed empty spellbook catalog: " + error);
+		}
 		return 0;
 	}
 	// Offline fixture setup only, against the temporary state owned by the journey.

@@ -11,8 +11,13 @@ struct artifact_payload_projection;
 // Materialized player payloads use a consistent source cut plus current custody.
 // Zero also covers ordinary objects; a known canonical UID cannot clear its flag.
 // EIDRM identifies a durably retired copy: omit it and preserve its contents.
+// EAGAIN requires a fresh read after overlapping writer activity; do not retain it.
+// EXDEV is a confirmed old-holder copy: refuse construction and omit the saved row.
 unsigned int artifact_player_source_error(const artifact_payload_projection &source,
-					  P_obj object = nullptr);
+					  P_obj object = nullptr, const char **reason = nullptr);
+// Restricted persistence diagnostics; no source or runtime state is changed.
+void artifact_log_source_error(const artifact_payload_projection &source, unsigned int error,
+			       const char *reason, const char *outcome);
 // Qualified owned or pinned ground payload: saved UID/flags precede procedures.
 // Player payloads match current custody; ground payloads match a pinned boot projection.
 bool artifact_begin_recovery(P_obj object, const artifact_payload_projection &source);
@@ -28,13 +33,9 @@ void artifact_object_placed(P_obj object);
 // tombstone; unloading merely detaches the live pointer.
 void artifact_object_extracted(P_obj object, bool physical_retirement);
 bool artifact_is_canonical(P_obj object);
-// Repair stale tracking only when the canonical live body and active player
-// custody agree. Preserve an existing timer and soul; never claim another copy.
-// Successful source-qualified attachment may supply validated custody before
-// the optional runtime cache has been populated.
-struct item_ownership_runtime_entry;
-bool artifact_reconcile_player_owner(
-	P_obj object, const item_ownership_runtime_entry *restored_custody = nullptr);
+// Repair tracking from the canonical body's actual live player holder.
+// Preserve an existing timer and soul; never claim another copy.
+bool artifact_reconcile_player_owner(P_obj object);
 // Read-only catalog membership, including unresolved/absent known identities.
 // Boot uses this to retain prototype values for later constructor-free queries.
 bool artifact_tracks_vnum(int vnum);

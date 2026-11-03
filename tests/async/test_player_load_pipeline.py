@@ -140,6 +140,9 @@ int main()
     assert(results[0].outcome == player_load_outcome::applied);
     assert(results[1].request_id == 2);
     assert(results[1].outcome == player_load_outcome::stale);
+    assert(results[0].item_read_writer_sequence == 1);
+    assert(results[0].request.request_id == results[0].request_id);
+    assert(results[0].request.pid == results[0].pid && results[0].request.deadline_usec > 0);
 
     assert(player_load_pipeline_submit(request(3, 30)) ==
            player_load_submit_outcome::accepted);
@@ -433,7 +436,7 @@ assert "player_load_pipeline_set_hold(player_save_pipeline_load_held)" in COMM
 # An offline load names the character by pid when it exists, so the worker holds it behind
 # the character's queued saves like a login, and a copy saved back is never older.
 OFFLINE = (SRC / "player_load_offline.c").read_text()
-assert "const int pid = sql_get_player_pid(name);" in OFFLINE
+assert "pid = sql_get_player_pid(name);" in OFFLINE
 assert "request.pid = pid;" in OFFLINE and "request.player_name = name;" in OFFLINE
 validity = REPOSITORY[REPOSITORY.index("bool player_load_request_valid(") :]
 assert contains(validity, "request.pid > 0 && request.account_name.size() <= PLAYER_LOAD_ACCOUNT_MAX")

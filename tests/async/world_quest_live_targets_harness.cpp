@@ -43,9 +43,10 @@ time_info_data time_info{};
 const char *month_name[] = { "Moon" };
 P_char character_list = nullptr;
 P_obj object_list = nullptr;
-void obj_to_char(P_obj, P_char)
+bool obj_to_char(P_obj, P_char)
 {
 	std::abort();
+	return true;
 }
 
 std::deque<room_direction_data> exits;
@@ -2006,6 +2007,20 @@ int main(int argc, char **argv)
 		assert(reward_claims == 0 && wallet_debits == 1);
 		ask("quest");
 		assert(reward_claims == 1 && wallet_debits == 1 && history_writes == 0);
+		// Captured ASK rest receipts remain claimable at a different bartender,
+		// even below the purchase level and with no daily allowance remaining.
+		for (int state : { PLAYER_WORLD_QUEST_RESTED_REWARD_PENDING,
+				   PLAYER_WORLD_QUEST_WELLRESTED_REWARD_PENDING })
+		{
+			pc = accepted;
+			pc.quest_type = FIND_AND_ASK;
+			pc.quest_accomplished = state;
+			pc.quest_giver = pc.quest_mob_vnum = 999999;
+			const int before_claims = reward_claims;
+			ask("quest");
+			assert(reward_claims == before_claims + 1 && wallet_debits == 1 &&
+			       history_writes == 0);
+		}
 		player.player.level = level;
 		daily_remaining = 1;
 		if (preferred_type == FIND_AND_KILL)

@@ -487,13 +487,18 @@ bool item_ownership_runtime_owner_revision(const item_owner_identity &owner, uin
 }
 
 bool item_ownership_runtime_apply(const item_transfer_payload &payload,
-				  const item_transfer_result &result)
+				  const item_transfer_result &result,
+				  const uint64_t *item_revisions)
 {
 	if (!payload.item_count || payload.item_count > ITEM_TRANSFER_MAX_ITEMS ||
 	    result.item_count != payload.item_count ||
 	    result.root_item_uid != item_transfer_result_root(payload))
 		return false;
 	const bool creation = payload.from_owner.type == item_owner_type::system;
+	if (item_revisions)
+		for (size_t index = 0; index < payload.item_count; ++index)
+			if (!item_revisions[index] || (creation && item_revisions[index] != 1))
+				return false;
 	// Memory is the authority for a player, room, corpse, locker or pet, and the
 	// repository claimed the items from it: this cache learns the committed state
 	// instead of checking what it last saw.
@@ -567,14 +572,16 @@ bool item_ownership_runtime_apply(const item_transfer_payload &payload,
 		if (!item_transfer_target_topology(payload, payload.items[index].item_uid,
 						   &target_root, &target_parent))
 			return false;
-		const bool in_step = entry.item_uid == payload.items[index].item_uid &&
-				     entry.item_revision ==
-					     payload.items[index].expected_item_revision;
 		entry.item_uid = payload.items[index].item_uid;
 		entry.vnum = payload.items[index].vnum;
-		// A claim moved a revision this cache did not see; the result bounds it.
-		if (memory_held && !in_step)
-			entry.item_revision = result.max_item_revision;
+		// Claims can advance revisions this cache never saw. A single item's
+		// maximum is exact; a batch maximum says nothing about each member.
+		// Preserve custody metadata, with zero denoting an unknown revision.
+		if (item_revisions)
+			entry.item_revision = item_revisions[index];
+		else if (memory_held)
+			entry.item_revision = payload.item_count == 1 ? result.max_item_revision :
+									0;
 		else
 			++entry.item_revision;
 		entry.root_item_uid = target_root;

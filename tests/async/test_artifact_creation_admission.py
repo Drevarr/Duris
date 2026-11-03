@@ -22,6 +22,8 @@ HARNESS = r"""
 #include "guild/artifact_guild_state.h"
 #include "guild/assocs.h"
 #include "player/player_save_pipeline.h"
+#include "player/player_load_pipeline.h"
+#include "persistence/persistence_observability.h"
 #include "telemetry/telemetry_runtime.h"
 #include "world/difficulty.h"
 #include "world/epic.h"
@@ -31,6 +33,9 @@ HARNESS = r"""
 #include <cstdlib>
 #include <iostream>
 #include <optional>
+#include <condition_variable>
+#include <mutex>
+#include <thread>
 index_data indexes[4] = {};
 index_data mob_indexes[1] = {};
 P_index mob_index=mob_indexes;
@@ -57,6 +62,15 @@ static std::vector<uint64_t> removed_floor_uids;
 static std::vector<persistence_job_write_fn> writes;
 static std::vector<std::vector<flatfile_artifact_record>> captures;
 static bool booting=false, writer_admission=true;
+static player_save_worker_health writer_state={};
+player_save_worker_health player_save_worker_health_copy() { return writer_state; }
+static std::string source_diagnostics;
+void logit(const char *,const char *format,...) {
+ if(std::string(format).find("artifact_identity/source:")!=0) return;
+ char message[8192]; va_list args; va_start(args,format);
+ std::vsnprintf(message,sizeof(message),format,args); va_end(args);
+ source_diagnostics+=message; source_diagnostics+='\n';
+}
 bool sql_async_booting() { return booting; }
 static bool fail_invalidation=false;
 bool redis_invalidate_artifact_cache() {
@@ -140,11 +154,12 @@ void obj_to_room(P_obj object,int room) {
  object->loc_p=LOC_ROOM; object->loc.room=room;
  object->next_content=rooms[room].contents; rooms[room].contents=object; place_tree(object);
 }
-void obj_to_char(P_obj object,P_char mob) {
- if(intercept_swap_placement(object)) return;
- if(IS_OBJ_STAT2(object,ITEM2_CRUMBLELOOT) && IS_PC(mob) && !IS_TRUSTED(mob)) { extract_obj(object,TRUE); return; }
+bool obj_to_char(P_obj object,P_char mob) {
+ if(intercept_swap_placement(object)) return swap_placement_fault != 3;
+ if(IS_OBJ_STAT2(object,ITEM2_CRUMBLELOOT) && IS_PC(mob) && !IS_TRUSTED(mob)) { extract_obj(object,TRUE); return false; }
  object->loc_p=LOC_CARRIED; object->loc.carrying=mob;
  object->next_content=mob->carrying; mob->carrying=object; artifact_object_placed(object);
+ return true;
 }
 void obj_to_obj(P_obj object,P_obj parent) {
  if(intercept_swap_placement(object)) return;
@@ -201,18 +216,67 @@ const object_template *find_object_template(int vnum) {
  const int index=real_object(vnum); return index<0 ? nullptr : &templates[index];
 }
 static size_t offline_released=0, offline_saves=0, corpse_saves=0, expiry_retries=0;
-static bool owner_online=false, owner_loading=false, offline_save_allowed=true;
+static bool owner_online=false, offline_save_allowed=true;
+static P_char offline_pet=nullptr, offline_pet_owner=nullptr;
+static bool offline_includes_pets=false, inspect_pet_snapshot=false;
 static std::vector<std::function<void(P_char)>> offline_callbacks;
-char *get_player_name_from_pid(int pid) { return pid==77 ? const_cast<char *>("Offline") : nullptr; }
+static int offline_requested_pid=0;
+char *get_player_name_from_pid(int pid) {
+ offline_requested_pid=pid;
+ return pid==77 ? const_cast<char *>("Offline") : pid==88 ? const_cast<char *>("Recipient") : nullptr;
+}
 bool is_pid_online(int,bool) { return owner_online; }
-bool player_load_pipeline_pid_pending(int) { return owner_loading; }
+static std::mutex read_mutex;
+static std::condition_variable read_changed;
+static bool read_started=false, read_released=false;
+static player_load_result read_fixture;
+bool player_load_request_valid(const player_load_request &request,uint64_t now) {
+ return request.request_id && request.pid>0 && request.deadline_usec>now;
+}
+player_load_result flatfile_player_load_repository_execute_selected(const player_load_request &,void *) { return {}; }
+static player_load_result execute_read(const player_load_request &request,void *) {
+ std::unique_lock<std::mutex> lock(read_mutex);
+ auto result=read_fixture; result.request_id=request.request_id; result.pid=request.pid;
+ read_started=true; read_changed.notify_all();
+ read_changed.wait(lock,[]{return read_released;});
+ return result;
+}
+static void start_read(int pid,const player_load_result &fixture) {
+ std::unique_lock<std::mutex> lock(read_mutex);
+ read_started=read_released=false; read_fixture=fixture;
+ player_load_request request={}; request.pid=pid;
+ request.request_id=player_load_pipeline_next_request_id();
+ request.deadline_usec=persistence_observability_now_usec()+PLAYER_LOAD_TIMEOUT_USEC;
+ assert(player_load_pipeline_submit(request)==player_load_submit_outcome::accepted);
+ assert(read_changed.wait_for(lock,std::chrono::seconds(5),[]{return read_started;}));
+}
+static player_load_result finish_read() {
+ { std::lock_guard<std::mutex> lock(read_mutex); read_released=true; }
+ read_changed.notify_all();
+ player_load_result result;
+ const auto deadline=std::chrono::steady_clock::now()+std::chrono::seconds(5);
+ while(!player_load_pipeline_pulse(&result,1)) {
+  assert(std::chrono::steady_clock::now()<deadline);
+  std::this_thread::sleep_for(std::chrono::milliseconds(1));
+ }
+ return result;
+}
 bool player_load_offline(const char *,bool,std::function<void(P_char)> done) { offline_callbacks.push_back(std::move(done)); return true; }
-bool player_load_offline_for(P_char staff,const char *,bool,std::function<void(P_char,P_char)> done) {
+bool player_load_offline(int pid,std::function<void(P_char)> done) {
+ offline_requested_pid=pid; offline_includes_pets=true;
+ if(pid!=77 && pid!=88) return false;
+ offline_callbacks.push_back(std::move(done)); return true;
+}
+bool player_load_offline_for(P_char staff,const char *,bool,std::function<void(P_char,P_char)> done,bool) {
  offline_callbacks.push_back([staff,done=std::move(done)](P_char owner) { done(staff,owner); }); return true;
 }
 static bool inspect_swap_snapshot=false;
 int writeCharacter(P_char owner,int,int) {
  ++offline_saves;
+ if(inspect_pet_snapshot && IS_PC(owner)) {
+  assert(owner==offline_pet_owner && owner->followers->follower==offline_pet);
+  assert(offline_pet->carrying && !IS_ARTIFACT(offline_pet->carrying) && !offline_pet->carrying->next_content);
+ }
  if(inspect_swap_snapshot) assert(!artifact_on_owner(owner,900) && artifact_on_owner(owner,902));
  return offline_save_allowed ? 1 : 0;
 }
@@ -256,6 +320,7 @@ void persistence_alert(int,const char *,const char *,const char *,const char *,c
 // TRANSFORMATION_CASES
 // OWNER_RECONCILIATION_CASES
 int main() {
+ assert(player_load_pipeline_init(execute_read,nullptr));
  indexes[0].virtual_number=900; indexes[1].virtual_number=901; indexes[2].virtual_number=902; indexes[3].virtual_number=903; rooms[0].number=2300;
  indexes[0].func.obj=periodic;
  artifact_cache_loaded=true;
@@ -442,7 +507,7 @@ int main() {
  // Unqualified same-UID placement cannot register, mutate or retire the authority.
  auto *hydrated=read_object(900,VIRTUAL); hydrated->obj_uid=80002;
  player_item_snapshot saved={}; saved.equipment_slot=0;
- attach_loaded_inventory(&holder,{hydrated},{0},{saved},{{}});
+ attach_loaded_inventory(&holder,{hydrated},{0},{saved});
  assert(!legacy.live_object && !artifact_is_canonical(hydrated));
  artifact_update_location_sql(hydrated); artifact_feed_sql(&holder,hydrated,100,false,false);
  assert(legacy.timer==7777 && legacy.location==2000);
@@ -452,10 +517,10 @@ int main() {
  qualified.item_uid=qualified.payload_root_item_uid=80002;
  legacy.canonical_payloads={qualified}; legacy.population_reason=artifact_population_reason::complete;
  hydrated=read_object_for_recovery(qualified); assert(hydrated);
- attach_loaded_inventory(&holder,{hydrated},{0},{saved},{{}});
+ attach_loaded_inventory(&holder,{hydrated},{0},{saved});
  assert(legacy.live_object==hydrated && legacy.pending==artifact_pending::none && legacy.timer==7777);
  player_load_items_discard(&holder); assert(!legacy.live_object);
- hydrated=read_object_for_recovery(qualified); assert(hydrated); attach_loaded_inventory(&holder,{hydrated},{0},{saved},{{}});
+ hydrated=read_object_for_recovery(qualified); assert(hydrated); attach_loaded_inventory(&holder,{hydrated},{0},{saved});
  auto *duplicate=read_object(900,VIRTUAL); duplicate->obj_uid=80002; obj_to_char(duplicate,&holder);
  assert(!artifact_is_canonical(duplicate) && legacy.live_object==hydrated); extract_obj(duplicate,TRUE);
  assert(legacy.identity_state==artifact_identity_state::present);
@@ -464,10 +529,19 @@ int main() {
  artifact_save_pulse(true); drain(); character_list=nullptr;
  assert(!object_list && !pool.objs_used);
  std::cout<<"actual artifact constructor/clone/extraction admission: PASS\n";
+ player_load_pipeline_shutdown();
 }
 """
 HARNESS=HARNESS.replace("// OWNER_RECONCILIATION_CASES", r"""
 void owner_reconciliation_cases() {
+ player_load_result delayed;
+ delayed.outcome=player_load_outcome::applied; delayed.item_read_writer_sequence=0;
+ delayed.snapshot.items.resize(1); delayed.item_identities.resize(1);
+ delayed.snapshot.items[0].extra_flags=ITEM_ARTIFACT;
+ assert(player_load_items_qualify(&delayed)==EAGAIN && delayed.snapshot.items.size()==1);
+ delayed.snapshot.pets.resize(1); delayed.snapshot.pets[0].items=delayed.snapshot.items;
+ delayed.snapshot.items.clear(); delayed.item_identities.clear();
+ assert(player_load_items_qualify(&delayed)==EAGAIN && delayed.snapshot.pets[0].items.size()==1);
  for(int placement=0;placement<3;++placement) for(int stale=0;stale<5;++stale) {
   assert(!object_list && !pool.objs_used && writes.empty());
   artifact_rows.clear(); artifact_binds.clear(); item_ownership_runtime_reset();
@@ -504,10 +578,10 @@ void owner_reconciliation_cases() {
   if(placement==2) {
    auto *bag=read_object(903,VIRTUAL); bag->obj_uid=5000;
    obj_to_obj(body,bag);
-   attach_loaded_inventory(&owner,{bag,body},{0},{saved,player_item_snapshot{}},{{},source.custody});
+   attach_loaded_inventory(&owner,{bag,body},{0},{saved,player_item_snapshot{}});
    assert(owner.carrying==unrelated && unrelated->next_content==bag && bag->contains==body);
   } else {
-   attach_loaded_inventory(&owner,{body},{0},{saved},{source.custody});
+   attach_loaded_inventory(&owner,{body},{0},{saved});
    assert(owner.carrying==unrelated);
    assert(placement==0 ? owner.equipment[0]==body : unrelated->next_content==body);
   }
@@ -541,8 +615,9 @@ void owner_reconciliation_cases() {
    assert(artifact_feed_sql(&owner,copy,900,false,false)==artifact_feed_result::rejected);
    extract_obj(copy,FALSE);
    const auto alerts=owner_mismatch_alerts;
-   // Every disagreement leaves authority intact instead of guessing an owner.
+   // Optional cache evidence cannot overrule the canonical body's live holder.
    for(int conflict=0;conflict<6;++conflict) {
+    row.location=88; row.timer=before;
     item_ownership_runtime_reset(); auto custody=source.custody;
     switch(conflict) {
      case 0: custody.owner.id=88; break;
@@ -552,12 +627,14 @@ void owner_reconciliation_cases() {
      case 4: custody.state=item_custody_state::quarantined; break;
     }
     if(conflict!=5) assert(item_ownership_runtime_hydrate(custody));
-    assert(!artifact_reconcile_player_owner(body) && row.location==88);
-    assert(artifact_guild_state_capture(&owner,1,EPIC_BOON,operation,&payload)==artifact_guild_capture_status::no_effect);
-    assert(artifact_feed_sql(&owner,body,900,false,false)==artifact_feed_result::rejected);
-    assert(row.timer==before+900 && row.location==88 && row.canonical_item_uid==4242);
+    assert(artifact_reconcile_player_owner(body) && row.location==77 && row.timer==before);
+    assert(artifact_guild_state_capture(&owner,1,EPIC_BOON,operation,&payload)==artifact_guild_capture_status::ready);
+    assert(payload.artifact_count==1 && payload.artifacts[0].timer_before==before);
+    assert(artifact_feed_sql(&owner,body,900,false,false)==artifact_feed_result::positive);
+    assert(row.timer==before+900 && row.location==77 && row.canonical_item_uid==4242);
+    assert(artifact_binds.at(900).owner_pid==77 && artifact_binds.at(900).timer==666);
    }
-   assert(owner_mismatch_alerts==alerts+12);
+   assert(owner_mismatch_alerts==alerts);
    owner_mismatch_alerts=0;
   }
   assert(owner_mismatch_alerts==0);
@@ -581,7 +658,7 @@ void owner_reconciliation_cases() {
  std::cout<<"qualified worn/carried/nested owner reconciliation, first feed, conflicts and cancellation: PASS\n";
 }
 """)
-source=HARNESS.replace("// PLAYER_ATTACHMENT", "\n".join(extract_function("player_load_items.c", sig) for sig in ("void attach_loaded_inventory(", "void clear_item_uids(", "void player_load_items_discard(", "unsigned int player_load_items_qualify(")))
+source=HARNESS.replace("// PLAYER_ATTACHMENT", "\n".join(extract_function("player_load_items.c", sig) for sig in ("void attach_loaded_inventory(", "void clear_item_uids(", "void player_load_items_discard(", "bool player_load_items_read_current(", "unsigned int player_load_items_qualify(")))
 source=source.replace("// RESTORE_CARRIED",extract_function("handler.c","static void append_obj_to_list(")+"\n"+extract_function("handler.c","void obj_to_char_at_end("))
 source=source.replace("// CONSTRUCTORS","\n".join(extract_function("db.c",sig) for sig in (
  "static P_obj instantiate_object_template_impl(","P_obj instantiate_object_template(const object_template &prototype)",
@@ -593,6 +670,7 @@ int calculate_save_room(P_char,int,int room) { return room; }
 void locker_post_save_hook(P_char) {}
 player_save_pipeline_result player_save_pipeline_request(P_char ch,player_component_mask_t components,int intent,int) {
  assert(ch->carrying && components==PLAYER_CHECKPOINT_COMPONENT_ALL && intent==RENT_CRASH);
+ ++writer_state.submitted;
  return terminal_admission;
 }
 struct deferred_save_slot { int pid; };
@@ -1003,6 +1081,11 @@ void recovery_cases(const std::vector<artifact_population_template> &prototypes)
  auto zero_revision=player; zero_revision.custody.owner_revision=0;
  assert(!artifact_player_source_error(zero_revision));
  const auto before_player_procedures=procedures;
+ const char *expected_reasons[]={"captured_custody_unavailable","saved_copy_owned_elsewhere",
+  "captured_state_not_active","captured_vnum_mismatch","captured_item_revision_missing",
+  "captured_custody_unavailable","captured_parent_mismatch","captured_root_mismatch",
+  "source_parent_missing","source_topology_mismatch","source_artifact_flag_missing",
+  "canonical_identity_unavailable"};
  for(int kind=0;kind<12;++kind) {
   auto bad=player;
   switch(kind) {
@@ -1019,16 +1102,43 @@ void recovery_cases(const std::vector<artifact_population_template> &prototypes)
    case 10: bad.extra_flags=0; break;
    case 11: ++bad.item_uid; bad.payload_root_item_uid=bad.item_uid; bad.custody.item_uid=bad.item_uid; bad.custody.root_item_uid=bad.item_uid; break;
   }
-  assert(artifact_player_source_error(bad));
+  const char *reason=nullptr;
+  assert(artifact_player_source_error(bad,nullptr,&reason) && std::string(reason)==expected_reasons[kind]);
   assert(!read_object_for_recovery(bad));
   assert(procedures==before_player_procedures && !object_list && !pool.objs_used);
  }
  auto current=player.custody; current.owner.id=88;
  assert(item_ownership_runtime_hydrate(current));
- assert(artifact_player_source_error(player)==ESTALE && !read_object_for_recovery(player));
+ assert(!artifact_player_source_error(player));
  item_ownership_runtime_reset(); current=player.custody; ++current.item_revision;
  assert(item_ownership_runtime_hydrate(current));
- assert(artifact_player_source_error(player)==ESTALE);
+ assert(!artifact_player_source_error(player));
+ // Cached revisions and topology, including newer entries, are not a live cut.
+ for(int former=0;former<5;++former) {
+  item_ownership_runtime_reset(); current=player.custody;
+  current.item_revision=100;
+  if(former==0) current.owner={item_owner_type::corpse,88,0};
+  if(former==1) current.owner={item_owner_type::pet,88,77};
+  if(former==2) current.owner={item_owner_type::locker,88,0};
+  if(former==3) current.root_item_uid=5555;
+  if(former==4) current.parent_item_uid=5555;
+  assert(item_ownership_runtime_hydrate(current));
+  for(int login=0;login<2;++login) assert(!artifact_player_source_error(player));
+ }
+ // Pending or later saves require a fresh read rather than source retention.
+ auto delayed=player; delayed.read_writer_sequence=persistence_writer_read_sequence();
+ writer_state.submitted++;
+ assert(artifact_player_source_error(delayed)==EAGAIN && !read_object_for_recovery(delayed) && errno==EAGAIN);
+ assert(source_diagnostics.find("reason=writer_overlap_requires_fresh_read outcome=construction_refused")!=std::string::npos);
+ assert(source_diagnostics.find("captured(found=1 uid=4242 vnum=900 state=1 owner=")!=std::string::npos);
+ assert(source_diagnostics.find("cache(bookkeeping_only=1 found=")!=std::string::npos);
+ delayed.read_writer_sequence=0;
+ assert(artifact_player_source_error(delayed)==EAGAIN);
+ delayed.read_writer_sequence=persistence_writer_read_sequence();
+ assert(!artifact_player_source_error(delayed));
+ writer_state.queued_jobs=1;
+ assert(artifact_player_source_error(delayed)==EAGAIN);
+ writer_state={};
  item_ownership_runtime_reset(); current=player.custody; ++current.owner_revision;
  assert(item_ownership_runtime_hydrate(current));
  assert(!artifact_player_source_error(player)); // unrelated owner-fence advance
@@ -1059,12 +1169,117 @@ void recovery_cases(const std::vector<artifact_population_template> &prototypes)
  raw.custody_found=raw.custody_owner_revision_found=true; raw.custody=player.custody; raw.custody.owner.id=88;
  foreign_only.item_sources={raw};
  assert(!player_load_items_qualify(&foreign_only) && foreign_only.snapshot.items.empty() &&
-  foreign_only.snapshot.retained_items.rows.size()==1 && foreign_only.snapshot.retained_items.rows[0].source_row_id==100);
+  foreign_only.snapshot.retained_items.rows.empty());
+ assert(!read_object_for_recovery([&]{auto old=player; old.custody.owner.id=88; return old;}()) && errno==EXDEV);
+ // Valid foreign artifacts do not withhold their old bag or ordinary sibling.
+ auto old_artifact=raw; old_artifact.parent_row_id=99; old_artifact.root_item_uid=6000;
+ player_load_result bag_cut={}; bag_cut.pid=77; bag_cut.outcome=player_load_outcome::applied;
+ bag_cut.authoritative_item_count=2;
+ player_item_snapshot bag={},sibling={};
+ bag.object_uid=6000; bag.vnum=903; bag.type=ITEM_CONTAINER;
+ sibling.object_uid=6001; sibling.vnum=901; sibling.parent_index=0;
+ bag_cut.snapshot.items={bag,sibling};
+ player_load_item_identity bag_id={},sibling_id={};
+ bag_id.database_id=99; bag_id.item_uid=bag_id.root_item_uid=6000;
+ bag_id.owner=player.payload_owner; bag_id.quantity=1; bag_id.state=item_custody_state::active;
+ sibling_id=bag_id; sibling_id.database_id=101; sibling_id.item_uid=6001; sibling_id.parent_item_uid=6000;
+ bag_cut.item_identities={bag_id,sibling_id};
+ auto bag_raw=raw; bag_raw.row_id=99; bag_raw.item_uid=bag_raw.root_item_uid=6000;
+ bag_raw.vnum=903; bag_raw.extra_flags=0;
+ bag_raw.custody={6000,6000,0,player.payload_owner,1,7,903,item_custody_state::active};
+ auto sibling_raw=bag_raw; sibling_raw.row_id=101; sibling_raw.parent_row_id=99;
+ sibling_raw.item_uid=6001; sibling_raw.vnum=901;
+ sibling_raw.custody={6001,6000,6000,player.payload_owner,1,7,901,item_custody_state::active};
+ bag_cut.item_sources={bag_raw,old_artifact,sibling_raw};
+ for(int login=0;login<2;++login) {
+  auto qualified=bag_cut;
+  if(login) qualified.item_sources[1].custody_owner_revision_found=false; // flat foreign cut
+  assert(!player_load_items_qualify(&qualified) && qualified.snapshot.items.size()==2 &&
+         qualified.snapshot.retained_items.rows.empty() && qualified.snapshot.items[1].parent_index==0);
+ }
+ // Missing current identity/population proof and damaged foreign custody still
+ // retain the whole component; old-holder cleanup is not blanket deletion.
+ const char *foreign_refusals[]={"canonical_identity_unavailable","captured_owner_mismatch",
+  "captured_state_not_active","captured_custody_invalid"};
+ for(int damage=0;damage<4;++damage) {
+  auto damaged=bag_cut;
+  auto &known=artifact_rows.at(900); const auto prior=known;
+  if(damage==0) known.identity_state=artifact_identity_state::unresolved;
+  if(damage==1) { known.population_reason=artifact_population_reason::unqualified_payload; known.canonical_payloads.clear(); }
+  if(damage==2) damaged.item_sources[1].custody.state=item_custody_state::quarantined;
+  if(damage==3) damaged.item_sources[1].custody.root_item_uid=0;
+  source_diagnostics.clear();
+  assert(!player_load_items_qualify(&damaged) && damaged.snapshot.items.empty() &&
+         damaged.snapshot.retained_items.rows.size()==3);
+  assert(source_diagnostics.find(std::string("reason=")+foreign_refusals[damage]+" outcome=source_retained")!=std::string::npos);
+  assert(source_diagnostics.find("source(owner=1/77/0 root=6000 parent=6000)")!=std::string::npos &&
+         source_diagnostics.find("cache(bookkeeping_only=1 found=")!=std::string::npos);
+  known=prior;
+ }
  raw.vnum=901; raw.extra_flags=0; foreign_only.item_sources={raw}; foreign_only.snapshot.retained_items={};
  assert(!player_load_items_qualify(&foreign_only) && foreign_only.snapshot.retained_items.rows.size()==1);
  raw.item_uid=raw.root_item_uid=99999; raw.vnum=901; raw.extra_flags=0; raw.custody.item_uid=raw.custody.root_item_uid=99999; raw.custody.vnum=901;
  foreign_only.item_sources={raw}; foreign_only.snapshot.retained_items={};
  assert(!player_load_items_qualify(&foreign_only) && foreign_only.snapshot.retained_items.rows.empty());
+ // The real reader pauses with the former holder's saved cut. Another holder
+ // receives, saves and unloads the actual canonical body before it replies.
+ char_data giver={},recipient={}; pc_only_data giver_pc={},recipient_pc={};
+ giver.only.pc=&giver_pc; giver_pc.pid=77;
+ recipient.only.pc=&recipient_pc; recipient_pc.pid=88;
+ giver.player.name=const_cast<char *>("Giver"); recipient.player.name=const_cast<char *>("Recipient");
+ giver.player.level=recipient.player.level=51;
+ giver.specials.act=recipient.specials.act=PLR_MORTAL;
+ player_load_result cut={}; cut.pid=77; cut.outcome=player_load_outcome::applied;
+ cut.authoritative_item_count=1;
+ player_item_snapshot item={}; item.object_uid=4242; item.vnum=900; item.extra_flags=ITEM_ARTIFACT;
+ cut.snapshot.items={item};
+ player_load_item_identity identity={}; identity.database_id=100; identity.quantity=1;
+ identity.item_uid=identity.root_item_uid=4242; identity.owner=player.payload_owner;
+ identity.item_revision=3; identity.owner_revision=7; identity.state=item_custody_state::active;
+ cut.item_identities={identity};
+ raw={}; raw.row_id=100; raw.item_uid=raw.root_item_uid=4242; raw.bytes=50;
+ raw.vnum=900; raw.quantity=1; raw.extra_flags=ITEM_ARTIFACT; raw.extra_flags_present=true;
+ raw.custody_found=raw.custody_owner_revision_found=true; raw.custody=player.custody;
+ cut.item_sources={raw};
+ first=read_object_for_recovery(player); assert(first); obj_to_char(first,&giver);
+ start_read(77,cut);
+ const auto read_sequence=persistence_writer_read_sequence();
+ obj_from_char(first); obj_to_char(first,&recipient); artifact_update_sql(first,'Y',4567);
+ assert(artifact_rows.at(900).location==88 && artifact_is_canonical(first));
+ terminal_admission=player_save_pipeline_result::queued;
+ assert(persistence_save_character_terminal(&recipient,RENT_CRASH));
+ extract_char_after_terminal_save(&recipient);
+ assert(!artifact_rows.at(900).live_object && !object_list && !pool.objs_used);
+ auto reply=finish_read();
+ assert(!player_load_items_read_current(reply) && reply.request.pid==77 &&
+        reply.request.request_id==reply.request_id && reply.request.deadline_usec>0);
+ auto pet_cut=reply; pet_cut.snapshot.pets.resize(1);
+ pet_cut.snapshot.pets[0].items=pet_cut.snapshot.items;
+ pet_cut.snapshot.items.clear(); pet_cut.item_sources.clear();
+ assert(!player_load_items_read_current(pet_cut));
+ assert(reply.item_read_writer_sequence==read_sequence &&
+        reply.item_read_writer_sequence!=persistence_writer_read_sequence());
+ const auto diagnostics_before_refresh=source_diagnostics;
+ assert(player_load_items_qualify(&reply)==EAGAIN && reply.snapshot.items.size()==1 &&
+        reply.snapshot.retained_items.rows.empty() && !reply.item_sources[0].retain);
+ // Whole-load refresh happens before any source is qualified or retained.
+ assert(source_diagnostics==diagnostics_before_refresh);
+ // A fresh recipient read follows the ordinary admission/construction path.
+ cut.pid=88; cut.item_identities[0].owner.id=88;
+ cut.item_sources[0].custody.owner.id=88;
+ for(int login=0;login<2;++login) {
+  start_read(88,cut); reply=finish_read();
+  assert(player_load_items_read_current(reply));
+  assert(!player_load_items_qualify(&reply) && reply.snapshot.items.size()==1 &&
+         reply.snapshot.retained_items.rows.empty() && reply.item_admission_sources.size()==1);
+  first=read_object_for_recovery(reply.item_admission_sources[0]); assert(first);
+  obj_to_char(first,&recipient);
+  assert(artifact_is_canonical(first) && artifact_reconcile_player_owner(first));
+  assert(artifact_rows.at(900).timer==4567 && artifact_binds.at(900).owner_pid==77);
+  player_load_items_discard(&recipient);
+ }
+ artifact_save_pulse(true); drain();
+ std::cout<<"threaded delayed read, other-holder handoff/save/unload, fresh repeated admission: PASS\n";
  item_ownership_runtime_reset();
  std::cout<<"mutable player source/custody qualification, live reservation and cancellation: PASS\n";
  std::cout<<"source-qualified recovery factory and actual nested tree: PASS\n";
@@ -1168,11 +1383,11 @@ void offline_expiry_cases() {
  updateArtis=false; event_artifact_check_poof_sql(nullptr,nullptr,nullptr,nullptr); updateArtis=true;
  event_artifact_check_poof_sql(nullptr,nullptr,nullptr,nullptr);
  assert(offline_callbacks.size()==1);
- owner_loading=true;
+ start_read(77,{});
  event_artifact_check_poof_sql(nullptr,nullptr,nullptr,nullptr); // wrap cursor
  event_artifact_check_poof_sql(nullptr,nullptr,nullptr,nullptr);
  assert(offline_callbacks.size()==1);
- offline_callbacks.front()(nullptr); offline_callbacks.clear(); owner_loading=false;
+ offline_callbacks.front()(nullptr); offline_callbacks.clear(); finish_read();
  assert(artifact_rows.at(900).owned && artifact_rows.at(900).canonical_item_uid==81000 && writes.empty());
  // Expiry follows the qualified boot source while its holder stays offline,
  // even when the legacy location is a room or a different player.
@@ -1185,6 +1400,77 @@ void offline_expiry_cases() {
   event_artifact_check_poof_sql(nullptr,nullptr,nullptr,nullptr);
   assert(offline_callbacks.size()==1 && offline.timer==1 && offline.location==99);
   offline_callbacks.front()(nullptr); offline_callbacks.clear();
+ }
+ // Failed construction keeps the boot repair locator. Accepted recovery retires
+ // only player locators, and handoff/unload expiry follows the current player.
+ saved_holder.row_id=1; saved_holder.vnum=900; saved_holder.owner_reference=77;
+ saved_holder.payload_root_item_uid=saved_holder.item_uid;
+ saved_holder.extra_flags_present=true; saved_holder.extra_flags=ITEM_ARTIFACT; saved_holder.quantity=1;
+ saved_holder.custody_examined=saved_holder.custody_found=saved_holder.custody_owner_revision_found=true;
+ saved_holder.custody={81000,81000,0,saved_holder.payload_owner,1,1,900,item_custody_state::active};
+ auto world_source=saved_holder; world_source.domain=artifact_payload_domain::copyover_ground;
+ offline.canonical_payloads={saved_holder,world_source};
+ item_ownership_runtime_reset();
+ auto *recovered=read_object_for_recovery(saved_holder); assert(recovered);
+ extract_obj(recovered,FALSE);
+ assert(offline.canonical_payloads.size()==2 && !offline.live_object);
+ recovered=read_object_for_recovery(saved_holder); assert(recovered); obj_to_char(recovered,&owner);
+ assert(offline.canonical_payloads.size()==1 &&
+        offline.canonical_payloads[0].domain==artifact_payload_domain::copyover_ground);
+ pc.pid=88; artifact_update_sql(recovered,'Y',1);
+ assert(offline.location==88 && offline.timer==1 && artifact_is_canonical(recovered));
+ extract_obj(recovered,FALSE);
+ updateArtis=false; event_artifact_check_poof_sql(nullptr,nullptr,nullptr,nullptr); updateArtis=true;
+ event_artifact_check_poof_sql(nullptr,nullptr,nullptr,nullptr);
+ assert(offline_requested_pid==88 && offline_callbacks.size()==1 && !offline.live_object);
+ auto recipient=saved_holder; recipient.owner_reference=88;
+ recipient.payload_owner.id=recipient.custody.owner.id=88;
+ recovered=read_object_for_recovery(recipient); assert(recovered); obj_to_char(recovered,&owner);
+ offline_callbacks.front()(&owner); offline_callbacks.clear(); pc.pid=77;
+ assert(!offline.live_object && offline.identity_state==artifact_identity_state::retired &&
+        offline.canonical_item_uid==81000 && !object_list && !pool.objs_used);
+ artifact_save_pulse(true); drain();
+ // Boot and same-uptime unload expiry target the durable pet's player. The
+ // callback saves the remaining pet equipment before releasing temporary pets.
+ for(bool durable : {false,true}) {
+ artifact_rows.clear(); artifact_binds.clear(); item_ownership_runtime_reset();
+ auto pet_source=saved_holder;
+ if(durable) {
+ pet_source.domain=artifact_payload_domain::pet;
+ pet_source.payload_owner={item_owner_type::pet,123,77};
+ pet_source.owner_context=77; pet_source.owner_reference=123;
+ pet_source.custody.owner=pet_source.payload_owner;
+ }
+ auto &pet_row=artifact_rows[900]; pet_row.type=ARTIFACT_MAJOR;
+ pet_row.identity_state=artifact_identity_state::present; pet_row.canonical_item_uid=81000;
+ // Qualified pet recovery must override a stale previous player's tracking,
+ // including after placement retires the saved boot locator and the pet unloads.
+ pet_row.owned=true; pet_row.locType=ARTIFACT_ON_PC; pet_row.location=99; pet_row.timer=1;
+ pet_row.canonical_payloads={pet_source};
+ char_data pet={}; npc_only_data pet_data={}; pet.only.npc=&pet_data;
+ pet.specials.act=ACT_ISNPC; pet.in_room=NOWHERE; pet.player.name=const_cast<char *>("Pet");
+ pet.durable_pet_uid=durable ? 123 : 0; pet.durable_pet_owner_pid=durable ? 77 : 0;
+ follow_type follower={&pet,nullptr}; owner.followers=&follower;
+ offline_pet=&pet; offline_pet_owner=&owner;
+ for(int attempt=0;attempt<2;++attempt) {
+  updateArtis=false; event_artifact_check_poof_sql(nullptr,nullptr,nullptr,nullptr); updateArtis=true;
+  event_artifact_check_poof_sql(nullptr,nullptr,nullptr,nullptr);
+  assert(offline_requested_pid==77 && offline_includes_pets && offline_callbacks.size()==1);
+  auto *recovered_pet_item=read_object_for_recovery(pet_source); assert(recovered_pet_item);
+  obj_to_char(recovered_pet_item,&pet);
+  assert(pet_row.canonical_payloads.empty() && pet_row.offline_pet_owner_pid==77);
+  if(!attempt) {
+   player_load_items_discard(&pet);
+   offline_callbacks.front()(nullptr);
+  } else {
+   auto *sibling=read_object(903,VIRTUAL); obj_to_char(sibling,&pet);
+   inspect_pet_snapshot=true; offline_callbacks.front()(&owner); inspect_pet_snapshot=false;
+   assert(!owner.followers && !pet.carrying && pet_row.identity_state==artifact_identity_state::retired);
+  }
+  offline_callbacks.clear();
+ }
+ offline_pet=offline_pet_owner=nullptr;
+ artifact_save_pulse(true); drain(); assert(!object_list && !pool.objs_used);
  }
  // Qualified absence may clear obsolete timer tracking, preserving configured availability.
  artifact_rows.clear(); artifact_binds.clear();
@@ -1580,10 +1866,11 @@ void monolith_cases() {
   command_output=="&+RYou feel a sense of satisfaction from above.&n\r\n");
  owner.player.level=62; use(); assert(monolith.value[0]==2 && artifact_rows.at(900).timer==initial+14400 &&
   command_output.find("satisfaction")==std::string::npos); owner.player.level=51;
- artifact_rows.at(900).location=77; use(); assert(monolith.value[0]==2 &&
-  artifact_rows.at(900).timer==initial+14400 && command_output.find("satisfaction")==std::string::npos);
- artifact_rows.at(900).location=55;
- monolith.value[0]=0; use(); assert(artifact_rows.at(900).timer==initial+14400 &&
+ // Stale tracking repairs from the live wearer before the monolith feeds it.
+ artifact_rows.at(900).location=77; use(); assert(monolith.value[0]==1 &&
+  artifact_rows.at(900).location==55 && artifact_rows.at(900).timer==initial+21600 &&
+  command_output=="&+RYou feel a sense of satisfaction from above.&n\r\n");
+ monolith.value[0]=0; use(); assert(artifact_rows.at(900).timer==initial+21600 &&
   command_output.find("satisfaction")==std::string::npos);
  // Clamping an over-cap artifact keeps its negative feedback, without a false positive.
  monolith.value[0]=1; artifact_rows.at(900).timer=time(nullptr)+ARTIFACT_BLOOD_DAYS*SECS_PER_REAL_DAY+120;
@@ -1672,6 +1959,7 @@ bool char_to_room(P_char ch,int room,int) {
 }
 P_char find_character_by_runtime_id(uint64_t id) { return transformed_live && id==transformed_mob.runtime_id ? &transformed_mob : nullptr; }
 void extract_char(P_char ch) {
+ if(ch==offline_pet) { assert(!ch->carrying); offline_pet_owner->followers=nullptr; return; }
  if(IS_PC(ch)) { terminal_item_cleanup(ch); return; }
  if(ch==transformation_source) ++transformation_removals;
  else { assert(ch==&transformed_mob && transformed_live && !ch->carrying); transformed_live=false; }
@@ -1767,5 +2055,6 @@ with tempfile.TemporaryDirectory(prefix="artifact-creation-",dir=output) as dire
   "-fno-sanitize-recover=all","-fno-omit-frame-pointer",str(cpp),"src/guild/artifact_population.c",
   "src/item/item_transfer_command.c","src/item/item_ownership_runtime.c","src/guild/artifact_guild_state.c",
   "src/guild/artifact_guild_command.c","src/persistence/critical_command.c","src/core/safe_format.c","src/player/player_load_topology.c","src/combat/trap_legacy.c",str(HARNESS_STUBS),"-Wl,--gc-sections","-lcrypto","-pthread",
+  "src/player/player_load_pipeline.c","src/persistence/persistence_observability.c",
   "-o",str(binary)],cwd=ROOT,check=True)
  subprocess.run([str(binary)],cwd=ROOT,check=True,timeout=30)

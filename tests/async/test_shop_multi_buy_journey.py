@@ -13,6 +13,7 @@ import struct
 import subprocess
 import tempfile
 import time
+import fcntl
 
 import test_flatfile_combat_journey as journey
 from test_flight_network_journey import authority, command
@@ -21,7 +22,7 @@ from run_world_quest_dual_backend import setup_run_root
 ROOT = journey.ROOT
 PLAYER, ACCOUNT = "Shopbuyer", "Shopacct"
 GOD, GOD_ACCOUNT = "Shopwarden", "Shopstaff"
-ROOM, KEEPER, BAG, RATION, SMALL_BAG, TRINKET = 45035, 1258, 1258, 1259, 1260, 1261
+ROOM, KEEPER, BAG, RATION, SMALL_BAG, TRINKET = 45016, 1258, 1258, 1259, 1260, 1261
 
 
 def fixture(runtime, *, reboot_stock=False, room=ROOM):
@@ -156,12 +157,12 @@ def run(binary, backend, report):
                     # Saved physical rows are MariaDB's live inventory source;
                     # legacy sales can leave historical custody-only records.
                     rows = sql("SELECT i.item_uid,i.vnum,i.root_item_uid,COALESCE(i.parent_item_uid,0),"
-                               "COALESCE(parent.obj_uid,0) FROM item_current_owner i "
+                               "COALESCE(parent.obj_uid,0),i.item_revision FROM item_current_owner i "
                                "JOIN player_items physical ON physical.obj_uid=i.item_uid AND physical.pid=i.owner_id "
                                "LEFT JOIN player_items parent ON parent.id=physical.container_id "
                                f"JOIN player_data p ON p.pid=i.owner_id WHERE i.owner_type=1 AND p.name='{PLAYER}' "
                                "AND i.state=1 ORDER BY i.item_uid")
-                    items = [dict(zip(("uid", "vnum", "root", "parent", "physical_parent"), map(int, row.split("\t"))))
+                    items = [dict(zip(("uid", "vnum", "root", "parent", "physical_parent", "revision"), map(int, row.split("\t"))))
                              for row in rows.splitlines()]
                     return {"wallet": wallet, "player_items": items}
                 return json.loads(subprocess.check_output([str(inspector), env["FLATFILE_STATE_DIR"], "inspect", "1"], text=True))
@@ -280,14 +281,33 @@ def run(binary, backend, report):
                 assert "gives you" in sold_ration, sold_ration
                 save(player, PLAYER)
                 assert "created" in command(god, f"load obj {TRINKET}")
+                save(god, GOD)
                 assert "Ok." in command(god, "give trinket " + PLAYER)
+                save(player, PLAYER)
+                # Hydrate this revision, then ordinary handoffs/save claims leave
+                # that cache behind. Sale/buyback must publish exact later versions.
+                stop(); boot()
+                god, player = login(GOD, GOD_ACCOUNT), login(PLAYER, ACCOUNT)
+                command(god, f"goto {ROOM}")
+                command(god, "transfer " + PLAYER)
+                command(god, "vis 0")
+                command(god, "setbit room here flag ROOM_MAGIC_LIGHT 1")
+                response = command(player, "give trinket " + GOD)
+                assert "Ok." in response, response
+                save(god, GOD)
+                assert "Ok." in command(god, "give trinket " + PLAYER)
+                save(player, PLAYER)
+                before_trade = next(row for row in inspect()["player_items"] if row["vnum"] == TRINKET)
                 sold_trinket = action(player, "sell trinket", "The shopkeeper gives you")
                 assert "gives you" in sold_trinket, sold_trinket
                 save(player, PLAYER)
                 assert "You now have a finite stock trinket." in action(
                     player, "buy trinket", "You now have a finite stock trinket.")
                 save(player, PLAYER)
+                after_trade = next(row for row in inspect()["player_items"] if row["vnum"] == TRINKET)
+                assert after_trade["uid"] == before_trade["uid"] and after_trade["revision"] == before_trade["revision"] + 2
                 evidence["checks"].append("single inventory purchase, produced sale and finite-stock sell/buy")
+                evidence["checks"].append("ordinary handoff claims followed by exact-revision sale and buyback")
                 staff_coins = re.search(r"Coins carried:[^\r\n]+", command(god, "score"))[0]
                 before_ops = operations()
                 free_purchase = command(god, "buy ration purchasebag 20", timeout=60)
@@ -322,6 +342,52 @@ def run(binary, backend, report):
                 assert restored["wallet"] == completed["wallet"]
                 assert restored["player_items"] == completed["player_items"], "cold restart changed purchase identities/topology"
                 evidence["checks"].append("cold restart preserves all 108 ration UIDs, parentage and wallet")
+                if backend == "flatfile":
+                    command(god, f"goto {ROOM}")
+                    command(god, "transfer " + PLAYER)
+                    # Trusted quit is immediate; this controls actor unload
+                    # without introducing a camp timer into the writer stall.
+                    command(god, "setbit char " + PLAYER + " level 62")
+                    command(god, "setbit char " + PLAYER + " pcact MORTALIZED off")
+                    before_quit = inspect()
+                    trinket_uid = next(row["uid"] for row in before_quit["player_items"] if row["vnum"] == TRINKET)
+                    lock_path = Path(env["FLATFILE_STATE_DIR"]) / "domains/.critical-authority.lock"
+                    # Keep the writer stalled until the game thread enters quit.
+                    # It cannot deliver a completion until that handler unloads
+                    # the actor, even if the writer commits during its account I/O.
+                    wait_channel = Path(f"/proc/{process.pid}/wchan")
+                    with lock_path.open("a+b") as held:
+                        fcntl.flock(held, fcntl.LOCK_EX)
+                        try:
+                            player.send("sell trinket\nquit")
+                            player.expect("Your sale is being processed.", timeout=5)
+                            deadline = time.monotonic() + 5
+                            # Command logs are buffered until quit returns. The
+                            # parent can instead observe the main thread waiting
+                            # for account authority, behind our file lock.
+                            while wait_channel.read_text().strip() not in ("futex_wait_queue", "locks_lock_inode_wait"):
+                                assert time.monotonic() < deadline, ("quit did not reach account I/O", wait_channel.read_text())
+                                time.sleep(.02)
+                        finally:
+                            fcntl.flock(held, fcntl.LOCK_UN)
+                    player.expect("ACCOUNT MENU", timeout=30)
+                    player.close(); clients.remove(player)
+                    player = login(PLAYER, ACCOUNT)
+                    save(player, PLAYER)
+                    paid = inspect()
+                    value = lambda wallet: sum(amount * (10 ** index) for index, amount in enumerate(wallet))
+                    assert value(paid["wallet"]) > value(before_quit["wallet"]), "offline sale lost its payment"
+                    assert all(row["uid"] != trinket_uid for row in paid["player_items"]), "offline sale returned its sold UID"
+                    assert {row["uid"] for row in paid["player_items"] if row["vnum"] == RATION} == {row["uid"] for row in purchased}
+                    stop(); boot()
+                    god, player = login(GOD, GOD_ACCOUNT), login(PLAYER, ACCOUNT)
+                    save(player, PLAYER)
+                    assert inspect()["wallet"] == paid["wallet"], "offline sale paid twice after restart"
+                    command(god, f"goto {ROOM}"); command(god, "transfer " + PLAYER)
+                    assert "finite stock trinket" in action(player, "buy trinket", "You now have a finite stock trinket.")
+                    save(player, PLAYER)
+                    assert next(row["uid"] for row in inspect()["player_items"] if row["vnum"] == TRINKET) == trinket_uid
+                    evidence["checks"].append("sale and quit behind a stalled writer: payment once, no returned sold UID, stable buyback after restart")
                 evidence["passed"] = True
                 stop()
                 print("[PASS]", backend, "real shop batches and cold restart", flush=True)

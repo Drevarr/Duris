@@ -2166,9 +2166,9 @@ possible effects are bestowed upon reaching 10th circle.
 #0
 
 Aura of Battle Lust
-Aura of Battle Lust - Last Edited: 2026-10-18
+Aura of Battle Lust - Last Edited: 2026-11-03
 ==========================================
-Syntax:         innate aura of battlelust
+Syntax:         innate aura battlelust (or innate aura_of_battlelust)
 * Area of effect: <all group members>
 * Aggressive:     No
 * Cumulative:     No
@@ -2182,9 +2182,9 @@ Aura of Vigor, Aura of Improved Healing, Aura of Precision, Aura of Protection, 
 #0
 
 Aura of Endurance
-Aura of Endurance - Last Edited: 2018-05-11 10:24:20 by lohrr
+Aura of Endurance - Last Edited: 2026-11-03
 =============================================================
-Syntax:         innate aura of endurance
+Syntax:         innate aura endurance (or innate aura_of_endurance)
 * Area of effect: <all group members>
 * Aggressive:     No
 * Cumulative:     No
@@ -2198,9 +2198,9 @@ Aura of Battle Lust, Aura of Vigor, Aura of Improved Healing, Aura of Precision,
 #0
 
 Aura of Improved Healing
-Aura of Improved Healing - Last Edited: 2018-05-11 10:24:37 by lohrr
+Aura of Improved Healing - Last Edited: 2026-11-03
 ====================================================================
-Syntax:         innate aura of improved healing
+Syntax:         innate aura healing (or innate aura_of_improved_healing)
 * Area of effect: <all group members>
 * Aggressive:     No
 * Cumulative:     No
@@ -2214,9 +2214,9 @@ Aura of Vigor, Aura of Precision, Aura of Protection, Aura of Endurance, Aura of
 #0
 
 Aura of Precision
-Aura of Precision - Last Edited: 2018-05-11 10:23:49 by lohrr
+Aura of Precision - Last Edited: 2026-11-03
 =============================================================
-Syntax:         innate aura of precision
+Syntax:         innate aura precision (or innate aura_of_precision)
 * Area of effect: <all group members>
 * Aggressive:     No
 * Cumulative:     No
@@ -2230,9 +2230,9 @@ Aura of Vigor, Aura of Improved Healing, Aura of Protection, Aura of Endurance, 
 #0
 
 Aura of Protection
-Aura of Protection - Last Edited: 2018-05-11 10:23:22 by lohrr
+Aura of Protection - Last Edited: 2026-11-03
 ==============================================================
-Syntax:         innate aura of protection
+Syntax:         innate aura protection (or innate aura_of_protection)
 * Area of effect: <all group members>
 * Aggressive:     No
 * Cumulative:     No
@@ -2246,9 +2246,9 @@ Aura of Vigor, Aura of Improved Healing, Aura of Precision, Aura of Endurance, A
 #0
 
 Aura of Vigor
-Aura of Vigor - Last Edited: 2018-05-11 10:24:54 by lohrr
+Aura of Vigor - Last Edited: 2026-11-03
 =========================================================
-Syntax:         innate aura of vigor
+Syntax:         innate aura vigor (or innate aura_of_vigor)
 * Area of effect: <all group members>
 * Aggressive:     No
 * Cumulative:     No
@@ -4871,23 +4871,51 @@ Emote, Social Actions, commands
 #0
 
 Class
-Class - Last Edited: 2026-10-18
+Class - Last Edited: 2026-11-02
 ============================================================
-Choose a class from the menu offered for the selected race. Race, alignment,
-and server settings determine creation eligibility.
+Browse classes, specializations, and their abilities.
 
-==Normal creation classes==
+==Syntax==
 
-Warrior, Ranger, Psionicist, Paladin, Anti-Paladin, Cleric, Monk, Druid, Shaman, Sorcerer, Necromancer, Conjurer, Rogue, Mercenary, Bard, Berserker, Reaver, Illusionist, Blighter, Ethermancer, Summoner.
+  class
+  class list
+  class list <race>
+  class info <class or specialization>
+  class specs <class>
+  class innates <class or specialization>
 
-Dragoon is disabled in the checked-in policy. Standalone Assassin, Thief,
-Warlock, MindFlayer, Alchemist, Dreadlord, Avenger, and Theurgist have no
-normal-roster creation combination. Assassin and Thief are normally Rogue
-specializations. Special event settings can expose additional choices.
+Bare class lists every class, including disabled and retired classes.
+Use class list <race> to see the classes that race can create and their
+alignment requirements. Alignment is separate from racewar side.
+
+Class info shows a class's abilities, allowed races, and specializations.
+Specialization profiles show the skills, spells, and innate abilities added,
+changed, or lost compared with the base class. For the complete ability lists,
+use skills <class or specialization> and spells <class or specialization>.
+
+Use specialize at level 30. See help specialization for requirements.
+Class innates lists inherited abilities, unlock levels, and active/passive
+markers. Use help <ability name> for usage, or race innates <race> for racial
+abilities.
+
+Names accept case-insensitive full names, spaces/hyphens and unique prefixes.
+Ambiguous names list candidates. Assassin and Thief resolve to Rogue
+specializations, whose help topics are Rogue Assassin and Rogue Thief.
+The roster labels the retired standalone Assassin and Thief classes.
+
+==Examples==
+
+  class list grey elf
+  class info guardian
+  class specs warrior
+  class innates fire magus
+  skills guardian
+  spells fire magus
+  spells info fireball
 
 ==See also==
 
-Class Guides, Specialization, Multiclass, Skills, Spell circle
+Classes, Class Guides, Race, Skills, Spells, Specialization, Multiclass
 
 #0
 
@@ -9917,6 +9945,8 @@ None beyond the base-class registrations.
 '*' Designates passive ability.
 Requirements are registration values, not automatic learning or preparation. Base-class grants remain subject to the listed specialization changes, and abilities retain their own use conditions.
 
+==Class mechanics==
+
 At level 30, Fire Magus can use innate fireshield without a memorized
 spell or mana. It applies the usual temporary Fireshield effect;
 expiration, dispelling and combat retaliation remain unchanged.
@@ -13097,13 +13127,15 @@ lost by the death.
 #0
 
 Hardcore
-Hardcore - Last Edited: 2015-03-27 14:44:11 by gellz
+Hardcore - Last Edited: 2026-11-03
 ====================================================
 Hardcore characters receive their configured combat and hitpoint bonuses.
 Their XP path can continue beyond the ordinary level-50 XP ceiling, up to their
 chosen faction cap plus two, bounded by level 56. This allowance is separate
 from the normal one-level Good/Evil cap gap. Read HELP LEVEL CAP for the race.
-A Hardcore character permanently dies when its configured death limit is reached.
+Hardcore characters have five lives. Deaths one through four follow the ordinary
+death rules; the fifth counted death permanently deletes the character.
+Arena deaths do not consume a life.
 
 #0
 
@@ -18803,24 +18835,27 @@ Learning, preparation, equipment, and current ability conditions still apply.
 #0
 
 Paladin auras
-Paladin auras - Last Edited: 2008-05-09 20:19:34 by Blaize
+Paladin auras - Last Edited: 2026-11-03
 ==========================================================
 Paladins, Anti-Paladins and eligible Clerics can radiate auras to eligible
 nearby group members. A provider maintains only one aura at a time;
 different providers may radiate different aura types simultaneously.
 Identical aura types do not stack. Cleric Healers cannot receive the
 Improved Healing bonus or enhance their spells with it.
-Syntax: innate <aura_name>
+Syntax: innate aura <keyword>
+Any prefix of the keyword works, so 'innate aura heal' raises Aura of
+Improved Healing. 'innate aura of <keyword>' and full names such as
+'innate aura_of_improved_healing' also work.
 
 ==List of Auras==
 
-* Aura of Protection
-* Aura of Precision
-* Aura of Endurance
-* Aura of Improved Healing
-* Aura of Vigor
-* Aura of Battle Lust
-* Aura of Spell Protection
+* Aura of Protection - protection (shortest: p)
+* Aura of Precision - precision (shortest: pre)
+* Aura of Endurance - endurance (shortest: e)
+* Aura of Improved Healing - healing or improved (shortest: h)
+* Aura of Vigor - vigor (shortest: v)
+* Aura of Battle Lust - battlelust (shortest: b)
+* Aura of Spell Protection - spell (shortest: s)
 
 #0
 
@@ -28713,9 +28748,9 @@ Healer, Epic Warding Faith
 #0
 
 Aura of Spell Protection
-Aura of Spell Protection - Last Edited: 2026-10-21
+Aura of Spell Protection - Last Edited: 2026-11-03
 ============================================================
-Syntax: innate aura_of_spell_protection
+Syntax: innate aura spell (or innate aura_of_spell_protection)
 * Area of effect: <eligible nearby group members>
 * Aggressive: No
 * Cumulative: No

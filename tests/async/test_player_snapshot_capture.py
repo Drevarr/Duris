@@ -302,7 +302,10 @@ int main()
     // Rent must carry every temporary key to the writer for atomic disposal,
     // including a key hidden inside a container the ordinary filter omits.
     for (int intent : {RENT_INN, RENT_CRASH, RENT_CRASH2, RENT_QUIT, RENT_LINKDEAD, RENT_CAMPED, RENT_DEATH}) {
-        for (bool owned : {false, true}) {
+        // Batch repair can preserve active custody with revision zero (unknown).
+        // That still preserves durable NORENT items and the separate key rule.
+        for (int recorded_revision : {-1, 0, 1}) {
+            const bool owned = recorded_revision >= 0;
             for (int place = 0; place < 4; ++place) {
                 item_ownership_runtime_reset();
                 obj_data key{}, bag{}, sibling{};
@@ -320,7 +323,8 @@ int main()
                     entry.root_item_uid = place >= 2 ? bag.obj_uid : key.obj_uid;
                     entry.parent_item_uid = place >= 2 ? bag.obj_uid : 0;
                     entry.owner = {item_owner_type::player, 42, 0};
-                    entry.item_revision = entry.owner_revision = 1;
+                    entry.item_revision = recorded_revision;
+                    entry.owner_revision = 1;
                     entry.vnum = 40401; entry.state = item_custody_state::active;
                     assert(item_ownership_runtime_hydrate(entry));
                 }
@@ -406,7 +410,7 @@ int main()
     malformed.items[0].object_uid = 701;
     held.pets.push_back(malformed);
     pc.held_pets = &held;
-    for (int intent : {RENT_CRASH, RENT_QUIT, RENT_DEATH}) {
+    for (int intent : {RENT_CRASH, RENT_QUIT, RENT_DEATH, RENT_POOFARTI, RENT_SWAPARTI}) {
         player_snapshot saved;
         assert(player_snapshot_capture(&ch, 99, PLAYER_COMPONENT_PETS, intent, 22800, &saved) == player_snapshot_capture_result::ok);
         assert(saved.pets[0].hold_reason == pet_hold_reason::legacy_summon);
