@@ -1070,14 +1070,13 @@ static unsigned int artifact_owned_source_error(const artifact_payload_projectio
 	    custody.root_item_uid != source.payload_root_item_uid ||
 	    custody.parent_item_uid != source.parent_item_uid)
 		return ESTALE;
-	item_ownership_runtime_entry current = {};
-	if (item_ownership_runtime_lookup(source.item_uid, &current) &&
-	    (current.vnum != custody.vnum || current.state != custody.state ||
-	     !item_owner_identity_equal(current.owner, custody.owner) ||
-	     current.root_item_uid != custody.root_item_uid ||
-	     current.parent_item_uid != custody.parent_item_uid ||
-	     current.item_revision > custody.item_revision))
-		return ESTALE;
+	// The cache is optional bookkeeping, not a second ownership authority.
+	// A delayed reader must instead refresh its saved cut if any writer work
+	// overlapped it, including another holder's handoff/save/unload.
+	if (source.read_writer_sequence != UINT64_MAX &&
+	    (!source.read_writer_sequence ||
+	     source.read_writer_sequence != persistence_writer_read_sequence()))
+		return EAGAIN;
 	if (found == artifact_rows.end() ||
 	    found->second.identity_state != artifact_identity_state::present ||
 	    found->second.canonical_item_uid != source.item_uid)

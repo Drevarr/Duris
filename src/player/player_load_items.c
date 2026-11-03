@@ -1057,6 +1057,7 @@ unsigned int player_load_items_qualify(player_load_result *result)
 			auto &projection = projections[index];
 			projection.domain = artifact_payload_domain::player;
 			projection.row_id = identity.database_id;
+			projection.read_writer_sequence = result->item_read_writer_sequence;
 			projection.item_uid = item.object_uid;
 			projection.vnum = item.vnum;
 			projection.extra_flags = item.extra_flags;
@@ -1098,6 +1099,8 @@ unsigned int player_load_items_qualify(player_load_result *result)
 					identities[item.parent_index].database_id);
 			}
 			const unsigned int error = artifact_player_source_error(projection);
+			if (error == EAGAIN)
+				return error; // Fresh login/read; never turn a delayed reply into retention.
 			if (error == EIDRM)
 			{
 				// Durable retirement proves this copy cannot return. Omit it from
