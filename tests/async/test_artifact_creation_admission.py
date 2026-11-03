@@ -1199,6 +1199,8 @@ void recovery_cases(const std::vector<artifact_population_template> &prototypes)
  }
  // Missing current identity/population proof and damaged foreign custody still
  // retain the whole component; old-holder cleanup is not blanket deletion.
+ const char *foreign_refusals[]={"canonical_identity_unavailable","captured_owner_mismatch",
+  "captured_state_not_active","captured_custody_invalid"};
  for(int damage=0;damage<4;++damage) {
   auto damaged=bag_cut;
   auto &known=artifact_rows.at(900); const auto prior=known;
@@ -1206,8 +1208,12 @@ void recovery_cases(const std::vector<artifact_population_template> &prototypes)
   if(damage==1) { known.population_reason=artifact_population_reason::unqualified_payload; known.canonical_payloads.clear(); }
   if(damage==2) damaged.item_sources[1].custody.state=item_custody_state::quarantined;
   if(damage==3) damaged.item_sources[1].custody.root_item_uid=0;
+  source_diagnostics.clear();
   assert(!player_load_items_qualify(&damaged) && damaged.snapshot.items.empty() &&
          damaged.snapshot.retained_items.rows.size()==3);
+  assert(source_diagnostics.find(std::string("reason=")+foreign_refusals[damage]+" outcome=source_retained")!=std::string::npos);
+  assert(source_diagnostics.find("source(owner=1/77/0 root=6000 parent=6000)")!=std::string::npos &&
+         source_diagnostics.find("cache(bookkeeping_only=1 found=")!=std::string::npos);
   known=prior;
  }
  raw.vnum=901; raw.extra_flags=0; foreign_only.item_sources={raw}; foreign_only.snapshot.retained_items={};

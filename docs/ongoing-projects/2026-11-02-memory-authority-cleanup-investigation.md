@@ -2,7 +2,7 @@
 
 [Issue #583](https://github.com/LuminariMUD/Duris/issues/583).
 Worktree: `/home/aiwithapex/projects/duris-issue-583-memory-authority-plan`.
-Current branch: `branch/issue-583-final-qualification`,
+Current branch: `branch/issue-583-retained-source-diagnostics`, stacked on
 [PR #604](https://github.com/LuminariMUD/Duris/pull/604).
 
 **Status:** sequential PR review and integration are in progress. Focused native
@@ -75,7 +75,7 @@ These are the acceptance contract and the owning files, not another work queue.
 
 ## Shortest remaining path
 
-When implementation is explicitly resumed:
+Final acceptance review:
 
 1. Review the aggregate diff from `5708e269974ab070ea224f720e7e2e787e2d6671`
    against the contract above and the proof below. Remove only task-owned
