@@ -12,6 +12,7 @@
 #include "core/structs.h"
 #include "guild/artifact_cache_codec.h"
 #include "guild/artifact_admission.h"
+#include "item/item_claim.h"
 #include "guild/artifact_population.h"
 #include "guild/artifact_guild_state.h"
 #include "guild/artifact_guild_delivery.h"
@@ -1081,9 +1082,12 @@ static unsigned int artifact_owned_source_error(const artifact_payload_projectio
 	    source.owner_context != source.payload_owner.context_id ||
 	    source.payload_owner.id != static_cast<uint64_t>(source.owner_reference))
 		return refuse(ENODATA, "source_owner_invalid");
-	if (!source.custody_examined || !source.custody_found ||
-	    !source.custody_owner_revision_found)
+	if (!source.custody_examined || !source.custody_found)
 		return refuse(ENODATA, "captured_custody_unavailable");
+	if (found == artifact_rows.end() ||
+	    found->second.identity_state != artifact_identity_state::present ||
+	    found->second.canonical_item_uid != source.item_uid)
+		return refuse(ENODATA, "canonical_identity_unavailable");
 	const auto &custody = source.custody;
 	if (custody.item_uid != source.item_uid)
 		return refuse(ESTALE, "captured_uid_mismatch");
@@ -1093,8 +1097,22 @@ static unsigned int artifact_owned_source_error(const artifact_payload_projectio
 		return refuse(ESTALE, "captured_state_not_active");
 	if (!custody.item_revision)
 		return refuse(ESTALE, "captured_item_revision_missing");
+	if (!item_owner_identity_valid(custody.owner) || !custody.root_item_uid)
+		return refuse(ESTALE, "captured_custody_invalid");
 	if (!item_owner_identity_equal(custody.owner, source.payload_owner))
+	{
+		// A known identity with valid foreign custody is an expected old-holder
+		// copy, not damaged source evidence. Refuse construction but let the
+		// former holder's next save remove it. Unqualified population evidence
+		// still needs preservation until a trustworthy current payload exists.
+		if ((found->second.population_reason == artifact_population_reason::complete ||
+		     !found->second.canonical_payloads.empty() || found->second.live_object) &&
+		    item_claim_owner_is_memory_held(custody.owner.type))
+			return refuse(EXDEV, "saved_copy_owned_elsewhere");
 		return refuse(ESTALE, "captured_owner_mismatch");
+	}
+	if (!source.custody_owner_revision_found)
+		return refuse(ENODATA, "captured_custody_unavailable");
 	if (custody.root_item_uid != source.payload_root_item_uid)
 		return refuse(ESTALE, "captured_root_mismatch");
 	if (custody.parent_item_uid != source.parent_item_uid)
@@ -1106,10 +1124,6 @@ static unsigned int artifact_owned_source_error(const artifact_payload_projectio
 	    (!source.read_writer_sequence ||
 	     source.read_writer_sequence != persistence_writer_read_sequence()))
 		return refuse(EAGAIN, "writer_overlap_requires_fresh_read");
-	if (found == artifact_rows.end() ||
-	    found->second.identity_state != artifact_identity_state::present ||
-	    found->second.canonical_item_uid != source.item_uid)
-		return refuse(ENODATA, "canonical_identity_unavailable");
 	if ((found->second.live_object && found->second.live_object != object) ||
 	    found->second.pending == artifact_pending::creation)
 		return refuse(EEXIST, "physical_copy_exists_or_creation_pending");
