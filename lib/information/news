@@ -6,8 +6,48 @@
 &+W======================================================================&n
 &+WUpdated: November 03, 2026&n
 
-Welcome back! Explore your class, skills and spells with the new guides.
+Welcome back! Five Hardcore lives, clearer routes and easier aura commands.
 Newest first; later updates replace older rules. Longer archive on web.
+
+&+R11/03/26&n &+L-&n &+YFive lives, clearer paths&n
+&+W----------------------------------------------------------------------&n
+
+&+CHardcore gets its five lives&n
+&+Y-&n Hardcore characters survive their first four counted deaths; the fifth
+  permanently deletes the character. Arena deaths do not consume a life.
+  Read &+C'help hardcore'&n for the rules.
+
+&+CShorter aura commands&n
+&+Y-&n Use &+C'innate aura heal'&n for an Improved Healing aura you know.
+  Other aura keywords also accept prefixes; full innate names and
+  &+C'innate aura of <keyword>'&n still work. See &+C'help paladin auras'&n.
+
+&+CFind the entrance, keep the way open&n
+&+Y-&n Clearer surface markers identify the Mt. Skelenak caves, Kimordril,
+  Lylrstas, Meopham, Northern Lakes and Settlements, Gorblaat's Cave
+  and the Valley of Crushk.
+&+Y-&n The Temple of the Sun entrance is now in the EM/GC forest beside
+  the coastal highway, separate from Lylrstas. Meopham again has a
+  north/south entrance alongside its existing up/down route.
+&+Y-&n Elemental Groves progression keys are single-use. Plaques restock
+  into their own pedestals; resets keep progression gates passable
+  when players remain inside or the key source cannot supply a key.
+
+&+CArtifacts, shops and crumbling loot&n
+&+Y-&n Artifact owner tracking and feeding follow the current holder again,
+  including after login. Expiring an offline pet's artifact preserves
+  its other equipment.
+&+Y-&n Shops keep purchases, sales and payments together through restarts.
+  Pending saves preserve other purse changes and do not return sold items.
+&+Y-&n NPCs can organize ordinary loot into their bags again. Crumbling loot
+  no longer breaks item-handling commands; arrows finish their damage
+  and enchantment effects before crumbling.
+
+&+CKeep the reward you earned&n
+&+Y-&n Bartender ASK quests keep the rested or well-rested XP bonus earned
+  at completion when payout is delayed until that bonus wears off.
+  The saved bonus does not stack with a current rest bonus.
+&+Y-&n Newbie chat preserves your wording instead of substituting words.
 
 &+R11/03/26&n &+L-&n &+YPlan your next skill, spell or specialization&n
 &+W----------------------------------------------------------------------&n
