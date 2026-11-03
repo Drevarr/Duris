@@ -1129,6 +1129,9 @@ void recovery_cases(const std::vector<artifact_population_template> &prototypes)
  auto delayed=player; delayed.read_writer_sequence=persistence_writer_read_sequence();
  writer_state.submitted++;
  assert(artifact_player_source_error(delayed)==EAGAIN && !read_object_for_recovery(delayed) && errno==EAGAIN);
+ assert(source_diagnostics.find("reason=writer_overlap_requires_fresh_read outcome=construction_refused")!=std::string::npos);
+ assert(source_diagnostics.find("captured(found=1 uid=4242 vnum=900 state=1 owner=")!=std::string::npos);
+ assert(source_diagnostics.find("cache(bookkeeping_only=1 found=")!=std::string::npos);
  delayed.read_writer_sequence=0;
  assert(artifact_player_source_error(delayed)==EAGAIN);
  delayed.read_writer_sequence=persistence_writer_read_sequence();
@@ -1204,11 +1207,11 @@ void recovery_cases(const std::vector<artifact_population_template> &prototypes)
  auto reply=finish_read();
  assert(reply.item_read_writer_sequence==read_sequence &&
         reply.item_read_writer_sequence!=persistence_writer_read_sequence());
+ const auto diagnostics_before_refresh=source_diagnostics;
  assert(player_load_items_qualify(&reply)==EAGAIN && reply.snapshot.items.size()==1 &&
         reply.snapshot.retained_items.rows.empty() && !reply.item_sources[0].retain);
- assert(source_diagnostics.find("reason=writer_overlap_requires_fresh_read outcome=fresh_read_required")!=std::string::npos);
- assert(source_diagnostics.find("captured(found=1 uid=4242 vnum=900 state=1 owner=")!=std::string::npos);
- assert(source_diagnostics.find("cache(bookkeeping_only=1 found=")!=std::string::npos);
+ // Whole-load refresh happens before any source is qualified or retained.
+ assert(source_diagnostics==diagnostics_before_refresh);
  // A fresh recipient read follows the ordinary admission/construction path.
  cut.pid=88; cut.item_identities[0].owner.id=88;
  cut.item_sources[0].custody.owner.id=88;
