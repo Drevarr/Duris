@@ -5,10 +5,10 @@ Worktree: `/home/aiwithapex/projects/duris-issue-583-memory-authority-plan`.
 Current branch: `branch/issue-583-final-qualification`,
 [PR #604](https://github.com/LuminariMUD/Duris/pull/604).
 
-**Status:** implementation through `98bd39f2d` is committed and pushed.
-Implementation remains paused; this update reviews and simplifies the plan only.
-The remaining implementation task is the final acceptance review and any concrete
-findings it exposes. No merge, release, deployment or production repair is included.
+**Status:** sequential PR review and integration are in progress. Focused native
+regressions and both server builds pass; serving acceptance is being repeated on
+the integrated source. Review fixes are included before their introducing PRs
+merge. No release, deployment or production repair is included.
 
 ## Outcome and limits
 
