@@ -5072,7 +5072,7 @@
       "source": "areas/obj/thechasmofthemistyvale.obj",
       "line": 531,
       "name": "the wailing face of a pygmie banshee",
-      "keywords": "face banshee pygmie",
+      "keywords": "face banshee pygmie unique",
       "type": 11,
       "extraFlags": 268435456,
       "wearFlags": 262145,
