@@ -78,8 +78,9 @@ ready for review; do not merge or tag a release as part of this task.
    logical PC-corpse roots, metadata preservation, duplicate controls and rollback.
    `python3 tests/async/test_world_recovery_pipeline.py` and `make -C src -j4`
    passed. Updated the persistence guide and ADR's obsolete capture description.
-6. **Artifact source admission:** implemented on
-   `branch/issue-583-artifact-admission`, stacked on #593. The shared qualifier and
+6. **Artifact source admission:** review-ready in
+   [PR #594](https://github.com/LuminariMUD/Duris/pull/594), stacked on #593.
+   The shared qualifier and
    constructor no longer compare the optional ownership cache. Canonical UID,
    active captured custody, source owner/topology, retirement, competing body and
    pending creation checks remain. Async and synchronous pipeline reads capture
@@ -96,11 +97,36 @@ ready for review; do not merge or tag a release as part of this task.
    does not replace the required backend or serving-MUD journeys.
    `test_artifact_creation_admission.py` (ASan/UBSan),
    `test_player_load_pipeline.py`, and `make -C src -j4` passed.
-7. **Remaining:**
+7. **Refusal diagnostics:** implemented on `branch/issue-583-artifact-diagnostics`,
+   stacked on #594. Qualification and construction share specific reasons for
+   source, captured-custody, canonical identity and writer-overlap refusals.
+   Restricted artifact logs include source/captured/cache fields and read/current
+   writer tokens; the staff alert remains bounded. `artifact hunt` shows paired
+   saved-source and optional cache rows, labels the cache as bookkeeping, and
+   keeps the first-16 display limit while logging all candidates. The inspection
+   does not construct, repair or mutate objects or cache entries.
+   `test_artifact_hunt_inspection.py`, `test_artifact_creation_admission.py`
+   (ASan/UBSan), `test_player_load_items.py`, and `make -C src -j4` passed.
+8. **Remaining:**
    old-holder source cleanup versus damaged-component retention; generic repair
    revision publication;
-   pet/NORENT compatibility review; specific refusal diagnostics and existing
-   inspection; backend and end-to-end acceptance journeys listed below.
+   pet/NORENT compatibility review; backend and end-to-end acceptance journeys
+   listed below.
+
+### Existing staff recovery path
+
+Use `artifact hunt <initial>` for read-only saved-source inspection, then the
+matching `artifact_identity/source` record in the artifact log. Source, captured
+custody and optional cache values are distinct; a cache disagreement alone no
+longer prevents admission. `writer_overlap_requires_fresh_read` requires a fresh
+ordinary login/offline load after writes settle and creates no retained row.
+For a genuine identity, source or topology defect, preserve the retained source,
+correct the owning data through its authorized workflow, then load afresh through
+the same qualifier and recovery factory. Existing retained sources are re-read
+on a fresh login; there is no unconditional release or forced second body.
+`physical_copy_exists_or_creation_pending` requires resolving that actual live
+reservation, followed by a fresh read. This task does not authorize production
+data correction or deployment.
 
 Validation for chunk 1: `make -C src -j4` passed (MariaDB development build;
 `bin/tests/memory-authority-583/build-live-owner.log`). Focused sanitizer and
