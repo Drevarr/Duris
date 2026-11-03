@@ -108,8 +108,9 @@ ready for review; do not merge or tag a release as part of this task.
    does not construct, repair or mutate objects or cache entries.
    `test_artifact_hunt_inspection.py`, `test_artifact_creation_admission.py`
    (ASan/UBSan), `test_player_load_items.py`, and `make -C src -j4` passed.
-8. **Old-holder source cleanup:** implemented on
-   `branch/issue-583-stale-source-retention`, stacked on #595. The shared service
+8. **Old-holder source cleanup:** review-ready in
+   [PR #596](https://github.com/LuminariMUD/Duris/pull/596), stacked on #595.
+   The shared service
    returns `EXDEV` for a known canonical UID with valid active custody belonging
    to another memory-held owner and qualified population/live evidence. It still
    refuses construction, but qualification omits the obsolete saved copy instead
@@ -122,9 +123,20 @@ ready for review; do not merge or tag a release as part of this task.
    identity, missing trustworthy payload proof and damaged custody.
    `test_artifact_creation_admission.py`, `test_player_load_items.py`, and
    `make -C src -j4` passed.
-9. **Remaining:** generic repair revision publication;
-   pet/NORENT compatibility review; backend and end-to-end acceptance journeys
-   listed below.
+9. **Generic revision audit:** implemented on `branch/issue-583-transfer-revisions`,
+   stacked on #596. The only remaining caller is the creation-grant runtime,
+   including adopted-object operator repair. Fresh creation has exact revision 1;
+   a one-item result's maximum is exact. A memory-held multi-item repair has no
+   exact per-item results, so its cache revisions now become explicitly unknown
+   (zero), preserving owner, topology, state and owner revision. Strict durable
+   sources still increment their checked per-item revisions. No result codec,
+   catalog format, migration or new revision scheme is needed. Shops supply
+   exact arrays through #591. Runtime tests cover unknown batch revisions and
+   both matching/misleading single-item cache entries with committed revision 9.
+   `test_item_ownership_runtime.py`, `test_shop_trade_transaction.py`,
+   `test_item_movement_input_queue.py`, and `make -C src -j4` passed.
+10. **Remaining:** pet/NORENT compatibility review; backend and end-to-end
+    acceptance journeys listed below.
 
 ### Existing staff recovery path
 
