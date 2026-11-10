@@ -159,7 +159,7 @@ bool parse_spellbook(const std::string &json, char *spell_bits = nullptr)
 	return position == json.size();
 }
 
-// Captured/flatfile snapshots store typed spell IDs; SQL rows store JSON.
+// Captured snapshots store typed spell IDs; SQL rows store JSON.
 // Both representations feed the same validation and materialization path.
 // When spell_bits is non-null, callers must provide a zero-initialized buffer
 // of (MAX_SKILLS + 1) / 8 + 1 bytes because this helper ORs the selected bits
@@ -222,6 +222,7 @@ metadata_validation_outcome valid_item_metadata(const player_item_snapshot &item
 			return metadata_validation_outcome::invalid;
 	std::unordered_set<std::string> descriptions;
 	bool trap_state_seen = false;
+	bool named_origin_seen = false;
 	try
 	{
 		descriptions.reserve(item.extra_descriptions.size());
@@ -232,6 +233,16 @@ metadata_validation_outcome valid_item_metadata(const player_item_snapshot &item
 			    description.description.size() > PLAYER_SNAPSHOT_MAX_STRING_BYTES)
 				return metadata_validation_outcome::invalid;
 			int16_t effect = 0, damage = 0, charges = 0, level = 0;
+			int zone = 0;
+			const auto origin = sql_decode_named_set_origin(
+				description.keyword, description.description, &zone);
+			if (origin == sql_named_set_origin_decode_status::invalid ||
+			    (origin == sql_named_set_origin_decode_status::decoded &&
+			     (named_origin_seen || description.spellbook ||
+			      !description.spell_ids.empty())))
+				return metadata_validation_outcome::invalid;
+			named_origin_seen = named_origin_seen ||
+					    origin == sql_named_set_origin_decode_status::decoded;
 			const auto trap = sql_decode_item_trap_state(
 				description.keyword.c_str(), description.description.c_str(),
 				&effect, &damage, &charges, &level);
@@ -700,12 +711,20 @@ bool materialize_item_graph(P_char character, std::vector<P_obj> *detached_roots
 		else
 			object->timer[0] = static_cast<time_t>(item.timers[0]);
 		object->extra_flags = item.extra_flags;
+		if (complete_snapshot_state ||
+		    (identity.override_mask & PLAYER_LOAD_ITEM_OVERRIDE_ANTI_FLAGS))
+			object->anti_flags = item.anti_flags;
+		if (complete_snapshot_state ||
+		    (identity.override_mask & PLAYER_LOAD_ITEM_OVERRIDE_ANTI2_FLAGS))
+			object->anti2_flags = item.anti2_flags;
+		if (complete_snapshot_state ||
+		    (identity.override_mask & PLAYER_LOAD_ITEM_OVERRIDE_EXTRA2_FLAGS))
+			object->extra2_flags = item.extra2_flags;
+		if (complete_snapshot_state ||
+		    (identity.override_mask & PLAYER_LOAD_ITEM_OVERRIDE_CRAFTSMANSHIP))
+			object->craftsmanship = item.craftsmanship;
 		if (complete_snapshot_state)
 		{
-			object->anti_flags = item.anti_flags;
-			object->anti2_flags = item.anti2_flags;
-			object->extra2_flags = item.extra2_flags;
-			object->craftsmanship = item.craftsmanship;
 			for (auto affect = item.dynamic_affects.rbegin();
 			     affect != item.dynamic_affects.rend(); ++affect)
 			{

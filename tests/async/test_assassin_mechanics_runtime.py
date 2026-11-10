@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""Run complete Awareness/backstab functions with real affect list operations.
+"""Run complete Awareness/Circle/backstab functions with real affect operations.
 
 Damage delivery, unrelated combat guards and stat recalculation are fixtures.
 The checked-in properties, stat indexing, RNG boundaries, both weapon slots and
-the recent-stab timer are exercised under ASan/UBSan.
+the recent-stab timer and failed-Circle sequence are exercised under ASan/UBSan.
 """
 
 from pathlib import Path
@@ -13,11 +13,14 @@ import subprocess
 import tempfile
 
 from _paths import ROOT, HARNESS_STUBS, extract_function
+from _innate_numbers import with_innate_numbers
 
 
 PRELUDE = r'''
 #include "core/prototypes.h"
+#include "item/named_set_effects.h"
 #include "core/utils.h"
+#include "net/gmcp.h"
 #include "core/mm.h"
 #include "magic/spells.h"
 #include "world/events.h"
@@ -35,8 +38,10 @@ PRELUDE = r'''
 #include <vector>
 
 static char_data attacker{}, defender{};
-static int trained, stab_skill, critical_skill, fallback_hits, training_calls;
+static int trained, stab_skill, critical_skill, fallback_hits, training_calls, circle_skill;
+static int circle_links, circle_engagements, action_lag;
 static bool upper_roll, kill_on_hit, leave_on_hit;
+static std::string attacker_messages;
 static std::vector<int> delivered_damage;
 static mm_ds pool{};
 mm_ds *dead_affect_pool = &pool;
@@ -52,11 +57,21 @@ int GET_CHAR_SKILL_P(P_char ch, int skill) {
     if (skill == SKILL_AWARENESS) return ch == &defender ? trained : 0;
     if (skill == SKILL_BACKSTAB) return ch == &attacker ? stab_skill : 0;
     if (skill == SKILL_CRITICAL_STAB) return ch == &attacker ? critical_skill : 0;
+    if (skill == SKILL_CIRCLE) return ch == &attacker ? circle_skill : 0;
     return 0;
 }
 int GET_CLASS(P_char ch, uint cls) { return (ch->player.m_class & cls) != 0; }
 bool notch_skill(P_char, int, float) { ++training_calls; return false; }
-void CharWait(P_char, int) {}
+void CharWait(P_char ch, int lag) { assert(ch == &attacker || ch == &defender); action_lag = lag; }
+void send_to_char(const char *message, P_char ch) {
+    if (ch == &attacker) attacker_messages += message;
+}
+void act(const char *message, int, P_char ch, P_obj, void *, int audience) {
+    if (ch == &attacker && audience == TO_CHAR) attacker_messages += message;
+}
+void engage(P_char ch, P_char victim) { ++circle_engagements; ch->specials.fighting = victim; }
+char_link_data *link_char(P_char, P_char, ush_int) { ++circle_links; return nullptr; }
+void event_uncircle(P_char, P_char, P_obj, void *) {}
 void balance_affects(P_char) {}
 void gmcp_char_affects(P_char) {}
 int char_light(P_char) { return 0; }
@@ -120,6 +135,7 @@ def production():
     int get_property(const char *key, int fallback) {
         return static_cast<int>(get_property(key, static_cast<double>(fallback)));
     }\n'''
+    code += extract_function("utility.c", "int dice(int num, int size)") + '\n#include "abilities/abilities.h"\nconst Rolls live_rolls = { dice, number };\n'
     code += "\n".join(extract_function(file, signature) for file, signature in [
         ("utility.c", "int STAT_INDEX(int v)\n{\n\t"),
         ("affects.c", "bool affected_by_spell("),
@@ -128,7 +144,28 @@ def production():
         ("affects.c", "void affect_remove("),
         ("affects.c", "void affect_from_char("),
         ("affects.c", "void set_short_affected_by("),
+        ("new_skills.c", "static int awareness_max_duration("),
+        ("new_skills.c", "static int awareness_rolled_duration("),
         ("new_skills.c", "void do_awareness("),
+        ("actoff.c", "static int backstab_skill("),
+        ("actoff.c", "static int circle_rest("),
+        ("actoff.c", "static int circle_lag("),
+        ("actoff.c", "static int circle_threshold("),
+        ("actoff.c", "static int circle_duration("),
+        ("actoff.c", "bool circle(P_char ch, P_char victim)"),
+        ("actoff.c", "static int backstab_luck_bonus("),
+        ("actoff.c", "static int backstab_damage("),
+        ("actoff.c", "static int backstab_noticed_damage("),
+        ("actoff.c", "static int backstab_helpless_damage("),
+        ("actoff.c", "static int backstab_incapacitated_damage("),
+        ("actoff.c", "static int backstab_repeat_window("),
+        ("actoff.c", "static int backstab_lag("),
+        ("actoff.c", "static int backstab_air_aura_roll("),
+        ("actoff.c", "static int backstab_air_aura_below("),
+        ("actoff.c", "static float critical_stab_threshold("),
+        ("actoff.c", "static float spinal_tap_threshold("),
+        ("actoff.c", "static int critical_stab_damage("),
+        ("actoff.c", "static int spinal_tap_damage("),
         ("actoff.c", "bool single_stab("),
         ("actoff.c", "bool backstab(P_char ch, P_char victim)"),
     ])
@@ -152,8 +189,13 @@ static void reset() {
     attacker.points.damroll = 100;
     trained = 80; stab_skill = 100; critical_skill = 0;
     upper_roll = kill_on_hit = leave_on_hit = false;
+    circle_skill = 1;
+    circle_links = circle_engagements = action_lag = 0;
+    attacker_messages.clear();
     fallback_hits = training_calls = 0;
     delivered_damage.clear();
+    rooms[1].people = &attacker;
+    attacker.next_in_room = &defender;
 }
 static void add_affect(int type, unsigned long bits = 0) {
     affected_type af{}; af.type = type; af.bitvector = bits;
@@ -263,8 +305,59 @@ static void callers() {
     reset(); attacker.equipment[WIELD] = &first; leave_on_hit = true;
     assert(backstab(&attacker, &defender)); assert(delivered_damage.size() == 1);
 }
+static void circle_then_stab() {
+    // Use an NPC: ordinary NPC backstabs do not set the PC-only repeat tag.
+    for (int aware = 0; aware < 4; ++aware) {
+        for (bool critical : {false, true}) {
+            int baseline = 0;
+            for (bool attempt : {false, true}) {
+                reset(); defender.specials.act |= ACT_ISNPC;
+                if (aware & 1) add_affect(SKILL_AWARENESS, AFF_AWARE);
+                if (aware & 2) add_affect(SKILL_AWARENESS, AFF_SKILL_AWARE);
+                critical_skill = critical ? 100 : 0;
+                auto first = weapon(), second = weapon();
+                attacker.equipment[WIELD] = &first;
+                attacker.equipment[SECONDARY_WEAPON] = &second;
+                auto *affects_before = defender.affected;
+                const auto flags_before = defender.specials.affected_by;
+                const auto position_before = defender.specials.position;
+                if (attempt) {
+                    upper_roll = true;
+                    assert(!circle(&attacker, &defender));
+                    upper_roll = false;
+                    assert(attacker_messages.find("fail to maneuver behind") != std::string::npos);
+                    assert(action_lag == circle_lag());
+                    assert(affected_by_spell(&attacker, SKILL_CIRCLE));
+                    assert(defender.affected == affects_before);
+                    assert(defender.specials.affected_by == flags_before);
+                    assert(defender.specials.position == position_before);
+                    assert(!attacker.specials.fighting && !defender.specials.fighting);
+                    assert(!circle_links && !circle_engagements);
+                    assert(!affected_by_spell(&defender, SKILL_CIRCLE));
+                    assert(!affected_by_spell(&defender, SKILL_BACKSTAB));
+                }
+                attacker_messages.clear();
+                assert(backstab(&attacker, &defender));
+                assert(delivered_damage.size() == 2);
+                assert(delivered_damage[0] == delivered_damage[1]);
+                assert((attacker_messages.find("unable to take full advantage") != std::string::npos) ==
+                       (aware != 0 && !critical));
+                assert(!affected_by_spell(&defender, SKILL_BACKSTAB));
+                if (!attempt) baseline = delivered_damage[0];
+                else assert(delivered_damage[0] == baseline);
+                printf("NPC aware=%d critical=%d failed-circle=%d damage=%d/%d\n",
+                       aware, critical, attempt, delivered_damage[0], delivered_damage[1]);
+            }
+        }
+    }
+    // A successful circle reaches engagement/linking, unlike the failed path.
+    reset(); defender.specials.act |= ACT_ISNPC; circle_skill = 100;
+    assert(circle(&attacker, &defender));
+    assert(circle_links == 1 && circle_engagements == 1);
+    assert(!defender.affected && !IS_AFFECTED(&defender, AFF_AWARE | AFF_SKILL_AWARE));
+}
 int main() {
-    awareness(); mitigation(); callers(); reset();
+    awareness(); mitigation(); callers(); circle_then_stab(); reset();
     puts("Assassin Awareness/backstab native regressions passed");
 }
 '''
@@ -275,7 +368,7 @@ def main():
     build.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix="assassin-mechanics-", dir=build) as directory:
         cpp, binary = Path(directory) / "harness.cpp", Path(directory) / "harness"
-        cpp.write_text(PRELUDE + production() + DRIVER)
+        cpp.write_text(with_innate_numbers(PRELUDE + production() + DRIVER))
         subprocess.run([
             "g++", "-std=c++20", "-g", "-Wall", "-Wextra", "-Werror",
             "-Wno-unused-parameter", "-ftrivial-auto-var-init=pattern",

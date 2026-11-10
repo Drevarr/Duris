@@ -17,7 +17,7 @@ import tempfile
 import time
 from pathlib import Path
 
-import test_flatfile_combat_journey as journey
+import test_mariadb_combat_journey as journey
 from run_divine_refusal_journey import drain
 from run_item_pilot_journey import Server
 
@@ -118,7 +118,7 @@ def run(binary: Path, baseline: bool) -> dict:
             server.client = staff
             journey.create_character(staff)
             staff.send("save")
-            staff.expect("Save complete for Taverek.")
+            staff.expect("Saving Taverek.")
             staff.send("quit")
             staff.expect("ACCOUNT MENU")
             server.stop()
@@ -307,7 +307,7 @@ def run(binary: Path, baseline: bool) -> dict:
             after_decay = hp(staff, "Matealpha")[0]
             assert cap < after_decay < before_decay <= cap + 500
             fighter.send("save")
-            fighter.expect("Save complete for Matealpha.", timeout=30)
+            fighter.expect("Saving Matealpha.", timeout=30)
             fighter.send("quit")
             fighter.expect("ACCOUNT MENU", timeout=30)
             for client in clients:
@@ -347,11 +347,6 @@ if __name__ == "__main__":
     parser.add_argument("--baseline", action="store_true")
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
-    if not journey.INSPECTOR.is_file():
-        journey.INSPECTOR.parent.mkdir(parents=True, exist_ok=True)
-        subprocess.run(["python3", "tests/async/test_flatfile_player_repository.py",
-                        "--build-inspector", str(journey.INSPECTOR)],
-                       cwd=ROOT, check=True, timeout=180)
     result = run(args.binary.resolve(), args.baseline)
     args.output.write_text(json.dumps(result, indent=2) + "\n")
     print(json.dumps(result, indent=2))

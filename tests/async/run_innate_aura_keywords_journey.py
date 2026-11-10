@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Qualify "innate aura <keyword>" and the aura help through a disposable real server.
 
-Run once per backend. MariaDB needs TEST_DB_HOST/USER/PASSWORD for a disposable
+MariaDB needs TEST_DB_HOST/USER/PASSWORD for a disposable
 loopback database; its fixture imports the maintained help sources.
 """
 from __future__ import annotations
@@ -13,7 +13,7 @@ import subprocess
 import tempfile
 from pathlib import Path
 
-import test_flatfile_combat_journey as journey
+import test_mariadb_combat_journey as journey
 from test_flight_network_journey import authority
 from run_paladin_balance_journey import command, configure
 from run_item_pilot_journey import Server
@@ -38,11 +38,7 @@ def run(binary, backend):
         binary = root / 'bin/server/dms'
         (root / 'help').symlink_to(ROOT / 'help', target_is_directory=True)
         with authority(backend, root) as (env, sql):
-            state = Path(env.get('FLATFILE_STATE_DIR', root / 'unused-state'))
-            if not sql:
-                (state / 'domains').mkdir(mode=0o700)
-                subprocess.run([str(journey.INSPECTOR), str(state), 'seed-combat'], check=True)
-            server = Server(binary, root, state, 'aura', env)
+            server = Server(binary, root, None, 'aura', env)
             clients = []
             try:
                 server.start()
@@ -50,21 +46,18 @@ def run(binary, backend):
                 clients.append(staff)
                 journey.create_character(staff)
                 staff.send('save')
-                staff.expect('Save complete for ' + journey.CHARACTER + '.', timeout=60)
+                staff.expect('Saving ' + journey.CHARACTER + '.', timeout=60)
                 player = journey.MudClient(server.port, source_host='127.0.0.2')
                 clients.append(player)
                 journey.create_character(player, account=PLAYER, character=PLAYER,
                                          email='aura@example.invalid')
                 player.send('save')
-                player.expect('Save complete for ' + PLAYER + '.', timeout=60)
+                player.expect('Saving ' + PLAYER + '.', timeout=60)
                 for client in clients:
                     client.close()
                 clients.clear()
                 server.stop()
-                if sql:
-                    sql(f"UPDATE player_data SET level=62,highest_level=62 WHERE name='{journey.CHARACTER}'")
-                else:
-                    journey.make_overlord(state, journey.CHARACTER)
+                sql(f"UPDATE player_data SET level=62,highest_level=62 WHERE name='{journey.CHARACTER}'")
                 server.start()
                 staff = server.client = journey.reconnect_character(server.port)
                 player = journey.reconnect_character(server.port, account=PLAYER, character=PLAYER,
@@ -133,10 +126,6 @@ def run(binary, backend):
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--binary', type=Path, required=True)
-    parser.add_argument('--backend', choices=('flatfile', 'mariadb'), required=True)
+    parser.add_argument('--backend', choices=("mariadb",), required=True)
     args = parser.parse_args()
-    if not journey.INSPECTOR.is_file():
-        journey.INSPECTOR.parent.mkdir(parents=True, exist_ok=True)
-        subprocess.run(['python3', 'tests/async/test_flatfile_player_repository.py',
-                        '--build-inspector', str(journey.INSPECTOR)], cwd=ROOT, check=True, timeout=180)
     run(args.binary.resolve(), args.backend)

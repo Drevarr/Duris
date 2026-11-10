@@ -1,10 +1,5 @@
 #include "core/defines.h"
-#include "flatfile/flatfile_artifact_repository.h"
-#include "flatfile/flatfile_item_repository.h"
 #include <openssl/sha.h>
-#include "flatfile/flatfile_locker_repository.h"
-#include "flatfile/flatfile_world_item_repository.h"
-#include "flatfile/flatfile_shop_trade_materialization.h"
 #include "player/player_snapshot_codec.h"
 #include "world/world_recovery_pipeline.h"
 
@@ -175,6 +170,7 @@ static item_transfer_result transfer_result_of(const critical_apply_result &appl
 static std::vector<player_item_snapshot> movement_items()
 {
 	player_item_snapshot root = {};
+	root.extra_descriptions.push_back({ "DURIS_NAMED_SET_ORIGIN_V1", "808", false, {} });
 	root.parent_index = PLAYER_SNAPSHOT_NO_PARENT;
 	root.equipment_slot = -1;
 	root.object_uid = 100;
@@ -581,6 +577,8 @@ int main(int argc, char **argv)
 				missing_destination.items[0].object_uid == 100 &&
 				missing_destination.items[0].short_description ==
 					"an exact given container" &&
+				missing_destination.items[0].extra_descriptions[0].description ==
+					"808" &&
 				missing_destination.items[1].parent_index == 0,
 			"restart reconciliation did not reconstruct the exact destination transfer: " +
 				error);
@@ -947,6 +945,26 @@ int main(int argc, char **argv)
 			owner_revision == 3 && items.size() == 2 && items[0].item_uid == 100 &&
 			items[1].item_uid == 201,
 		"shop trades did not preserve exact shop custody");
+
+	// An exact uncommitted grant survives unrelated system-owner revision advances.
+	const auto replay_root = root / "creation-replay";
+	fs::create_directories(replay_root / "domains");
+	fs::permissions(replay_root, fs::perms::owner_all, fs::perm_options::replace);
+	fs::permissions(replay_root / "domains", fs::perms::owner_all, fs::perm_options::replace);
+	const auto bound = single_creation(240, 990001, 42, 0);
+	const auto unrelated = single_creation(241, 990002, 43, 0);
+	require(flatfile_item_repository_apply(replay_root.string(), unrelated).outcome ==
+				critical_apply_outcome::applied &&
+			flatfile_item_repository_apply(replay_root.string(), bound).outcome ==
+				critical_apply_outcome::applied &&
+			flatfile_item_repository_apply(replay_root.string(), bound).outcome ==
+				critical_apply_outcome::already_applied,
+		"unrelated creation invalidated the bound operation or its replay");
+	const auto collision = flatfile_item_repository_apply(replay_root.string(),
+							      single_creation(242, 990001, 44, 0));
+	require(collision.outcome == critical_apply_outcome::terminal_failure &&
+			collision.error_code == EEXIST,
+		"relaxed system revision must retain UID collision protection");
 
 	const fs::path authority = domains / "item_ownership";
 	{

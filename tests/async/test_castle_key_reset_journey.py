@@ -1,23 +1,22 @@
 #!/usr/bin/env python3
-"""Castle keys, mode-1 resets and seven mortal escape routes on private flat files.
+"""Castle keys, mode-1 resets and seven mortal escape routes on a disposable MariaDB schema.
 
 The authored room graph, key prototypes and selected reset rows are used directly.
 Only the timer lifespan (one tick), NPC aggression/wandering and unrelated spawns
 are controlled. No .env, shared server or existing player state is accessed.
 """
+import argparse
 from collections import deque
 import hashlib
 import json
-import os
 from pathlib import Path
 import re
 import signal
 import subprocess
-import sys
 import tempfile
 import time
 
-import test_flatfile_combat_journey as base
+import test_mariadb_combat_journey as base
 from test_castle_key_reset import GATES, REVERSE, castle_data, records
 from test_flight_network_journey import command
 
@@ -84,23 +83,16 @@ def run(binary):
               "routes": [], "key_sequences": []}
     evidence = ROOT / "bin/qualification/issue418"
     evidence.mkdir(parents=True, exist_ok=True)
-    with tempfile.TemporaryDirectory(prefix="castle-journey-", dir=ROOT / "bin/tests") as temp:
+    with tempfile.TemporaryDirectory(prefix="castle-journey-", dir=ROOT / "bin/tests") as temp, \
+            base.mariadb_authority() as (env, sql):
         runtime = Path(temp)
         exits = configure(runtime)
         base.generate_certificate(runtime)
         (runtime / "logs/log").mkdir(parents=True)
         (runtime / "journals/critical").mkdir(parents=True, mode=0o700)
-        state = runtime / "state"
-        state.mkdir(mode=0o700)
         plain, tls, ws = base.available_ports()
-        env = dict(PATH=os.environ.get("PATH", "/usr/bin:/bin"), ENVIRONMENT="local",
-                   PERSISTENCE_MODE="flatfile-primary", FLATFILE_STATE_DIR=str(state),
-                   CRITICAL_COMMAND_JOURNAL_DIR=str(runtime / "journals/critical"),
-                   LISTEN_ADDRESS="127.0.0.1", DURIS_TLS_PORT=str(tls),
-                   DURIS_WEBSOCKET_LISTEN_ADDRESS="127.0.0.1", DURIS_WEBSOCKET_PORT=str(ws),
-                   REDIS="FALSE", CHAOS_MUD="FALSE", DURIS_ZONE_RESET_TRACE="1")
-        if "LD_LIBRARY_PATH" in os.environ:
-            env["LD_LIBRARY_PATH"] = os.environ["LD_LIBRARY_PATH"]
+        env.update(CRITICAL_COMMAND_JOURNAL_DIR=str(runtime / "journals/critical"),
+                   DURIS_TLS_PORT=str(tls), DURIS_WEBSOCKET_PORT=str(ws), DURIS_ZONE_RESET_TRACE="1")
         output_path = runtime / "server.out"
         clients, transcripts = {}, []
         process = None
@@ -147,7 +139,7 @@ def run(binary):
 
             def save_player():
                 clients[PLAYERS[0]].send("save")
-                clients[PLAYERS[0]].expect(f"Save complete for {PLAYERS[0]}.", timeout=30)
+                clients[PLAYERS[0]].expect(f"Saving {PLAYERS[0]}.", timeout=30)
                 command(clients[PLAYERS[0]], "look")
 
             def object_state(key):
@@ -229,10 +221,10 @@ def run(binary):
                     base.create_character(client, account=account(name), character=name,
                                           email=name.lower() + "@example.invalid")
                     client.send("save")
-                    client.expect(f"Save complete for {name}.", timeout=30)
+                    client.expect(f"Saving {name}.", timeout=30)
                     print(f"castle journey: created {name}", flush=True)
                 stop()
-                base.make_overlord(state, STAFF)
+                base.make_overlord(sql, STAFF)
                 boot()
                 for name in PLAYERS + (STAFF,):
                     login(name)
@@ -338,9 +330,7 @@ def run(binary):
 
 
 if __name__ == "__main__":
-    build_root = ROOT / "bin/tests"
-    build_root.mkdir(parents=True, exist_ok=True)
-    with tempfile.TemporaryDirectory(prefix="castle-build-", dir=build_root) as temp:
-        build = Path(temp)
-        binary = Path(sys.argv[1]).resolve() if len(sys.argv) > 1 else base.build_flatfile_server(build)
-        run(binary)
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--server", type=Path, required=True)
+    (ROOT / "bin/tests").mkdir(parents=True, exist_ok=True)
+    run(parser.parse_args().server.resolve())

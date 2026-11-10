@@ -50,7 +50,6 @@
 #include "core/mm.h"
 #include "classes/necromancy.h"
 #include "persistence/persistence_checkpoint.h"
-#include "persistence/persistence_mode.h"
 #include "world/world_recovery_pipeline.h"
 #include "ships/ships.h"
 #include "magic/spells.h"
@@ -59,8 +58,10 @@
 #include "world/weather.h"
 #include "net/ws_handlers.h"
 #include "core/safe_format.h"
+#include <unordered_set>
 #include <algorithm>
 #include <array>
+#include "abilities/abilities.h"
 #include <cerrno>
 #include <climits>
 #include <cstdint>
@@ -76,6 +77,8 @@ extern P_char character_list;
 extern P_char combat_list;
 extern P_char dead_guys;
 extern P_desc descriptor_list;
+
+static std::unordered_set<P_obj> live_objects;
 
 /* Game-thread invalidation for post-movement liveness checks. */
 uint64_t character_removal_generation = 0;
@@ -369,6 +372,110 @@ void generic_char_event(P_char /*ch*/, P_char /*victim*/, P_obj /*obj*/, void * 
 
 void event_sundamage(P_char ch, P_char victim, P_obj obj, void *data);
 
+// Enemy hometown guards ignore innate Calming; other locations retain it.
+bool innate_calming_active(P_char ch)
+{
+	if (!has_innate(ch, INNATE_CALMING) || ch->in_room == NOWHERE)
+		return false;
+	const int town = CHAR_IN_TOWN(ch);
+	if (!town)
+		return true;
+	return !((IS_RACEWAR_EVIL(ch) && IS_SET(hometowns[town - 1].flags, JUSTICE_GOODHOME)) ||
+		 (IS_RACEWAR_GOOD(ch) && IS_SET(hometowns[town - 1].flags, JUSTICE_EVILHOME)));
+}
+
+// Innate calming's numbers. An aggressive mob waits longer before it attacks unless it is
+// too far above its target, and even then on this roll coming up 0.
+int calming_delay()
+{
+	return (int)get_property("innate.calming.delay", 10);
+}
+
+int calming_level_gap()
+{
+	return 5;
+}
+
+int calming_gap_roll(const Rolls &rolls)
+{
+	return rolls.number(0, 3);
+}
+
+// A mob picking a target passes over a calming one on a 0-101 roll at or below this.
+int calming_notarget_percent()
+{
+	return get_property("innate.calming.notarget.perc", 75);
+}
+
+int calming_notarget_roll(const Rolls &rolls)
+{
+	return rolls.number(0, 101);
+}
+
+// A command only draws an aggression check when this roll comes up 0.
+int calming_command_roll(const Rolls &rolls)
+{
+	return rolls.number(0, 19);
+}
+
+// What calming adds to the charisma chance that an aggressive mob leaves you be.
+int calming_chance_bonus()
+{
+	return 10;
+}
+
+// A foe switching to you is hindered on a 0-120 roll at or below this.
+int calming_switch_threshold(int level)
+{
+	return level * 2;
+}
+
+int calming_switch_penalty(int rating)
+{
+	return (110 - rating);
+}
+
+std::string calming_innate_facts(P_char ch)
+{
+	const int calm = CALMCHANCE(ch) + calming_chance_bonus();
+	return fact("Extra wait before an aggressive mob attacks", seconds(calming_delay())) +
+	       "  Innate Calming is disabled in enemy hometowns.\n"
+	       "  Elites ignore the extra wait. A mob over " +
+	       std::to_string(calming_level_gap()) +
+	       " levels above you waits\n"
+	       "  only " +
+	       one_in(calming_gap_roll) + " times.\n" +
+	       fact("Chance a mob picking a target passes you over",
+		    chance_under(calming_notarget_percent() + 1,
+				 calming_notarget_roll(lowest_rolls),
+				 calming_notarget_roll(highest_rolls))) +
+	       fact("Your commands that draw an aggression check", one_in(calming_command_roll)) +
+	       fact("Chance an aggressive mob then leaves you be", chance_under(calm + 1, 1, 100)) +
+	       "  That chance is +" + std::to_string(calming_chance_bonus()) +
+	       " on what your charisma gives.\n" +
+	       fact("Chance a foe switching to you is hindered",
+		    chance_under(calming_switch_threshold(GET_LEVEL(ch)) + 1, 0, 120)) +
+	       "  It costs that foe " + std::to_string(calming_switch_penalty(0)) +
+	       " minus its switch rating.\n";
+}
+
+// What a burn in the sun takes from a vulnerable player.
+static int vuln_sun_damage(const Rolls &rolls)
+{
+	return rolls.number(5, 20);
+}
+
+std::string vuln_sun_innate_facts(P_char /*ch*/)
+{
+	return fact("Burn in direct sun",
+		    show({ vuln_sun_damage(lowest_rolls), vuln_sun_damage(highest_rolls) }) +
+			    " hit points every " + seconds(GENERIC_CHAR_EVENT_PERIOD)) +
+	       "  It never takes you below 1, and spares you at twilight, in a swamp or\n"
+	       "  forest, on Bloodlust day and under a globe of darkness.\n"
+	       "  In direct sun, outside a globe, you regain no mana, and no hit points\n"
+	       "  unless the room is magically dark.\n";
+}
+
 void sun_damage_check(P_char ch)
 {
 	if (IS_NPC(ch) || IS_TRUSTED(ch))
@@ -415,7 +522,7 @@ void sun_damage_check(P_char ch)
 		break;
 	}
 
-	int dam = number(5, 20);
+	int dam = vuln_sun_damage(live_rolls);
 	GET_HIT(ch) = MAX(1, GET_HIT(ch) - dam);
 
 	//  if( !get_scheduled(ch, event_sundamage) )
@@ -1087,51 +1194,39 @@ bool isname( const char *match, const char *namelist )
 
 bool isname(const char *str, const char *namelist)
 {
-	int i = 0, j = 0, k = 0, k2 = 0;
-	char tstr[MAX_STRING_LENGTH];
-
 	if (!str || !namelist)
 		return FALSE;
 
-	// eat leading spaces in str
-	while (*(str + k) == ' ')
-		k++;
-
-	if (!*(str + k))
+	while (*str == ' ')
+		str++;
+	if (!*str)
 		return FALSE;
 
-	// lowercase the search string now, so we don't have to do it over and
+	// Preserve literal hyphenated keywords before trying a combination.
+	for (const char *word = namelist; *word;)
+	{
+		size_t i = 0;
+		while (str[i] && word[i] && LOWER(str[i]) == LOWER(word[i]))
+			i++;
+		if (!str[i] && (!word[i] || word[i] == ' '))
+			return TRUE;
+		word += strcspn(word, " ");
+		if (*word)
+			word++;
+	}
 
-	for (k2 = 0; *(str + k); k++)
-		tstr[k2++] = LOWER(*(str + k));
-	tstr[k2] = 0;
+	if (!strchr(str, '-'))
+		return FALSE;
 
 	for (;;)
 	{
-		for (i = 0;; i++, j++)
-		{
-			if (!tstr[i])
-			{
-				if (!*(namelist + j) || (*(namelist + j) == ' '))
-					return TRUE;
-				break;
-			}
-			else
-			{
-				if (!*(namelist + j))
-					return FALSE;
-
-				if (tstr[i] != LOWER(*(namelist + j)))
-					break;
-			}
-		}
-
-		// skip to next name
-		for (; *(namelist + j) && (*(namelist + j) != ' '); j++)
-			;
-		if (!*(namelist + j))
+		const char *hyphen = strchr(str, '-');
+		const std::string part(str, hyphen ? size_t(hyphen - str) : strlen(str));
+		if (part.empty() || !isname(part.c_str(), namelist))
 			return FALSE;
-		j++; // first char of new name
+		if (!hyphen)
+			return TRUE;
+		str = hyphen + 1;
 	}
 }
 
@@ -1258,7 +1353,7 @@ void recover_from_room_ch_loop(P_char k)
 }
 
 // A companion's departure/entry hooks may also remove or redirect this entrant.
-static bool move_riding_companions(P_char ch, int room, int dir)
+static bool move_riding_companions(P_char ch, int room, int dir, bool ordinary_movement)
 {
 	const auto runtime = ch->runtime_id;
 	const auto removals = character_removal_generation;
@@ -1285,7 +1380,7 @@ static bool move_riding_companions(P_char ch, int room, int dir)
 				else if (entrant_live)
 					unlink_char(ch, companion, LNK_RIDING);
 			}
-			char_to_room(companion, room, dir);
+			char_to_room(companion, room, dir, ordinary_movement);
 		}
 		if ((removals != character_removal_generation && !char_in_list(ch)) ||
 		    ch->runtime_id != runtime || !IS_ALIVE(ch) || ch->in_room != room)
@@ -1298,7 +1393,7 @@ static bool move_riding_companions(P_char ch, int room, int dir)
  * place a character in a room.
  */
 // Returns TRUE iff char made it into the room.
-bool char_to_room(P_char ch, int room, int dir)
+bool char_to_room(P_char ch, int room, int dir, bool ordinary_movement)
 {
 	P_char t_ch, k, who;
 	P_desc d;
@@ -1400,6 +1495,16 @@ bool char_to_room(P_char ch, int room, int dir)
 	was_in_arena = IS_ROOM(was_in, ROOM_ARENA) != 0;
 
 	ch->in_room = room;
+
+	// Ordinary movement keeps its existing departure/arrival link check. Every
+	// other relocation ends Essence, even if both partners travel together.
+	// Wait for actual placement: detachment and recovery to the source aren't travel.
+	if (!ordinary_movement && was_in != room)
+	{
+		clear_links(ch, LNK_ESSENCE_OF_WOLF);
+		while (P_char caster = get_linking_char(ch, LNK_ESSENCE_OF_WOLF))
+			unlink_char(caster, ch, LNK_ESSENCE_OF_WOLF);
+	}
 
 	if ((was_in_arena != (IS_ROOM(room, ROOM_ARENA) != 0)) && !IS_TRUSTED(ch))
 	{
@@ -1511,7 +1616,7 @@ bool char_to_room(P_char ch, int room, int dir)
 
 	AddCharToZone(ch);
 
-	if (!move_riding_companions(ch, room, dir))
+	if (!move_riding_companions(ch, room, dir, ordinary_movement))
 		return FALSE;
 
 	/*
@@ -1782,18 +1887,13 @@ bool char_to_room(P_char ch, int room, int dir)
 	 * thing of the past.
 	 */
 
-	int nocalming = 0;
 	int calming = 0;
-	if ((IS_RACEWAR_GOOD(ch) &&
-	     IS_SET(hometowns[VNUM2TOWN(world[ch->in_room].number) - 1].flags, JUSTICE_GOODHOME)) ||
-	    (IS_RACEWAR_EVIL(ch) &&
-	     IS_SET(hometowns[VNUM2TOWN(world[ch->in_room].number) - 1].flags, JUSTICE_EVILHOME)))
-		nocalming = 1;
 
-	if (t_ch && !IS_ELITE(t_ch) && !nocalming &&
-	    (((GET_LEVEL(t_ch) - GET_LEVEL(ch)) <= 5) || !number(0, 3)) &&
-	    has_innate(ch, INNATE_CALMING))
-		calming = (int)get_property("innate.calming.delay", 10);
+	if (t_ch && !IS_ELITE(t_ch) &&
+	    (((GET_LEVEL(t_ch) - GET_LEVEL(ch)) <= calming_level_gap()) ||
+	     !calming_gap_roll(live_rolls)) &&
+	    innate_calming_active(ch))
+		calming = calming_delay();
 
 	if (t_ch && is_aggr_to(ch, t_ch))
 	{
@@ -1883,6 +1983,11 @@ bool char_to_room(P_char ch, int room, int dir)
 	}
 
 	return TRUE;
+}
+
+bool char_to_room(P_char ch, int room, int dir)
+{
+	return char_to_room(ch, room, dir, false);
 }
 
 // marks player or pet owner dirty when inventory/equipment changes
@@ -2390,7 +2495,7 @@ P_char get_char_room(const char *name, int room)
 		return (0);
 
 	for (i = world[room].people, j = 1; i && (j <= k); i = i->next_in_room)
-		if (isname(tmp, IS_NPC(i) ? FirstWord(i->player.name) : GET_NAME(i)))
+		if (isname(tmp, GET_NAME(i)))
 		{
 			if (j == k && !IS_AFFECTED(i, AFF_HIDE))
 				return (i);
@@ -3161,7 +3266,7 @@ void obj_to_char_at_end(P_obj object, P_char ch)
  * remove an object from an object
  */
 
-void obj_from_obj(P_obj obj)
+void obj_from_obj_unsaved(P_obj obj)
 {
 	P_obj tmp, obj_from;
 
@@ -3235,9 +3340,15 @@ void obj_from_obj(P_obj obj)
 	obj->loc_p = LOC_NOWHERE;
 	obj->loc.inside = NULL; // must clear full pointer, not just int-sized loc.room
 	obj->next_content = NULL;
+}
 
-	if (GET_ITEM_TYPE(obj_from) == ITEM_STORAGE)
-		writeSavedItem(obj_from);
+void obj_from_obj(P_obj obj)
+{
+	P_obj container = obj && OBJ_INSIDE(obj) ? obj->loc.inside : NULL;
+
+	obj_from_obj_unsaved(obj);
+	if (container && GET_ITEM_TYPE(container) == ITEM_STORAGE)
+		writeSavedItem(container);
 }
 
 /*
@@ -3360,6 +3471,7 @@ void extract_obj(P_obj obj, int gone_for_good)
 			obj->next->prev = obj->prev;
 	}
 
+	forget_live_object(obj);
 	artifact_object_extracted(obj, gone_for_good);
 
 	obj->prev = NULL;
@@ -3388,12 +3500,20 @@ bool obj_is_in_container(P_obj obj, P_obj container)
 	return FALSE;
 }
 
+void remember_live_object(P_obj object)
+{
+	live_objects.insert(object);
+}
+
+void forget_live_object(P_obj object)
+{
+	live_objects.erase(object);
+}
+
+// The uid check rejects a freed pointer that a newer object has reused.
 P_obj find_live_object(P_obj expected, uint64_t uid)
 {
-	for (P_obj object = object_list; object; object = object->next)
-		if (object == expected && object->obj_uid == uid)
-			return object;
-	return nullptr;
+	return live_objects.count(expected) && expected->obj_uid == uid ? expected : nullptr;
 }
 
 /*
@@ -4033,6 +4153,7 @@ void extract_char(P_char ch)
 
 	if (IS_NPC(ch))
 		shopkeeper_mob_extracted(ch);
+	forget_live_character(ch);
 	// Pull the char from the list
 	// If at the head..
 	if (ch == character_list)

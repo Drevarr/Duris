@@ -26,6 +26,9 @@ signatures = (
     'static bool locker_recovery_append(',
     'bool locker_shutdown_capture(',
     'static std::vector<P_obj> locker_snapshot_room_contents(',
+    'static void locker_return_norent_item(',
+    'static void locker_return_norent_contents(',
+    'void StorageLocker::ReturnNorentItems(',
     'bool StorageLocker::LockerToPFile(',
     'static bool locker_handle_leave(',
 )
@@ -47,6 +50,8 @@ sources = [
     'src/item/item_movement_transaction.c', 'src/item/item_transfer_repository.c',
     'src/player/player_snapshot_capture.c', 'src/player/player_snapshot_codec.c',
     'src/player/player_snapshot_repository.c', 'src/item/item_claim_repository.c',
+    'src/economy/collector_command.c', 'src/economy/collector_codec.c',
+    'src/economy/collector_policy.c',
     'src/item/item_claim.c', 'src/persistence/dupe_log.c',
     'src/sql/item_extra_descr_codec.c', 'src/persistence/persistence_observability.c',
     'src/player/pet_restore_state.c', 'src/player/pet_restore_runtime.c',
@@ -92,6 +97,10 @@ with tempfile.TemporaryDirectory(prefix='duris-locker-shutdown-') as td:
             sql('CREATE DATABASE locker_recovery', None)
             sql((ROOT / 'migrations/bootstrap_multithread_safe.sql').read_text())
             sql((ROOT / 'migrations/immutable/0049_divine_boon_delivery.sql').read_text())
+            sql((ROOT / 'migrations/immutable/0002_player_item_metadata_uniqueness.sql').read_text())
+            sql((ROOT / 'migrations/immutable/0059_item_affect_slots.sql').read_text())
+            sql((ROOT / 'migrations/immutable/0060_item_instance_fields.sql').read_text())
+            sql((ROOT / 'migrations/immutable/0062_player_save_intent.sql').read_text())
 
             def reset():
                 sql('SET FOREIGN_KEY_CHECKS=0;' + ''.join('TRUNCATE TABLE ' + table + ';' for table in (
@@ -166,7 +175,7 @@ with tempfile.TemporaryDirectory(prefix='duris-locker-shutdown-') as td:
                 run(state, 'recover')  # second boot cannot repeat or duplicate recovery
                 print(f'[PASS] {case}: process exit/restart, topology, quantities, ownership and item-only player recovery', flush=True)
 
-            external_pending = ('shop-pending', 'auction-pending', 'collector-pending', 'quest-pending', 'other-fenced')
+            external_pending = ('auction-pending', 'collector-pending', 'quest-pending', 'other-fenced')
             for case in ('movement', 'ambiguous-grant', 'holder-missing', 'public-object-missing', 'malformed', 'blocked-publish', 'blocked-io', *external_pending,
                          'room-cycle', 'public-cycle', 'holder-cycle', 'occupant-cycle'):
                 reset()

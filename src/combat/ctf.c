@@ -42,42 +42,6 @@ struct ctfData ctfdata[] = { { 0, 0, 0, 0, 0, NULL },
 			     { 11, CTF_BOON, RACEWAR_NONE, 792, 0, NULL },
 			     {} };
 
-#ifdef __NO_MYSQL__
-
-/*
- * Capture the flag has no client-free implementation: it is explicitly fenced
- * rather than silently inert. A CTF build refuses to boot without a database
- * backend, and players are told the system is unavailable instead of being
- * ignored.
- */
-int init_ctf()
-{
-#if defined(CTF_MUD) && (CTF_MUD == 1)
-	fatal_boot_error("ctf", "capture the flag has no client-free implementation; "
-				"build without CTF_MUD or run with the database backend");
-#endif
-	return 0;
-}
-
-void do_ctf(P_char ch, char * /*arg*/, int /*cmd*/)
-{
-	send_to_char("Capture the flag is not available on this server.\r\n", ch);
-}
-size_t ctf_boon_state_snapshot(int64_t * /*values*/, size_t /*capacity*/)
-{
-	return 0;
-}
-int ctf_use_boon(BoonData * /*bdata*/)
-{
-	logit(LOG_DEBUG, "ctf_use_boon: capture the flag is fenced off in this build");
-	return FALSE;
-}
-void ctf_delete_flag(int /*id*/) {}
-int ctf_carrying_flag(P_char /*ch*/)
-{
-	return FALSE;
-}
-#else
 #include "sql/sql_async.h"
 
 extern MYSQL *DB;
@@ -127,6 +91,20 @@ int init_ctf()
 	return 0;
 }
 
+static int bind_ctf_flag(int vnum)
+{
+	const int rnum = real_object(vnum);
+	if (rnum >= 0)
+		obj_index[rnum].func.obj = ctf_flag_proc;
+	return rnum;
+}
+
+void assign_ctf_object_procs()
+{
+	for (int i = 1; ctfdata[i].id; ++i)
+		bind_ctf_flag(ctfdata[i].flag);
+}
+
 int load_ctf()
 {
 	char buff[MAX_STRING_LENGTH];
@@ -136,9 +114,7 @@ int load_ctf()
 
 	for (i = 1; ctfdata[i].id; i++)
 	{
-		obj_index[real_object(ctfdata[i].flag)].func.obj = ctf_flag_proc;
-
-		if ((r_num = real_object(ctfdata[i].flag)) < 0)
+		if ((r_num = bind_ctf_flag(ctfdata[i].flag)) < 0)
 		{
 			debug("CTF Flag # %d has failed to load, continuing.", i);
 			continue;
@@ -1129,5 +1105,3 @@ void ctf_update_bonus(P_char ch)
 	}
 	return;
 }
-
-#endif

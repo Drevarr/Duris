@@ -23,8 +23,8 @@
  */
 
 #include "core/prototypes.h"
+#include "item/named_set_effects.h"
 #include "world/world_singletons.h"
-#include "flatfile/flatfile_shopkeeper_restore.h"
 #include "economy/shopkeeper_boot.h"
 #include "item/item_actions.h"
 #include "item/artifact_mana.h"
@@ -37,6 +37,7 @@
 #include "net/session_input.h"
 #include "net/output_style.h"
 #include "net/chat_presentation.h"
+#include "net/output_presentation.h"
 #include "net/output_profiles.h"
 #include "player/output_preferences.h"
 #include "net/command_latency.h"
@@ -87,6 +88,7 @@
 #include "core/lookup_process.h"
 #include "world/map.h"
 #include "net/mccp.h"
+#include "net/mxp.h"
 #include "core/mm.h"
 #include "economy/nexus_stones.h"
 #include "world/outposts.h"
@@ -142,11 +144,10 @@
 #include "persistence/critical_outbox.h"
 #include "economy/currency_transaction.h"
 #include "item/item_movement_transaction.h"
+#include "item/starter_kit_intent.h"
 #include "item/item_ownership_runtime.h"
-#include "economy/shop_trade_transaction.h"
 #include "item/item_uid_allocator.h"
 #include "item/item_claim_repository.h"
-#include "flatfile/flatfile_item_repository.h"
 #include "economy/auction_transaction.h"
 #include "economy/collector_catalog_cache.h"
 #include "economy/divine_trade_command.h"
@@ -162,7 +163,6 @@
 #include "economy/divine_boon_runtime.h"
 #include "economy/divine_boon_selection.h"
 #include "economy/divine_boon_activity.h"
-#include "economy/boon_shop_transaction.h"
 #include "world/zone_touch_transaction.h"
 #include "world/epic_transaction.h"
 #include "world/vnum.mob.h"
@@ -201,22 +201,6 @@ long sentbytes = 0;
 long receivedbytes = 0;
 bool game_booted = FALSE;
 
-static bool hydrate_flatfile_system_item_owner(void)
-{
-	const char *root = persistence_mode_flatfile_root();
-	const item_owner_identity owner = { item_owner_type::system, 0, 0 };
-	uint64_t revision = 0;
-	std::vector<flatfile_item_ownership_record> items;
-	std::string error;
-	const auto loaded =
-		root ? flatfile_item_repository_load_owner(root, owner, &revision, &items, &error) :
-		       flatfile_item_repository_result::invalid;
-	if (loaded == flatfile_item_repository_result::not_found)
-		return item_ownership_runtime_hydrate_owner(owner, 0);
-	return loaded == flatfile_item_repository_result::ok && items.empty() &&
-	       item_ownership_runtime_hydrate_owner(owner, revision);
-}
-
 // A player's active ownership record whose item no stored payload carries is an item
 // the player no longer holds, and no save releases it (ADR 0002). No character is in
 // memory yet, so the records are deleted here, before the writer starts. A failure
@@ -231,23 +215,9 @@ static void reap_unheld_player_items_at_boot(void)
 		return;
 	}
 	uint64_t deleted = 0;
-	if (persistence_mode_requires_mysql())
-	{
-		if (const unsigned int failed =
-			    reap_unheld_player_items(DB, &deleted, &population.retained_uids))
-			logit(LOG_STATUS, "Item ownership reap failed: error=%u", failed);
-	}
-	else
-	{
-		const char *root = persistence_mode_flatfile_root();
-		std::string error;
-		const auto result = flatfile_item_repository_reap_unheld_player_items(
-			root ? root : "", &deleted, &error, &population.retained_uids);
-		if (result != flatfile_item_repository_result::ok &&
-		    result != flatfile_item_repository_result::unchanged &&
-		    result != flatfile_item_repository_result::not_found)
-			logit(LOG_STATUS, "Item ownership reap failed: %s", error.c_str());
-	}
+	if (const unsigned int failed =
+		    reap_unheld_player_items(DB, &deleted, &population.retained_uids))
+		logit(LOG_STATUS, "Item ownership reap failed: error=%u", failed);
 	if (deleted)
 		logit(LOG_STATUS,
 		      "Item ownership reap: records of items no player holds deleted=%llu",
@@ -266,14 +236,6 @@ static void maintenance_handle_completions(const maintenance_result *results, si
 		     result.outcome == maintenance_outcome::permanent_failure))
 			cargo_maintenance_complete(result.work_id,
 						   result.outcome == maintenance_outcome::complete);
-#ifdef __NO_MYSQL__
-		if (result.job_id == maintenance_job_id::auction_due_scan &&
-		    result.outcome == maintenance_outcome::complete)
-			auction_houses_activity();
-		if (result.job_id == maintenance_job_id::boon_scan &&
-		    result.outcome == maintenance_outcome::complete)
-			boon_maintenance();
-#endif
 		if (result.job_id == maintenance_job_id::auction_due_scan &&
 		    (result.outcome == maintenance_outcome::complete ||
 		     result.outcome == maintenance_outcome::more))
@@ -322,13 +284,11 @@ static void critical_gameplay_publish_outbox(void)
 	artifact_guild_transaction_publish_outbox();
 }
 
-#ifndef __NO_MYSQL__
 static void critical_gameplay_drain_outbox(void)
 {
 	sql_async_pulse();
 	critical_gameplay_publish_outbox();
 }
-#endif
 
 void pwipe_resume_writers(void)
 {
@@ -354,9 +314,7 @@ bool pwipe_quiesce_writers(void)
 		     critical_command_coordinator_drain(3000) && critical_outbox_drain(3000) &&
 		     persistence_flush_all_character_saves() && locker_async_drain(3000) &&
 		     artifact_save_drain(3000) && player_save_pipeline_drain(3000);
-#ifndef __NO_MYSQL__
 	ready = ready && sql_ship_write_pulse();
-#endif
 	// Read-completion callbacks can enqueue a dependent write or read. Finish
 	// that accepted chain before closing the shared writer's admission gate.
 	const uint64_t deadline = persistence_observability_now_usec() + 3000000;
@@ -393,18 +351,15 @@ static void critical_gameplay_handle_completions(const critical_completion *comp
 	sql_chest_log_pulse();
 	locker_chest_changes_pulse();
 	item_movement_transaction_handle_completions(completions, count);
-	shop_trade_transaction_handle_completions(completions, count);
 	auction_transaction_handle_completions(completions, count);
 	collector_transaction_handle_completions(completions, count);
 	combat_outcome_transaction_handle_completions(completions, count);
 	artifact_guild_transaction_handle_completions(completions, count);
 	boon_reward_transaction_handle_completions(completions, count);
 	divine_trade_runtime_completions(completions, count);
-	boon_shop_transaction_handle_completions(completions, count);
 	zone_touch_transaction_handle_completions(completions, count);
 }
 
-#ifndef __NO_MYSQL__
 static critical_outbox_delivery_result
 critical_gameplay_outbox_delivery(const critical_outbox_record &record, void *context)
 {
@@ -434,7 +389,6 @@ critical_gameplay_outbox_delivery(const critical_outbox_record &record, void *co
 		return collector_transaction_outbox_delivery(record, context);
 	return auction_transaction_outbox_delivery(record, context);
 }
-#endif
 
 /** Request an immediate game-thread shutdown transition through the existing persistence gates. */
 void request_shutdown(int shutdown_type, const char *issuer, const char *reason)
@@ -456,7 +410,7 @@ void request_shutdown(int shutdown_type, const char *issuer, const char *reason)
 		shutdownData.eShutdownType = TimedShutdownData::REBOOT;
 		break;
 	case 3:
-		shutdownData.eShutdownType = TimedShutdownData::COPYOVER;
+		shutdownData.eShutdownType = TimedShutdownData::HOTBOOT;
 		break;
 	default:
 		shutdownData.eShutdownType = TimedShutdownData::OK;
@@ -607,6 +561,7 @@ P_char executing_ch;
 char command_output[MAX_COMMAND_OUTPUT + PAD_COMMAND_OUTPUT + 1];
 size_t output_length;
 static std::string pager_original;
+static OutputLinks command_links;
 static bool pager_style_fallback = false;
 
 #define MIN_SOCKET_BUFFER_SIZE 20480
@@ -769,9 +724,9 @@ int main(int argc, char **argv)
 				 "SQL pwipe recovery cannot combine with another boot mode");
 	if (material_rarity_report_mode)
 	{
-		boot_material_rarity_objects(mini_mode);
-		write_material_rarity_report(material_rarity_report_dir);
-		return 0;
+		if (!boot_material_rarity_objects(mini_mode))
+			return 1;
+		return write_material_rarity_report(material_rarity_report_dir) ? 0 : 1;
 	}
 	logit(LOG_STATUS, "Running game on port %d.", port);
 
@@ -806,8 +761,7 @@ int main(int argc, char **argv)
 	boot_account_reward_config();
 	if (pwipe_resume_epoch)
 	{
-		const bool ready = persistence_mode_requires_mysql() &&
-				   sql_resume_pwipe(pwipe_resume_epoch);
+		const bool ready = sql_resume_pwipe(pwipe_resume_epoch);
 		logit(LOG_STATUS,
 		      ready ? "SQL pwipe recovery is ready for filesystem cleanup." :
 			      "SQL pwipe recovery refused or incomplete; startup remains fenced.");
@@ -819,18 +773,21 @@ int main(int argc, char **argv)
 		fatal_boot_error("pwipe-launch", launch_error.c_str());
 	logit(LOG_STATUS, "%s", pwipe_launch_status(time(NULL)).c_str());
 
-	if (persistence_mode_requires_mysql() && initialize_mysql() < 0)
+	if (initialize_mysql() < 0)
 	{
 		fatal_boot_error("comm", "MySQL initialization failed!");
 	}
-	if (!persistence_mode_requires_mysql() &&
-	    !item_uid_allocator_reserve(nullptr, ITEM_UID_BOOT_RESERVATION))
-		fatal_boot_error("comm", "Could not reserve a collision-free flat item UID range");
 	if (copyover_boot && copyover_prepare_boot() != copyover_boot_result::ready)
 		fatal_boot_error(
 			"copyover",
 			"No validated copyover image is available; inspect the publication and .recovering paths before retrying");
 	redis_init();
+	const auto *handoff = copyover_boot ? copyover_boot_evidence() : nullptr;
+	const bool fresh_copyover = handoff && !copyover_restores_world();
+	if (fresh_copyover && !redis_world_prepare_copyover(handoff->redis_checkpoint))
+		fatal_boot_error(
+			"copyover",
+			"Redis world does not match the copyover checkpoint; player handoff retained");
 
 	// Pin recovery before any custody cleanup, including ordinary cold boots.
 	if (!copyover_boot)
@@ -851,11 +808,8 @@ int main(int argc, char **argv)
 	if (!locker_recovery_boot())
 		fatal_boot_error(
 			"locker_recovery",
-			"Locker shutdown recovery unresolved; preserve runtime/locker-shutdown (or FLATFILE_STATE_DIR/locker-shutdown) and follow the locker recovery runbook");
-	if (!persistence_mode_requires_mysql() && !hydrate_flatfile_system_item_owner())
-		fatal_boot_error("comm",
-				 "Could not hydrate the flat-file system item-owner revision");
-	if (persistence_mode_requires_mysql() && !sql_hydrate_item_owner_revisions())
+			"Locker shutdown recovery unresolved; preserve runtime/locker-shutdown and follow the locker recovery runbook");
+	if (!sql_hydrate_item_owner_revisions())
 		logit(LOG_STATUS,
 		      "Authoritative item owner revisions unavailable; movement fails closed.");
 	const auto &population = artifact_population_prepare_boot(copyover_boot);
@@ -867,7 +821,10 @@ int main(int argc, char **argv)
 		      population.unavailable_sources.empty() ?
 			      "allocation or unprepared input" :
 			      population.unavailable_sources.c_str());
-	reap_unheld_player_items_at_boot();
+	// During a Redis-backed fresh boot the old floor cut is still a fallback.
+	// Leave its custody alone until a subsequent boot can reap against live evidence.
+	if (!fresh_copyover || !handoff->redis_checkpoint.sequence)
+		reap_unheld_player_items_at_boot();
 
 	// Property hooks now also own main-thread item-action cancellation. Bind
 	// before loading them; the event pool is initialized later during world boot.
@@ -898,7 +855,8 @@ int main(int argc, char **argv)
 	{
 		std::string boot_error;
 		if (!shopkeeper_boot_begin("shopkeeper-boot",
-					   copyover_boot || redis_world_recovery_boot_active(),
+					   copyover_restores_world() ||
+						   redis_world_recovery_boot_active(),
 					   &boot_error))
 			fatal_boot_error("shopkeeper", "Could not record boot state: %s",
 					 boot_error.c_str());
@@ -953,6 +911,8 @@ static void finalize_styled_command(P_desc descriptor)
 		{
 			// Individually safe sends can combine into an unsafe page. Check
 			// before replay starts, while the entire original command is available.
+			command_links = rebase_output_links(command_output, pager_original.c_str(),
+							    command_links);
 			strcpy(command_output, pager_original.c_str());
 			output_length = pager_original.size();
 			pager_style_fallback = true;
@@ -972,17 +932,22 @@ void process_with_paging(P_char ch, char *comm)
 	*command_output = '\0';
 	output_length = 0;
 	pager_original.clear();
+	command_links.clear();
 	pager_style_fallback = false;
 	command_interpreter(ch, comm);
 	executing_ch = NULL;
 	if (!ch->desc)
+	{
+		command_links.clear();
 		return;
+	}
 	finalize_styled_command(ch->desc);
 	if (next_page(command_output, ch->desc))
 		// page_string_real(ch->desc, command_output, 1);
-		page_string_real(ch->desc, command_output);
+		page_string_real(ch->desc, command_output, command_links);
 	else
-		SEND_TO_Q(command_output, ch->desc);
+		write_linked_output(command_output, &ch->desc->output, command_links);
+	command_links.clear();
 }
 
 void game_up_message(int port)
@@ -1013,6 +978,30 @@ static void remove_hostname_files(const char *prefix)
 		if (!strncmp(entry->d_name, prefix, length) && strcmp(entry->d_name, ".") &&
 		    strcmp(entry->d_name, "..") && strcmp(entry->d_name, ".gitignore"))
 			unlinkat(dirfd(directory), entry->d_name, 0);
+	closedir(directory);
+}
+
+// All old resolver threads have exited. Retain names only for inherited peers.
+static void prune_copyover_hostname_files()
+{
+	DIR *directory = opendir("lib/etc/hosts");
+	if (!directory)
+		return;
+	while (const struct dirent *entry = readdir(directory))
+	{
+		if (!strcmp(entry->d_name, ".") || !strcmp(entry->d_name, "..") ||
+		    !strcmp(entry->d_name, ".gitignore"))
+			continue;
+		bool retained = false;
+		for (P_desc d = descriptor_list; d && !retained; d = d->next)
+		{
+			char filename[128];
+			snprintf(filename, sizeof filename, "%d.%s", d->descriptor, d->host);
+			retained = !strcmp(entry->d_name, filename);
+		}
+		if (!retained)
+			unlinkat(dirfd(directory), entry->d_name, 0);
+	}
 	closedir(directory);
 }
 
@@ -1068,6 +1057,7 @@ int run_the_game(int port, int sslport)
 	init_astral_clock(); // fix the map sight distances
 
 	// cache named report, fraglist, and epic zones in redis
+	redis_invalidate_named_report();
 	redis_cache_named_report();
 	redis_cache_fraglist();
 	redis_cache_epic_zones();
@@ -1201,9 +1191,7 @@ int run_the_game(int port, int sslport)
 		      "Account recovery unavailable; password reset by email disabled.");
 
 	information_cache_refresh();
-#ifndef __NO_MYSQL__
 	help_cache_refresh();
-#endif
 	game_booted = TRUE;
 
 	locker_async_init();
@@ -1217,17 +1205,9 @@ int run_the_game(int port, int sslport)
 	if (!divine_boon_runtime_boot(static_cast<int64_t>(time(nullptr))))
 		logit(LOG_STATUS, "Divine Boon state unavailable; world bonuses disabled.");
 	critical_apply_fn critical_apply = critical_command_repository_apply_from_pool;
-#ifdef __NO_MYSQL__
-	critical_apply = flatfile_critical_command_repository_apply_selected;
-#else
 	const bool critical_outbox_ready = critical_outbox_init(
 		critical_gameplay_outbox_delivery, NULL, critical_gameplay_drain_outbox);
-#endif
-	if (
-#ifndef __NO_MYSQL__
-		!critical_outbox_ready ||
-#endif
-		!critical_command_coordinator_init(critical_apply, NULL))
+	if (!critical_outbox_ready || !critical_command_coordinator_init(critical_apply, NULL))
 	{
 		critical_command_coordinator_shutdown();
 		critical_outbox_shutdown();
@@ -1251,6 +1231,9 @@ int run_the_game(int port, int sslport)
 	if (!locker_identify_init(getenv("CRITICAL_COMMAND_JOURNAL_DIR")))
 		logit(LOG_STATUS,
 		      "Locker identification unavailable: receipt storage could not initialize.");
+	if (!starter_kit_intent_init(getenv("CRITICAL_COMMAND_JOURNAL_DIR")))
+		logit(LOG_STATUS,
+		      "Starter kits unavailable: durable intent storage could not initialize.");
 	if (!combat_outcome_transaction_init(getenv("CRITICAL_COMMAND_JOURNAL_DIR")))
 		persistence_alert(AVATAR, "combat_outcome", "pipeline", "none", "none",
 				  "intent_recovery_failed",
@@ -1570,6 +1553,7 @@ struct game_loop_pulse_context
 	uint64_t command_sweep_us = 0;
 	uint64_t prompts_us = 0;
 	uint64_t ne_events_us = 0;
+	uint64_t persistence_us = 0;
 	uint64_t activities_us = 0;
 	uint64_t combat_us = 0;
 	uint64_t affect_us = 0;
@@ -1609,14 +1593,24 @@ static session_input_route select_session_input(P_desc descriptor, P_char charac
 	    (creation_grant_input || (!CAN_ACT(character) && !casting_input) ||
 	     (IS_SET(character->specials.affected_by, AFF_CHARM) && !descriptor->original)))
 		return session_input_route::none;
-	const bool dequeued = casting_input ?
-				      get_casting_cmd_from_q(character, &descriptor->input, input) :
-			      descriptor->connected == CON_PLAYING && !descriptor->showstr_count &&
-					      !descriptor->str ?
-				      get_playing_cmd_from_q(character, &descriptor->input, input) :
-				      get_from_q(&descriptor->input, input);
+	// Help references must remain usable while reading paged help. Only the
+	// head command may replace a page; controls and other type-ahead keep their
+	// existing pager behavior. Use the normal playing queue gates and dispatcher.
+	char command[MAX_INPUT_LENGTH] = {};
+	if (descriptor->showstr_count && descriptor->connected == CON_PLAYING && !descriptor->str &&
+	    descriptor->input.head)
+		one_argument(descriptor->input.head->text, command);
+	const bool paging_help = !strcmp(command, "help");
+	const bool dequeued =
+		casting_input ? get_casting_cmd_from_q(character, &descriptor->input, input) :
+		descriptor->connected == CON_PLAYING &&
+				(!descriptor->showstr_count || paging_help) && !descriptor->str ?
+				get_playing_cmd_from_q(character, &descriptor->input, input) :
+				get_from_q(&descriptor->input, input);
 	if (!dequeued)
 		return session_input_route::none;
+	if (paging_help)
+		free_paging_data(descriptor);
 	if (descriptor->showstr_count)
 		return session_input_route::pager;
 	if (descriptor->str)
@@ -1641,6 +1635,9 @@ static void dispatch_session_input(P_desc descriptor, P_char character, char *in
 							COMMAND_LATENCY_NANNY;
 	prepare_descriptor_latency_event(&event, kind, descriptor,
 					 route == session_input_route::playing ? input : NULL);
+	if (route == session_input_route::playing &&
+	    (!strcmp(event.operation, "get") || !strcmp(event.operation, "take")))
+		command_latency_event_set_get_arguments(&event, input);
 	const uint64_t started_us = loop_monotonic_us();
 	switch (route)
 	{
@@ -1666,6 +1663,7 @@ static void dispatch_session_input(P_desc descriptor, P_char character, char *in
 	}
 	if (route == session_input_route::nanny && is_desc_valid(descriptor))
 		gmcp_session_update(descriptor);
+	event.bulk_items = command_latency_take_bulk_items();
 	command_latency_record(latency, &event,
 			       latency_trace_elapsed_us(started_us, loop_monotonic_us()));
 }
@@ -2370,39 +2368,77 @@ static void run_event_phase(game_loop_pulse_context &ctx)
 static void run_recurring_persistence_phase(game_loop_pulse_context &ctx)
 {
 	const uint64_t loop_tick = ctx.loop_tick;
-	const uint64_t gmcp_begin_us = !(pulse % 2) ? loop_monotonic_us() : 0;
+	const uint64_t persistence_begin_us = loop_monotonic_us();
+	const uint64_t gmcp_begin_us = !(pulse % 2) ? persistence_begin_us : 0;
+	uint64_t job_begin_us = persistence_begin_us;
+	const auto record_job = [&ctx, &job_begin_us, loop_tick](const char *name)
+	{
+		const uint64_t duration_us =
+			latency_trace_elapsed_us(job_begin_us, loop_monotonic_us());
+		latency_trace_record(name, duration_us, loop_tick);
+		if (duration_us != LATENCY_TRACE_DURATION_INVALID && duration_us >= 50000)
+		{
+			char tick_buffer[LATENCY_TRACE_TICK_STRING_LENGTH];
+			logit(LOG_STATUS,
+			      "PERSISTENCE JOB SLOW: boot=%s tick=%s pulse_start_mono_us=%" PRIu64
+			      " job=%s duration_us=%" PRIu64,
+			      latency_trace_boot_id(),
+			      latency_trace_format_tick(loop_tick, tick_buffer),
+			      ctx.loop_start_mono_us, name, duration_us);
+		}
+		// Keep trace and report emission out of the next job's measurement.
+		job_begin_us = loop_monotonic_us();
+	};
 
 	/* Flush dirty room GMCP updates every 2 pulses (~500ms) */
 	if (!(pulse % 2))
 	{
 		gmcp_flush_initial_states();
+		record_job("gmcp_flush_initial_states");
 		gmcp_flush_dirty_rooms();
+		record_job("gmcp_flush_dirty_rooms");
 		gmcp_flush_dirty_ship_contacts();
+		record_job("gmcp_flush_dirty_ship_contacts");
 		gmcp_flush_dirty_ship_info();
+		record_job("gmcp_flush_dirty_ship_info");
 		latency_trace_record("gmcp_protocol",
 				     latency_trace_elapsed_us(gmcp_begin_us, loop_monotonic_us()),
 				     loop_tick);
+		job_begin_us = loop_monotonic_us();
 		flush_pending_ship_saves();
+		record_job("flush_pending_ship_saves");
 		retry_unplaced_ships();
+		record_job("retry_unplaced_ships");
 		locker_async_pulse();
+		record_job("locker_async_pulse");
 	}
 	// Publish ready results each pulse, after events and before save capture.
 	critical_completion critical_completions[64] = {};
 	const size_t critical_completion_count =
 		critical_command_coordinator_pulse(critical_completions, 64);
+	record_job("critical_command_coordinator_pulse");
 	critical_gameplay_handle_completions(critical_completions, critical_completion_count);
+	record_job("critical_gameplay_handle_completions");
 	combat_outcome_transaction_pulse();
+	record_job("combat_outcome_transaction_pulse");
 	if (!(pulse % 2))
 	{
 		critical_gameplay_publish_outbox();
+		record_job("critical_gameplay_publish_outbox");
 		player_save_pipeline_pulse();
+		record_job("player_save_pipeline_pulse");
 		divine_boon_runtime_pulse();
+		record_job("divine_boon_runtime_pulse");
 		frag_cap_runtime_pulse();
+		record_job("frag_cap_runtime_pulse");
 		divine_boon_selection_pulse(static_cast<int64_t>(time(nullptr)));
+		record_job("divine_boon_selection_pulse");
 		persistence_pulse_character_saves();
+		record_job("persistence_pulse_character_saves");
 		player_load_result load_completions[32] = {};
 		const size_t load_completion_count =
 			player_load_pipeline_pulse(load_completions, 32);
+		record_job("player_load_pipeline_pulse");
 		for (size_t index = 0; index < load_completion_count; ++index)
 		{
 			bool delivered = false;
@@ -2419,30 +2455,54 @@ static void run_recurring_persistence_phase(game_loop_pulse_context &ctx)
 			if (!delivered && !player_load_offline_complete(load_completions[index]))
 				player_load_pipeline_note_stale();
 		}
+		record_job("player_load_delivery");
 		information_cache_pulse();
+		record_job("information_cache_pulse");
 		help_cache_pulse();
+		record_job("help_cache_pulse");
 		collector_catalog_cache_pulse();
+		record_job("collector_catalog_cache_pulse");
 		collector_maintenance_pulse();
+		record_job("collector_maintenance_pulse");
 		collector_presence_pulse();
+		record_job("collector_presence_pulse");
 		collector_service_pulse();
+		record_job("collector_service_pulse");
 		account_recovery_pulse();
+		record_job("account_recovery_pulse");
 		redis_world_recovery_pulse();
+		record_job("redis_world_recovery_pulse");
 		latency_trace_record("gmcp_flush",
 				     latency_trace_elapsed_us(gmcp_begin_us, loop_monotonic_us()),
 				     loop_tick);
+		job_begin_us = loop_monotonic_us();
 	}
 	sql_async_pulse();
+	record_job("sql_async_pulse");
 	divine_trade_runtime_retire_pulse();
-#ifndef __NO_MYSQL__
+	record_job("divine_trade_runtime_retire_pulse");
 	sql_ship_write_pulse();
-#endif
+	record_job("sql_ship_write_pulse");
 	artifact_guild_transaction_pulse();
+	record_job("artifact_guild_transaction_pulse");
+	if (!(pulse % WAIT_SEC))
+	{
+		arti_cache_retry();
+		record_job("arti_cache_retry");
+	}
 	if (!(pulse % (WAIT_SEC * 60)))
+	{
 		sql_mud_info_refresh();
+		record_job("sql_mud_info_refresh");
+	}
 	maintenance_result maintenance_results[MAINTENANCE_COMPLETION_MAX] = {};
 	const size_t maintenance_count = maintenance_scheduler_pulse(
 		ne_event_tick, maintenance_results, MAINTENANCE_COMPLETION_MAX);
+	record_job("maintenance_scheduler_pulse");
 	maintenance_handle_completions(maintenance_results, maintenance_count);
+	record_job("maintenance_handle_completions");
+	ctx.persistence_us = latency_trace_elapsed_us(persistence_begin_us, loop_monotonic_us());
+	latency_trace_record("recurring_persistence", ctx.persistence_us, loop_tick);
 }
 
 static void run_activity_phase(game_loop_pulse_context &ctx)
@@ -2607,7 +2667,7 @@ static void run_pulse_reset_phase(game_loop_pulse_context &ctx)
 	if (loop_us != LATENCY_TRACE_DURATION_INVALID && loop_us >= 250000) // 4 ticks a sec
 	{
 		char tick_buffer[LATENCY_TRACE_TICK_STRING_LENGTH];
-		char duration_buffers[9][LATENCY_TRACE_TICK_STRING_LENGTH];
+		char duration_buffers[10][LATENCY_TRACE_TICK_STRING_LENGTH];
 		statuslog(
 			56,
 			"MUD TICK TOOK TOO LONG - loop time - %f: boot=%s tick=%s pulse_start_mono_us=%" PRIu64
@@ -2616,6 +2676,7 @@ static void run_pulse_reset_phase(game_loop_pulse_context &ctx)
 			" combat_us=%s"
 			" commands_us=%s"
 			" ne_events_us=%s"
+			" persistence_us=%s"
 			" prompts_us=%s"
 			" affect_and_points_us=%s"
 			" affect_update_us=%s"
@@ -2627,10 +2688,11 @@ static void run_pulse_reset_phase(game_loop_pulse_context &ctx)
 			latency_trace_format_duration(combat_us, duration_buffers[2]),
 			latency_trace_format_duration(command_sweep_us, duration_buffers[3]),
 			latency_trace_format_duration(ne_events_us, duration_buffers[4]),
-			latency_trace_format_duration(prompts_us, duration_buffers[5]),
-			latency_trace_format_duration(affect_and_points_us, duration_buffers[6]),
-			latency_trace_format_duration(affect_us, duration_buffers[7]),
-			latency_trace_format_duration(point_us, duration_buffers[8]));
+			latency_trace_format_duration(ctx.persistence_us, duration_buffers[5]),
+			latency_trace_format_duration(prompts_us, duration_buffers[6]),
+			latency_trace_format_duration(affect_and_points_us, duration_buffers[7]),
+			latency_trace_format_duration(affect_us, duration_buffers[8]),
+			latency_trace_format_duration(point_us, duration_buffers[9]));
 	}
 	latency_trace_record("total_tick", loop_us, loop_tick);
 	if (!(tics % 300))
@@ -2733,18 +2795,22 @@ void game_loop(int port, int sslport)
 				   offsetof(struct descriptor_data, next),
 				   mm_find_best_chunk(sizeof(struct descriptor_data), 25, 110));
 
-	// copyover recovery - pool must exist first
+	// Copyover recovery needs the descriptor pool. Refuse before reconciling
+	// the world if its inherited listeners cannot be used.
 	if (copyover_boot)
 	{
-		if (copyover_recover(&recovered_mother_desc, &recovered_mother_desc_ssl,
-				     &recovered_ws_desc))
+		if (!copyover_recover(&recovered_mother_desc, &recovered_mother_desc_ssl,
+				      &recovered_ws_desc))
 		{
-			copyover_restore_combat();
-			// recalculate avg mob level now that mobs are restored
-			calc_zone_mob_level();
+			// Return through normal shutdown so every worker is joined.
+			logit(LOG_STATUS,
+			      "FATAL: copyover recovery failed; requesting graceful cold restart");
+			_reboot = 1;
+			return;
 		}
-		// Failed recovery leaves the listeners invalid. The socket-selection
-		// branch below returns through normal shutdown, joining every worker.
+		if (copyover_restores_world())
+			copyover_restore_combat();
+		calc_zone_mob_level();
 	}
 
 	// redis crash recovery - restore world state from redis snapshot
@@ -2789,16 +2855,7 @@ void game_loop(int port, int sslport)
 	// fallback). Reconcile legacy duplicated generations before world ticks.
 	if (!mini_mode)
 	{
-		reconcile_shopkeepers(copyover_boot != 0);
-		if (persistence_mode_get() == PERSISTENCE_MODE_FLATFILE_PRIMARY)
-		{
-			std::string error;
-			const char *root = persistence_mode_flatfile_root();
-			if (!flatfile_shopkeeper_bootstrap_new(root ? root : "", &error))
-				fatal_boot_error("shopkeeper", "new shop initialization failed: %s",
-						 error.empty() ? "invalid authoritative state" :
-								 error.c_str());
-		}
+		reconcile_shopkeepers(copyover_restores_world());
 		initialize_transport();
 		// The world is final: every artifact that boot, a copyover or a restored
 		// generation loads is in place, so the lists read now are not stale.
@@ -2811,23 +2868,12 @@ void game_loop(int port, int sslport)
 #endif
 
 	// use recovered sockets if copyover, otherwise create new ones
-	if (copyover_boot && recovered_mother_desc >= 0)
+	if (copyover_boot)
 	{
 		logit(LOG_STATUS, "Using recovered sockets from copyover");
 		s = recovered_mother_desc;
 		S = recovered_mother_desc_ssl;
 		WS = recovered_ws_desc;
-	}
-	else if (copyover_boot)
-	{
-		/* The inherited listeners are still open, so this process cannot safely
-		 * bind replacements.  Return through normal shutdown to join every worker;
-		 * exit(1) here left joinable std::threads and turned a rejected copyover into
-		 * SIGABRT plus a core dump.  The supervisor then performs a cold restart. */
-		logit(LOG_STATUS,
-		      "FATAL: copyover recovery failed; requesting graceful cold restart");
-		_reboot = 1;
-		return;
 	}
 	else
 	{
@@ -2867,6 +2913,16 @@ void game_loop(int port, int sslport)
 	if (!discord_bridge_init())
 		logit(LOG_STATUS,
 		      "WARNING: Discord bridge failed to start; check DURIS_DISCORD settings or port availability");
+
+	if (copyover_boot)
+	{
+		if (!copyover_restores_world() && !redis_world_discard_for_copyover())
+			fatal_boot_error(
+				"copyover",
+				"Redis checkpoint changed during boot; recovery evidence retained");
+		prune_copyover_hostname_files();
+		copyover_commit_boot();
+	}
 
 	// store in file-scope statics for copyover access
 	mother_desc = s;
@@ -3109,6 +3165,7 @@ int get_from_q(struct txt_q *queue, char *dest)
 		queue->tail = NULL;
 
 	FREE(tmp->text);
+	delete tmp->links;
 	FREE(tmp);
 
 	return (1);
@@ -3240,6 +3297,7 @@ void write_to_q(const char *txt, struct txt_q *queue, const int flag)
 		CREATE(n_new->text, char, txtlen + 1, MEM_TAG_BUFFER);
 
 		strcpy(n_new->text, txt);
+		n_new->links = nullptr;
 
 		n_new->next = NULL;
 		queue->head = queue->tail = n_new;
@@ -3262,6 +3320,7 @@ void write_to_q(const char *txt, struct txt_q *queue, const int flag)
 	CREATE(n_new->text, char, txtlen + 1, MEM_TAG_BUFFER);
 
 	strcpy(n_new->text, txt);
+	n_new->links = nullptr;
 
 	queue->tail->next = n_new;
 	queue->tail = n_new;
@@ -3727,8 +3786,10 @@ void close_socket(struct descriptor_data *d)
 		{
 			logit(LOG_COMM, "Losing player: %s [%s].", GET_NAME(d->character), d->host);
 			item_creation_grant_cancel_batch_before_entry(d->character);
-			free_char(d->character);
+			// Detached first: a held body keeps its save session alive.
+			P_char body = d->character;
 			d->character = NULL;
+			free_char(body);
 		}
 	}
 	else
@@ -3755,10 +3816,7 @@ void close_socket(struct descriptor_data *d)
 	if (d->descriptor)
 		shutdown(d->descriptor, 2);
 
-	if (d->showstr_head)
-	{
-		FREE(d->showstr_head);
-	}
+	free_paging_data(d);
 #ifdef I_REALLY_WANT_TO_CRASH_THE_GAME
 	if (d->showstr_point)
 	{
@@ -4344,6 +4402,7 @@ static void greet(P_desc newd)
 
 	advertise_mccp(newd);
 	gmcp_negotiate(newd);
+	mxp_negotiate(newd);
 	/* sga disabled - causes ^? ^M on raw telnet in character mode */
 	/* sga_negotiate(newd); */
 }
@@ -4649,6 +4708,11 @@ void clear_logs(P_char ch)
 
 int process_output(P_desc t)
 {
+	// The pulse drains retained WS wire bytes first. Keep text, links and prompt
+	// state queued when a direct caller reaches us while that buffer is blocked.
+	if (t->websocket && (t->ws_output_offset < t->ws_output_len ||
+			     t->ws_control_output_offset < t->ws_control_output_len))
+		return 1;
 	char buf[MAX_STRING_LENGTH];
 	char buf2[MAX_STRING_LENGTH];
 	snoop_by_data *snoop_by_ptr;
@@ -4690,7 +4754,7 @@ int process_output(P_desc t)
 	    (IS_PC(t->character) || IS_MORPH(t->character)) &&
 	    !IS_SET(GET_PLYR(t->character)->specials.act, PLR_COMPACT))
 	{
-		write_to_q("\r\n", &t->output, 1);
+		write_output("\r\n", &t->output);
 	}
 
 	if (text && !defer_prompt && STATE(t) == CON_PLAYING && IS_PC(realChar) &&
@@ -4707,7 +4771,14 @@ int process_output(P_desc t)
 		make_prompt(t);
 
 	/* Cycle thru output queue */
-	while (get_from_q(&t->output, buf))
+	const bool presented = t->websocket && gmcp_links_enabled(t);
+	OutputLinkFrame presentation;
+	if (presented && !descbuf.empty())
+		presentation.text.set(descbuf.c_str());
+	bool presentation_fits = true;
+	size_t target_bytes = 0;
+	OutputLinks links;
+	while (get_linked_output(&t->output, buf, links))
 	{
 #if 0
     if( PLR_FLAGGED(realChar, PLR_SMARTPROMPT) )
@@ -4718,13 +4789,32 @@ int process_output(P_desc t)
 		{
 			format_to_snoopers(buf, buf2);
 		}
+		const OutputLinks snoop_links = snoop_by_ptr ? snoop_output_links(buf, links) :
+							       OutputLinks{};
 		while (snoop_by_ptr)
 		{
-			write_to_q(buf2, &snoop_by_ptr->snoop_by->desc->output, 1);
+			write_linked_output(buf2, &snoop_by_ptr->snoop_by->desc->output,
+					    snoop_links);
 
 			snoop_by_ptr = snoop_by_ptr->next;
 		}
+		if (!t->websocket && t->mxp_state == MXP_ENABLED)
+		{
+			descbuf += mxp_render_output(buf, links, t->term_type == TERM_GENERIC,
+						     t->character && PLR3_FLAGGED(t->character,
+										  PLR3_UNDERLINE) ?
+							     TL_UNDERLINE :
+							     TL_BLINK,
+						     !strncasecmp(t->client_name, "Mudlet", 6));
+			continue;
+		}
 
+		if (presented && presentation_fits && !output_message_fits_serializers(buf))
+			presentation_fits = false;
+		const auto frame =
+			presented && presentation_fits ?
+				freeze_output_links(buf, links, t->term_type == TERM_GENERIC) :
+				OutputLinkFrame{};
 		AnsiString abuf(buf);
 		if (t->term_type == TERM_GENERIC)
 			abuf.colorize(0);
@@ -4734,11 +4824,49 @@ int process_output(P_desc t)
 		delete_doubledollar(buf);
 
 		descbuf += buf;
+		if (presented && presentation_fits)
+		{
+			// Freeze each original block separately: legacy dollar folding and
+			// attributes must not cross unrelated queue-entry boundaries.
+			const size_t offset = presentation.text.size();
+			if (frame.text.size() > OUTPUT_PRESENTATION_MAX_TEXT - offset)
+			{
+				presentation_fits = false;
+				presentation = {};
+			}
+			else
+			{
+				presentation.text.append(frame.text);
+				for (const auto &link : frame.links)
+					if (presentation.links.size() < OUTPUT_LINK_MAX_COUNT &&
+					    link.target.size() <=
+						    OUTPUT_LINK_MAX_TARGET_BYTES - target_bytes)
+					{
+						presentation.links.push_back(
+							{ link.begin + offset, link.end + offset,
+							  link.kind, link.target });
+						target_bytes += link.target.size();
+					}
+			}
+		}
 	}
 
 	{
-		int output_result = write_to_descriptor(t, descbuf.c_str());
-		if (output_result < 0 && !(t->websocket && output_result == WS_OUTPUT_QUEUE_FULL))
+		int output_result;
+		if (presented && !descbuf.empty())
+		{
+			char *json = output_text_json(
+				descbuf.c_str(), presentation_fits ? &presentation : nullptr,
+				t->character && PLR3_FLAGGED(t->character, PLR3_UNDERLINE));
+			if (!json)
+				return -1;
+			output_result = websocket_send_text(t, json);
+			free(json);
+		}
+		else
+			output_result = write_to_descriptor(t, descbuf.c_str());
+		if (output_result < 0 &&
+		    (presented || !(t->websocket && output_result == WS_OUTPUT_QUEUE_FULL)))
 			return (-1);
 	}
 
@@ -4917,6 +5045,8 @@ static void process_line(P_desc t, char *in)
 		out[0] = '\0';
 	}
 
+	const bool private_code = t->connected == CON_CONFIRM_ACCT ||
+				  t->connected == CON_ACCT_RESET_CODE;
 	note_player_input_activity(t, out);
 
 	int k = strlen(out);
@@ -4927,14 +5057,19 @@ static void process_line(P_desc t, char *in)
 			k--; // max 3, we have validated
 		out[k] = 0;
 
-		checked_snprintf(buffer, sizeof buffer, "Line too long. Truncated to:\r\n%s\r\n",
-				 out);
+		if (private_code)
+			strlcpy(buffer, "Line too long.\r\n", sizeof buffer);
+		else
+			checked_snprintf(buffer, sizeof buffer,
+					 "Line too long. Truncated to:\r\n%s\r\n", out);
 		if (write_to_descriptor(t, buffer) < 0)
 			return;
 	}
 
 	/* handle '!' to repeat last command */
-	if ((*out != '!') || !*t->last_input || !t->character || t->connected)
+	if (private_code)
+		t->last_input[0] = '\0';
+	else if ((*out != '!') || !*t->last_input || !t->character || t->connected)
 		memcpy(t->last_input, out, k + 1);
 	else
 		strcpy(out, t->last_input);
@@ -4946,13 +5081,13 @@ static void process_line(P_desc t, char *in)
 	}
 	write_to_q(out, &t->input, 0);
 
-	snoop_by_data *snoop_by_ptr = t->snoop.snoop_by_list;
+	snoop_by_data *snoop_by_ptr = private_code ? nullptr : t->snoop.snoop_by_list;
 
 	while (snoop_by_ptr)
 	{
-		write_to_q("&+y%&n ", &snoop_by_ptr->snoop_by->desc->output, 1);
-		write_to_q(out, &snoop_by_ptr->snoop_by->desc->output, 1);
-		write_to_q("\r\n", &snoop_by_ptr->snoop_by->desc->output, 1);
+		write_output("&+y%&n ", &snoop_by_ptr->snoop_by->desc->output);
+		write_output(out, &snoop_by_ptr->snoop_by->desc->output);
+		write_output("\r\n", &snoop_by_ptr->snoop_by->desc->output);
 
 		snoop_by_ptr = snoop_by_ptr->next;
 	}
@@ -4967,14 +5102,25 @@ static void process_line(P_desc t, char *in)
 static char send_to_char_f_buf[MAX_STRING_LENGTH];
 bool send_paged_text(P_char ch, const std::string &text, int log)
 {
+	const size_t before = output_length;
+	const size_t separator = before && !text.empty() ? 1 : 0;
 	if (!ch || !ch->desc || executing_ch != ch || !IS_SET(ch->specials.act, PLR_PAGING_ON) ||
 	    strlen(command_output) != output_length ||
-	    text.size() >= MAX_COMMAND_OUTPUT - output_length)
+	    text.size() >= MAX_COMMAND_OUTPUT - before - separator)
 		return false;
-	const size_t before = output_length;
-	// Preserve authored text so the capacity check describes the bytes accepted.
-	send_to_char(text.c_str(), ch, log, OutputContext{});
-	return output_length == before + text.size();
+	std::string frozen;
+	auto links = output_links_with_urls(text.c_str(), {}, &frozen);
+	const char *message = frozen.empty() ? text.c_str() : frozen.c_str();
+	const size_t bytes = strlen(message);
+	if (bytes >= MAX_COMMAND_OUTPUT - before - separator)
+		return false;
+	if (!frozen.empty())
+		links = rebase_output_links(text.c_str(), message, links);
+	OutputContext context;
+	context.links = links;
+	context.links_prepared = true;
+	send_to_char(message, ch, log, context);
+	return output_length == before + bytes + separator;
 }
 
 void send_to_char_f(P_char ch, const char *fmt, ...)
@@ -5018,19 +5164,27 @@ void send_to_char(const char *messg, P_char ch, int log, const OutputContext &co
 	static bool bSwitched = FALSE;
 	static bool bWarningAdded = false;
 
+	if (named_set_grant::hold_output(ch, messg))
+		return;
+
 	if (ch && ch->desc && messg)
 	{
 		const char *original_message = context.original_message ? context.original_message :
 									  messg;
+		const char *link_source = messg;
 		std::string rendered;
 		bool paging = executing_ch == ch && IS_SET(ch->specials.act, PLR_PAGING_ON);
 		if (paging && !output_length)
 		{
 			bWarningAdded = false;
 			pager_original.clear();
+			command_links.clear();
 			pager_style_fallback = false;
 		}
-		size_t capacity = paging ? MAX_COMMAND_OUTPUT - output_length - 1 :
+		const size_t separator = paging && output_length ? 1 : 0;
+		size_t capacity = paging && MAX_COMMAND_OUTPUT - output_length > separator ?
+					  MAX_COMMAND_OUTPUT - output_length - separator - 1 :
+				  paging ? 0 :
 					   MAX_STRING_LENGTH - 1;
 		OutputContext recipient_context = context;
 		if (context.resolve_recipient_preferences)
@@ -5055,24 +5209,53 @@ void send_to_char(const char *messg, P_char ch, int log, const OutputContext &co
 		}
 		else if (context.original_message)
 			messg = original_message;
-		if (paging && !bWarningAdded &&
-		    (!pager_original.empty() || messg != original_message))
+		OutputLinks links = rebase_output_links(link_source, messg, context.links);
+		std::string frozen_url_text, original_url_text;
+		const char *pager_message = original_message;
+		if (!context.links_prepared)
+		{
+			links = output_links_with_urls(messg, links, &frozen_url_text);
+			if (!frozen_url_text.empty() &&
+			    (paging || frozen_url_text.size() < MAX_STRING_LENGTH))
+			{
+				links = rebase_output_links(messg, frozen_url_text.c_str(), links);
+				if (paging && original_message == messg)
+					pager_message = frozen_url_text.c_str();
+				else if (paging && canonical_output_markup(original_message,
+									   original_url_text))
+					pager_message = original_url_text.c_str();
+				messg = frozen_url_text.c_str();
+			}
+		}
+		if (paging && !bWarningAdded && output_length && *messg &&
+		    output_length < MAX_COMMAND_OUTPUT - 1)
+		{
+			command_output[output_length++] = OUTPUT_SEND_BOUNDARY;
+			command_output[output_length] = '\0';
+			if (!pager_original.empty())
+				pager_original.push_back(OUTPUT_SEND_BOUNDARY);
+		}
+		if (paging && !bWarningAdded && (!pager_original.empty() || messg != pager_message))
 		{
 			if (pager_original.empty())
 				pager_original.assign(command_output, output_length);
-			size_t original_length = strlen(original_message);
+			size_t original_length = strlen(pager_message);
 			if (original_length < MAX_COMMAND_OUTPUT - pager_original.size())
 			{
 				// Earlier decoration must not displace later visible output. If
 				// necessary, fall back for the whole accumulated command before paging.
 				if (strlen(messg) >= MAX_COMMAND_OUTPUT - output_length)
 				{
+					command_links = rebase_output_links(command_output,
+									    pager_original.c_str(),
+									    command_links);
 					strcpy(command_output, pager_original.c_str());
 					output_length = pager_original.size();
-					messg = original_message;
+					links = rebase_output_links(messg, pager_message, links);
+					messg = pager_message;
 					pager_style_fallback = true;
 				}
-				pager_original += original_message;
+				pager_original += pager_message;
 			}
 		}
 		if (executing_ch != ch || !IS_SET(ch->specials.act, PLR_PAGING_ON))
@@ -5082,10 +5265,10 @@ void send_to_char(const char *messg, P_char ch, int log, const OutputContext &co
 				char buf[30];
 				snprintf(buf, 30, "&+M@&+W%s&n: ", J_NAME(ch));
 				bSwitched = TRUE;
-				write_to_q(buf, &ch->desc->output, 1);
+				write_output(buf, &ch->desc->output);
 				bSwitched = FALSE;
 			}
-			write_to_q(messg, &ch->desc->output, 1);
+			write_linked_output(messg, &ch->desc->output, links);
 		}
 		else
 		{
@@ -5096,6 +5279,8 @@ void send_to_char(const char *messg, P_char ch, int log, const OutputContext &co
 			{
 				if (len < (MAX_COMMAND_OUTPUT - output_length))
 				{
+					append_output_links(command_links, links, output_length,
+							    output_length + len);
 					strncat(command_output, messg,
 						MAX_COMMAND_OUTPUT - output_length);
 					output_length += len;
@@ -5114,7 +5299,9 @@ void send_to_char(const char *messg, P_char ch, int log, const OutputContext &co
 
 		if (context.chat && (!paging || !bWarningAdded))
 		{
-			if (!styled_frame || pager_style_fallback)
+			recipient_context.links = links;
+			recipient_context.links_prepared = true;
+			if (!styled_frame || (paging && pager_style_fallback))
 				recipient_context.policy = OutputPolicy::Preserve;
 			gmcp_comm_channel_output(ch, *context.chat, recipient_context, messg);
 		}
@@ -5148,7 +5335,7 @@ void send_to_all(const char *messg)
 	if (messg)
 		for (i = descriptor_list; i; i = i->next)
 			if (!i->connected)
-				write_to_q(messg, &i->output, 2);
+				write_output(messg, &i->output);
 }
 
 void send_to_outdoor(const char *messg)
@@ -5160,7 +5347,7 @@ void send_to_outdoor(const char *messg)
 			if (!i->connected && OUTSIDE(i->character))
 				if (IS_TRUSTED(i->character) ||
 				    !IS_ROOM(i->character->in_room, ROOM_SILENT))
-					write_to_q(messg, &i->output, 2);
+					write_output(messg, &i->output);
 }
 
 void send_to_nearby_rooms([[maybe_unused]] int from_room, [[maybe_unused]] const char *messg)
@@ -5175,7 +5362,7 @@ void send_to_nearby_rooms([[maybe_unused]] int from_room, [[maybe_unused]] const
       if (!i->connected && OUTSIDE(i->character))
         if (!IS_ROOM(i->character->in_room, ROOM_SILENT) &&
             (how_close(from_room, i->character->in_room, 10) >= 0))
-          write_to_q(messg, &i->output, 2);
+          write_output(messg, &i->output);
 #endif
 }
 
@@ -5203,7 +5390,7 @@ void send_to_except(const char *messg, P_char ch)
 			if (ch->desc != i && !i->connected)
 				if (IS_TRUSTED(i->character) ||
 				    !IS_ROOM(i->character->in_room, ROOM_SILENT))
-					write_to_q(messg, &i->output, 2);
+					write_output(messg, &i->output);
 }
 
 static char send_to_room_f_buf[MAX_STRING_LENGTH];
@@ -5232,7 +5419,7 @@ void send_to_room(const char *messg, int room)
 			if (i->desc)
 				if (IS_TRUSTED(i) || !IS_ROOM(i->in_room, ROOM_SILENT) ||
 				    i->specials.z_cord == 0)
-					write_to_q(messg, &i->desc->output, 2);
+					write_output(messg, &i->desc->output);
 }
 
 void send_to_room_except(const char *messg, int room, P_char ch)
@@ -5253,9 +5440,9 @@ void send_to_room_except(const char *messg, int room, P_char ch)
 				if (GET_LEVEL(i) >= GET_LEVEL(ch))
 				{
 					snprintf(Gbuf4, MAX_STRING_LENGTH, "R[%s]", GET_NAME(ch));
-					write_to_q(Gbuf4, &i->desc->output, 1);
+					write_output(Gbuf4, &i->desc->output);
 				}
-				write_to_q(messg, &i->desc->output, 2);
+				write_output(messg, &i->desc->output);
 			}
 }
 
@@ -5273,7 +5460,7 @@ void send_to_room_except_two(const char *messg, int room, P_char ch1, P_char ch2
 		for (i = world[room].people; i; i = i->next_in_room)
 			if ((i != ch1) && (i != ch2) && i->desc)
 				if (IS_TRUSTED(i) || !IS_ROOM(i->in_room, ROOM_SILENT))
-					write_to_q(messg, &i->desc->output, 2);
+					write_output(messg, &i->desc->output);
 }
 
 void act_convert(char *buf, const char *str, P_char ch, P_char to, P_obj obj, void *vict_obj,
@@ -5643,6 +5830,15 @@ void escape_act_dollars(char *dst, size_t dst_size, const char *src)
 void act(const char *str, int hide_invisible, P_char ch, P_obj obj, void *vict_obj, int type)
 {
 	act(str, hide_invisible, ch, obj, vict_obj, type, OutputContext{});
+}
+
+// One message each to ch, to vict, and to everyone else in the room.
+void act_trio(const char *to_char, const char *to_vict, const char *to_room, int hide_invisible,
+	      P_char ch, P_obj obj, P_char vict)
+{
+	act(to_char, hide_invisible, ch, obj, vict, TO_CHAR);
+	act(to_vict, hide_invisible, ch, obj, vict, TO_VICT);
+	act(to_room, hide_invisible, ch, obj, vict, TO_NOTVICT);
 }
 
 void act(const char *str, int hide_invisible, P_char ch, P_obj obj, void *vict_obj, int type,

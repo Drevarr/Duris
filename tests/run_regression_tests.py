@@ -21,10 +21,10 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 TEST_DIRECTORY = ROOT / "tests" / "async"
-MAX_AUTOMATIC_JOBS = 8
+MAX_AUTOMATIC_JOBS = 16
 # A test still running at its deadline is ended with its process group and counted as a
-# failure. A pooled test may first build a server artifact (about three minutes); the
-# slowest journey measured 309 s on a loaded host.
+# failure. A pooled test may first build a server artifact (about three minutes).
+# Long gameplay journeys have a deadline of their own.
 POOLED_DEADLINE_SECONDS = 900
 JOURNEY_DEADLINE_SECONDS = 1800
 # How often a line names the tests still running.
@@ -34,42 +34,51 @@ RESOURCE_INTENSIVE_TEST_NAMES = frozenset(
         "test_account_recovery_journey.py",
         "test_assassin_combat_journey.py",
         "test_artifact_owner_restart_journey.py",
+        "test_castle_key_reset_journey.py",
         "test_character_stat_choice_journey.py",
-        "test_coin_denomination_journey.py",
         "test_conjurer_gameplay_journey.py",
         "test_connection_limit_journey.py",
         "test_corpse_trap_restart_journey.py",
         "test_legacy_trap_journey.py",
+        "test_creation_deferred_play_journey.py",
         "test_creation_prompt_journey.py",
         "test_divine_boon_zone_journey.py",
         "test_game_loop_session_journey.py",
         "test_area_coin_pickup.py",
-        "test_flatfile_auction_coin_put_journey.py",
-        "test_flatfile_boot_preflight.py",
-        "test_flatfile_chaos_new_character_kit.py",
-        "test_flatfile_combat_journey.py",
-        "test_flatfile_collector_intake_journey.py",
-        "test_flatfile_death_restart_journey.py",
-        "test_flatfile_locker_journey.py",
-        "test_flatfile_newbie_regrant_journey.py",
-        "test_flatfile_first_session_currency.py",
-        "test_flatfile_full_world_boot.py",
-        "test_flatfile_hardcore_death_journey.py",
+        "test_mariadb_auction_coin_put_journey.py",
+        "test_mariadb_chaos_new_character_kit.py",
+        "test_mariadb_locker_journey.py",
+        "test_mariadb_newbie_regrant_journey.py",
+        "test_mariadb_first_session_currency.py",
+        "test_mariadb_full_world_boot.py",
+        "test_mariadb_hardcore_death_journey.py",
         "test_flight_network_journey.py",
         "test_frag_cap_journey.py",
         "test_generated_npc_journey.py",
         "test_gith_monk_journey.py",
         "test_hostname_files_journey.py",
         "test_log_hygiene_journey.py",
-        "test_mob_gold_dial_runtime.py",
         "test_pet_restart_journey.py",
+        "test_ranged_kill_xp_journey.py",
         "test_shambler_reflection_journey.py",
+        "test_websocket_session_guard_journey.py",
+        "test_kept_character_journey.py",
+        "test_kept_character_approval_journey.py",
+        "test_kept_character_competition.py",
+        "test_kept_character_matrix.py",
+        "test_kept_character_recovery_journey.py",
+        "test_kept_starter_grant_journey.py",
         "test_minor_creation_instrument_journey.py",
         "test_shop_multi_buy_journey.py",
         "test_studioproc_duplicate_record.py",
         "test_item_movement_prompt_runtime.py",
         "test_information_cache_journey.py",
         "test_mysql_combat_journey.py",
+        "test_mariadb_boot_preflight.py",
+        "test_mariadb_collector_intake_journey.py",
+        "test_mob_gold_dial_runtime.py",
+        "test_mariadb_combat_journey.py",
+        "test_mariadb_death_restart_journey.py",
     }
 )
 
@@ -86,12 +95,68 @@ MANUAL_ONLY_TEST_NAMES = frozenset(
         "test_discord_game_journey.py",
         "test_epic_task_catalog_mysql.py",
         "test_epic_task_recovery_journey.py",
+        # This journey drops a real SQL COMMIT reply and has no flat-file leg.
+        "test_kept_character_ambiguous_commit.py",
         "test_mysql_playtime_journey.py",
         "test_mysql_coin_denomination_journey.py",
         "test_mysql_locker_grant_journey.py",
         "test_mysql_nexus_journey.py",
         "test_playtime_mysql_repository.py",
         "test_staff_poof_journey.py",
+        # make test-db runs these on MariaDB with --server.
+        "test_artifact_owner_restart_journey.py",
+        "test_corpse_trap_restart_journey.py",
+        "test_divine_boon_zone_journey.py",
+        "test_flight_network_journey.py",
+        "test_frag_cap_journey.py",
+        "test_information_cache_journey.py",
+        "test_kept_character_approval_journey.py",
+        "test_kept_character_competition.py",
+        "test_kept_character_journey.py",
+        "test_kept_character_matrix.py",
+        "test_kept_character_recovery_journey.py",
+        "test_kept_starter_grant_journey.py",
+        "test_legacy_trap_journey.py",
+        "test_connection_limit_journey.py",
+        "test_castle_key_reset_journey.py",
+        "test_character_stat_choice_journey.py",
+        "test_creation_prompt_journey.py",
+        "test_starter_arrow_journey.py",
+        "test_gith_monk_journey.py",
+        "test_gmcp_control_journey.py",
+        "test_game_loop_session_journey.py",
+        "test_creation_deferred_play_journey.py",
+        "test_shop_multi_buy_journey.py",
+        "test_norent_key_rent_journey.py",
+        "test_websocket_session_guard_journey.py",
+        "test_storage_chest_crash_journey.py",
+        "test_shaman_totems.py",
+        "test_mariadb_hardcore_death_journey.py",
+        "test_ranged_kill_xp_journey.py",
+        "test_account_recovery_journey.py",
+        "test_mariadb_first_session_currency.py",
+        "test_area_coin_pickup.py",
+        "test_log_hygiene_journey.py",
+        "test_hostname_files_journey.py",
+        "test_studioproc_duplicate_record.py",
+        "test_frag_cap_repository.py",
+        "test_mariadb_combat_journey.py",
+        "test_mariadb_collector_intake_journey.py",
+        "test_mariadb_death_restart_journey.py",
+        "test_mob_gold_dial_runtime.py",
+        "test_mariadb_boot_preflight.py",
+        "test_headbutt_feedback_journey.py",
+        "test_assassin_combat_journey.py",
+        "test_conjurer_gameplay_journey.py",
+        "test_shambler_reflection_journey.py",
+        "test_minor_creation_instrument_journey.py",
+        "test_generated_npc_journey.py",
+        "test_mariadb_chaos_new_character_kit.py",
+        "test_mariadb_newbie_regrant_journey.py",
+        "test_mariadb_auction_coin_put_journey.py",
+        "test_mariadb_full_world_boot.py",
+        "test_mariadb_locker_journey.py",
+        "test_pet_restart_journey.py",
     }
 )
 
@@ -126,14 +191,27 @@ def discover_tests(match: str | None) -> list[Path]:
     return tests
 
 
+def longest_first(tests: list[Path]) -> list[Path]:
+    """Order tests by their last time in bin/test-history, longest first, so that a long test
+    does not start late and hold the run open alone. A test with no time goes first."""
+    seconds: dict[str, float] = {}
+    for record in sorted((ROOT / "bin/test-history").glob("*.json")):
+        try:
+            for test in json.loads(record.read_text())["tests"]:
+                seconds[test["path"]] = test["seconds"]
+        except (OSError, ValueError, KeyError, TypeError):
+            continue
+    return sorted(tests, key=lambda path: -seconds.get(relative(path), float("inf")))
+
+
 def automatic_jobs() -> int:
     return min(MAX_AUTOMATIC_JOBS, max(1, os.cpu_count() or 1))
 
 
-def partition_tests(tests: list[Path]) -> tuple[list[Path], list[Path]]:
-    parallel = [path for path in tests if path.name not in RESOURCE_INTENSIVE_TEST_NAMES]
-    resource_intensive = [path for path in tests if path.name in RESOURCE_INTENSIVE_TEST_NAMES]
-    return parallel, resource_intensive
+def deadline_for(path: Path) -> float:
+    if path.name in RESOURCE_INTENSIVE_TEST_NAMES:
+        return JOURNEY_DEADLINE_SECONDS
+    return POOLED_DEADLINE_SECONDS
 
 
 # The tests now running, so that a runner that is stopped can end them too; once it is
@@ -211,7 +289,7 @@ def parse_args() -> argparse.Namespace:
         "--jobs",
         type=int,
         default=0,
-        help="parallel workers (0: automatic, capped at 8)",
+        help="parallel workers (0: automatic, capped at 16)",
     )
     parser.add_argument(
         "--match",
@@ -271,17 +349,30 @@ def main() -> int:
         return 2
 
     os.environ.setdefault("DURIS_REGRESSION_BUILD_CACHE", str(ROOT / "bin/regression-artifacts"))
+    # Nearly every harness compiles its sources and links in one g++ command, which ccache
+    # cannot cache: most of the suite's time went to compiling the same sources again.
+    # scripts/mutate/g++ splits such a command into a cached compile per source and a link,
+    # with the flags and diagnostics unchanged. Coverage's g++ has to see every compile.
+    if "COVERAGE_DATA" not in os.environ:
+        os.environ["PATH"] = f"{ROOT / 'scripts/mutate'}{os.pathsep}{os.environ.get('PATH', '')}"
+        if "CCACHE_DIR" not in os.environ:
+            # Size only the runner's own cache; never trim a developer's.
+            os.environ["CCACHE_DIR"] = str(ROOT / "bin/test-ccache")
+            os.environ.setdefault("CCACHE_MAXSIZE", "10G")
+        # Harnesses are written to random directories. Their path reaches only __FILE__
+        # (assertion text) and debug information, so it must not defeat the cache.
+        os.environ.setdefault("CCACHE_SLOPPINESS", "file_macro")
+        os.environ.setdefault("CCACHE_NOHASHDIR", "1")
     jobs = args.jobs or automatic_jobs()
-    parallel_tests, resource_intensive_tests = partition_tests(tests)
+    # A longest-first pool starts slow tests early and fills spare workers with
+    # short tests. The strict telemetry pulse-budget check runs separately below.
+    ordered = longest_first(tests)
     started = time.monotonic()
     started_utc = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     failures: list[TestResult] = []
     results: list[TestResult] = []
     completed_count = 0
-    print(
-        f"Running {len(tests)} Python regression tests with {jobs} worker(s), "
-        f"then {len(resource_intensive_tests)} journey(s) with {jobs} worker(s)"
-    )
+    print(f"Running {len(tests)} Python regression tests with {jobs} worker(s), longest first")
 
     def report(result: TestResult) -> None:
         nonlocal completed_count
@@ -304,11 +395,11 @@ def main() -> int:
             print(f"--- {relative(result.path)} output ---")
             print(result.output.rstrip() or "(no output)", flush=True)
 
-    def run_all(paths: list[Path], workers: int, deadline: float) -> None:
+    def run_all(paths: list[Path], workers: int) -> None:
         with ThreadPoolExecutor(max_workers=workers) as executor:
             try:
                 futures: dict[Future[TestResult], Path] = {
-                    executor.submit(run_test, path, deadline): path for path in paths
+                    executor.submit(run_test, path, deadline_for(path)): path for path in paths
                 }
                 pending = set(futures)
                 last_progress = time.monotonic()
@@ -326,9 +417,11 @@ def main() -> int:
                 stop_running_tests()
                 raise
 
-    run_all(parallel_tests, jobs, POOLED_DEADLINE_SECONDS)
-    # Journeys also compile helpers, so keep their work inside the requested limit.
-    run_all(resource_intensive_tests, jobs, JOURNEY_DEADLINE_SECONDS)
+    # This test measures a hard wall-clock pulse budget. Run it after the
+    # compilation pool so scheduler contention is not counted as game-thread work.
+    isolated = [path for path in ordered if path.name == "test_telemetry_posthog.py"]
+    run_all([path for path in ordered if path not in isolated], jobs)
+    run_all(isolated, 1)
 
     write_history(results, started_utc, args.match, jobs)
     if failures:

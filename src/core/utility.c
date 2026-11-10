@@ -63,6 +63,12 @@ using namespace std;
 #include "sql/sql_pool.h"
 #include "sql/sql_player.h"
 #include "world/weather.h"
+#include "abilities/abilities.h"
+
+extern int ophidian_invisible_level();
+extern int evasion_remove_chance();
+extern int evasion_snake_roll(const Rolls &rolls);
+extern int combat_mind_quaff_chance(int chance);
 
 /*
  * extern variables
@@ -1731,7 +1737,8 @@ bool ac_can_see_from(P_char sub, P_char obj, int viewer_room)
 		}
 
 		if (!IS_AFFECTED(sub, AFF_DETECT_INVISIBLE) &&
-		    !(has_innate(sub, INNATE_OPHIDIAN_EYES) && GET_LEVEL(sub) > 45) &&
+		    !(has_innate(sub, INNATE_OPHIDIAN_EYES) &&
+		      GET_LEVEL(sub) > ophidian_invisible_level()) &&
 		    !(IS_NPC(obj) && (obj->following == sub) &&
 		      IS_AFFECTED4(sub, AFF4_SENSE_FOLLOWER)))
 		{
@@ -2018,7 +2025,7 @@ bool ac_can_see_obj(P_char sub, P_obj obj, int zrange)
 
 	/* Check to see if object is invis */
 	if (IS_SET(obj->extra_flags, ITEM_INVISIBLE) && !IS_AFFECTED(sub, AFF_DETECT_INVISIBLE) &&
-	    !(has_innate(sub, INNATE_OPHIDIAN_EYES) && GET_LEVEL(sub) > 45))
+	    !(has_innate(sub, INNATE_OPHIDIAN_EYES) && GET_LEVEL(sub) > ophidian_invisible_level()))
 		return FALSE;
 
 	/* Check if subject is blind */
@@ -2270,13 +2277,14 @@ void ADD_MONEY(P_char ch, int amount)
 		return;
 	if (IS_PC(ch) && GET_PID(ch) > 0)
 	{
+		const uint64_t revision = ch->only.pc->wallet_revision;
 		if (!currency_transaction_submit_wallet_value(
 			    ch, amount, currency_reason_type::wallet_reward, 0,
 			    critical_source_site::command, critical_deadline_class::interactive,
-			    currency_adjustment_committed, nullptr, 0))
+			    currency_adjustment_committed, nullptr, 0) ||
+		    ch->only.pc->wallet_revision == revision)
 		{
-			logit(LOG_WIZ, "ADD_MONEY: wallet transaction submission failed for pid %d",
-			      GET_PID(ch));
+			logit(LOG_WIZ, "ADD_MONEY: wallet credit failed for pid %d", GET_PID(ch));
 			if (insert_money_pickup(GET_PID(ch), amount))
 				send_to_char(
 					"Your coin credit is waiting at the auction house.\r\n",
@@ -2361,12 +2369,14 @@ static void currency_adjustment_committed(P_char ch, bool committed,
 
 int SUB_BALANCE(P_char ch, int amount, int mode)
 {
-	if (!ch || amount <= 0 || mode != 0)
+	if (!ch || IS_NPC(ch) || !ch->only.pc || GET_PID(ch) <= 0 || amount <= 0 || mode != 0)
 		return -1;
+	const uint64_t revision = ch->only.pc->wallet_revision;
 	if (!currency_transaction_submit_bank_payment(
 		    ch, amount, currency_reason_type::bank_payment, 0,
 		    critical_source_site::command, critical_deadline_class::interactive,
-		    currency_adjustment_committed, nullptr, 0))
+		    currency_adjustment_committed, nullptr, 0) ||
+	    ch->only.pc->wallet_revision == revision)
 		return -1;
 	return 0;
 }
@@ -2377,17 +2387,23 @@ int SUB_MONEY(P_char ch, int amount, int mode)
 
 	if (amount <= 0)
 		return -1;
-	if (amount > GET_MONEY(ch))
+	if (amount > GET_COPPER(ch) + 10LL * GET_SILVER(ch) + 100LL * GET_GOLD(ch) +
+			     1000LL * GET_PLATINUM(ch))
 		return -1;
 	if (mode != 0)
 		return -1;
 	if (IS_PC(ch) && GET_PID(ch) > 0)
-		return currency_transaction_submit_wallet_value(
-			       ch, -(int64_t)amount, currency_reason_type::wallet_spend, 0,
-			       critical_source_site::command, critical_deadline_class::interactive,
-			       currency_adjustment_committed, nullptr, 0) ?
-			       0 :
-			       -1;
+	{
+		// The wallet completes synchronously. Admission alone can still refuse a spend.
+		const uint64_t revision = ch->only.pc->wallet_revision;
+		if (!currency_transaction_submit_wallet_value(
+			    ch, -(int64_t)amount, currency_reason_type::wallet_spend, 0,
+			    critical_source_site::command, critical_deadline_class::interactive,
+			    currency_adjustment_committed, nullptr, 0) ||
+		    ch->only.pc->wallet_revision == revision)
+			return -1;
+		return 0;
+	}
 
 	if (amount > GET_COPPER(ch))
 	{
@@ -2886,6 +2902,18 @@ bool aggressive_to_class(P_char ch, P_char target)
 	return FALSE;
 }
 
+// Aggressive undead this many levels below a holder of undead fealty leave it be.
+static int undead_fealty_gap()
+{
+	return 10;
+}
+
+std::string undead_fealty_innate_facts(P_char /*ch*/)
+{
+	return fact("Undead that will not attack you first",
+		    std::to_string(undead_fealty_gap()) + " or more levels below you");
+}
+
 bool has_native_planar_affinity_at(P_char ch, int room)
 {
 	if (!ch || IS_NPC(ch) || room < 0 || room > top_of_world)
@@ -2969,7 +2997,7 @@ bool aggressive_to_at(P_char ch, P_char target, int target_room)
 				return FALSE;
 		}
 
-		if ((GET_LEVEL(ch) <= (GET_LEVEL(target) - 10)) &&
+		if ((GET_LEVEL(ch) <= (GET_LEVEL(target) - undead_fealty_gap())) &&
 		    has_innate(target, INNATE_UNDEAD_FEALTY) && IS_UNDEADRACE(ch) &&
 		    !affected_by_spell(ch, TAG_CTF) && !CheckFor_remember(ch, target))
 			return FALSE; // Liches are revered/feared by lower level undead - Jexni 8/18/08
@@ -3191,6 +3219,33 @@ bool aggressive_to_basic(P_char ch, P_char target) // For exp checks
 	return FALSE;
 }
 
+// Intelligence and power saves pass at once on a 1-100 roll at or below this.
+static int quick_thinking_percent()
+{
+	return get_property("saves.quickthinking.percentage", 15);
+}
+
+static int quick_thinking_roll(const Rolls &rolls)
+{
+	return rolls.number(1, 100);
+}
+
+std::string quick_thinking_innate_facts(P_char /*ch*/)
+{
+	return fact("Chance an intelligence or power save passes at once",
+		    chance_under(quick_thinking_percent() + 1, quick_thinking_roll(lowest_rolls),
+				 quick_thinking_roll(highest_rolls))) +
+	       "  A saving throw you fail is rolled once more.\n" +
+	       fact("Your chance not to spill a potion in combat",
+		    std::to_string(combat_mind_quaff_chance(100)) + "% of normal");
+}
+
+// What haste adds to dexterity saves, and to a non-monk's agility saves.
+int haste_stat_save_bonus()
+{
+	return 2;
+}
+
 /*
  * saving throws based on ch's stats, rather than magical saves.  Only DEX/AGI/INT
  * are imped so far, but all stats can be done with this function.  'mod' is
@@ -3225,7 +3280,7 @@ bool StatSave(P_char ch, int stat, int mod)
 		if (!GET_CLASS(ch, CLASS_MONK))
 		{
 			if (IS_AFFECTED(ch, AFF_HASTE))
-				save_num += 2;
+				save_num += haste_stat_save_bonus();
 
 			if (IS_AFFECTED2(ch, AFF2_SLOW))
 				save_num -= 2;
@@ -3266,7 +3321,7 @@ bool StatSave(P_char ch, int stat, int mod)
 			save_num += 3;
 
 		if (IS_AFFECTED(ch, AFF_HASTE))
-			save_num += 2;
+			save_num += haste_stat_save_bonus();
 
 		if (IS_AFFECTED2(ch, AFF2_SLOW))
 			save_num -= 2;
@@ -3293,13 +3348,13 @@ bool StatSave(P_char ch, int stat, int mod)
 	case APPLY_INT:
 		save_num = STAT_INDEX(GET_C_INT(ch)) + mod;
 		if (has_innate(ch, INNATE_QUICK_THINKING) &&
-		    number(1, 100) <= get_property("saves.quickthinking.percentage", 15))
+		    quick_thinking_roll(live_rolls) <= quick_thinking_percent())
 			return TRUE;
 		break;
 	case APPLY_POW:
 		save_num = STAT_INDEX(GET_C_POW(ch)) + mod;
 		if (has_innate(ch, INNATE_QUICK_THINKING) &&
-		    number(1, 100) <= get_property("saves.quickthinking.percentage", 15))
+		    quick_thinking_roll(live_rolls) <= quick_thinking_percent())
 			return TRUE;
 		break;
 	case APPLY_CON:
@@ -5166,6 +5221,18 @@ ClassSkillInfo SKILL_DATA_ALL(P_char ch, int skill)
 	return dummy;
 }
 
+// The two-handed slashing rating the mastery gives, whatever was trained.
+static int two_handed_sword_mastery_rating()
+{
+	return 100;
+}
+
+std::string two_handed_sword_mastery_innate_facts(P_char /*ch*/)
+{
+	return fact("Two-handed slashing rating",
+		    std::to_string(two_handed_sword_mastery_rating()));
+}
+
 int GET_CHAR_SKILL_P(P_char ch, int skl)
 {
 	struct affected_type *af;
@@ -5180,7 +5247,7 @@ int GET_CHAR_SKILL_P(P_char ch, int skl)
 	// Centaurs get innate 2h slashing at lvl 31.
 	if ((skl == SKILL_2H_SLASHING) && (has_innate(ch, TWO_HANDED_SWORD_MASTERY)))
 	{
-		return 100;
+		return two_handed_sword_mastery_rating();
 	}
 
 	if (skl <= 0)
@@ -5234,6 +5301,11 @@ int GET_CHAR_SKILL_P(P_char ch, int skl)
 	af = ch->affected;
 	while (af)
 	{
+		if (af->flags & AFFTYPE_SET_SUSPENDED)
+		{
+			af = af->next;
+			continue;
+		}
 		if ((af->location == APPLY_SKILL_ADD) && (af->loc2 == skl) && skllvl)
 			mod += af->modifier;
 		else if ((af->location == APPLY_SKILL_GRANT) && (af->loc2 == skl))
@@ -5329,7 +5401,7 @@ P_char get_random_char_in_room(int room, P_char ch, int flag)
  * generic check for affect of area spells, returns: 1 - victim should be
  * hit by ch's area spell 0 - victim should not be hit by ch's area spell
  */
-bool should_area_hit(P_char ch, P_char victim)
+static bool should_area_hit_with_position(P_char ch, P_char victim, bool caster_position)
 {
 	P_char c_leader = NULL, v_leader = NULL;
 	struct affected_type *af;
@@ -5337,7 +5409,7 @@ bool should_area_hit(P_char ch, P_char victim)
 	if (!ch || !victim)
 		return FALSE;
 
-	if (victim->specials.z_cord != ch->specials.z_cord)
+	if (caster_position && victim->specials.z_cord != ch->specials.z_cord)
 		return FALSE;
 
 	if (ch == victim)
@@ -5363,7 +5435,8 @@ bool should_area_hit(P_char ch, P_char victim)
 	if (IS_TRUSTED(victim) && (GET_OPPONENT(victim) != ch))
 		return FALSE;
 
-	if (IS_ROOM(ch->in_room, ROOM_SINGLE_FILE) && !AdjacentInRoom(ch, victim))
+	if (caster_position && IS_ROOM(ch->in_room, ROOM_SINGLE_FILE) &&
+	    !AdjacentInRoom(ch, victim))
 		return FALSE;
 
 	if ((af = get_spell_from_char(victim, TAG_IMMUNE_AREA)))
@@ -5404,6 +5477,16 @@ bool should_area_hit(P_char ch, P_char victim)
 	    */
 
 	return TRUE;
+}
+
+bool should_area_hit(P_char ch, P_char victim)
+{
+	return should_area_hit_with_position(ch, victim, true);
+}
+
+bool should_stationary_area_hit(P_char ch, P_char victim)
+{
+	return should_area_hit_with_position(ch, victim, false);
 }
 
 /*
@@ -5602,9 +5685,8 @@ int cast_as_damage_area(P_char ch, void (*spell_func)(int, P_char, char *, int, 
 		if (has_innate(area_target, INNATE_EVASION) &&
 		    GET_SPEC(area_target, CLASS_MONK, SPEC_WAYOFSNAKE))
 		{
-			if ((GET_LEVEL(area_target) -
-			     ((int)get_property("innate.evasion.removechance", 15.000))) >
-			    number(1, 100))
+			if ((GET_LEVEL(area_target) - evasion_remove_chance()) >
+			    evasion_snake_roll(live_rolls))
 			{
 				send_to_char(
 					"You twist out of the way avoiding the harmful magic!\n",
@@ -5745,6 +5827,35 @@ bool grouped(P_char ch, P_char ch2)
 	}
 
 	return false;
+}
+
+// The percent innate evasion works from, in spell damage and area spells.
+int evasion_remove_chance()
+{
+	return ((int)get_property("innate.evasion.removechance", 15.000));
+}
+
+// Way of the dragon avoids spell damage when evasion_remove_chance() beats this.
+int evasion_dragon_roll(const Rolls &rolls)
+{
+	return rolls.number(1, 100);
+}
+
+// Way of the snake avoids an area spell when the level less that chance beats this.
+int evasion_snake_roll(const Rolls &rolls)
+{
+	return rolls.number(1, 100);
+}
+
+std::string evasion_innate_facts(P_char ch)
+{
+	return fact("Way of the dragon: chance to avoid spell damage",
+		    chance_under(evasion_remove_chance(), evasion_dragon_roll(lowest_rolls),
+				 evasion_dragon_roll(highest_rolls))) +
+	       fact("Way of the snake: chance to avoid an area spell",
+		    chance_under(GET_LEVEL(ch) - evasion_remove_chance(),
+				 evasion_snake_roll(lowest_rolls),
+				 evasion_snake_roll(highest_rolls)));
 }
 
 int get_takedown_size(P_char ch)
@@ -6582,7 +6693,7 @@ bool has_touch_stone(P_char ch)
 	return FALSE;
 }
 
-bool item_load_check(P_obj item, int /*ival*/, int zone_percent)
+bool item_load_check(P_obj item, int zone_percent)
 {
 	// Artifacts are more rare
 	if (IS_ARTIFACT(item))

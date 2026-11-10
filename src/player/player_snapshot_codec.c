@@ -18,6 +18,7 @@
 #include "core/files.h"
 #include "classes/necromancy.h"
 #include "world/vnum.obj.h"
+#include "sql/item_extra_descr_codec.h"
 
 #include <algorithm>
 #include <limits>
@@ -182,11 +183,33 @@ bool decode_index_rows(decoder &in, std::vector<player_index_value_snapshot> &ro
 			 });
 }
 
+bool valid_named_set_origin(const player_item_snapshot &item)
+{
+	bool seen = false;
+	for (const auto &description : item.extra_descriptions)
+	{
+		int zone = 0;
+		const auto status = sql_decode_named_set_origin(description.keyword,
+								description.description, &zone);
+		if (status == sql_named_set_origin_decode_status::invalid ||
+		    (status == sql_named_set_origin_decode_status::decoded &&
+		     (seen || description.spellbook || !description.spell_ids.empty())))
+			return false;
+		seen = seen || status == sql_named_set_origin_decode_status::decoded;
+	}
+	return true;
+}
+
 void encode_items(encoder &out, const std::vector<player_item_snapshot> &items)
 {
 	out.vector(items,
 		   [&](const player_item_snapshot &row)
 		   {
+			   if (!valid_named_set_origin(row))
+			   {
+				   out.valid = false;
+				   return;
+			   }
 			   out.number<int32_t>(row.parent_index);
 			   out.number<int16_t>(row.equipment_slot);
 			   out.number<uint64_t>(row.object_uid);
@@ -285,7 +308,8 @@ bool decode_items(decoder &in, std::vector<player_item_snapshot> &items)
 							in.vector(description.spell_ids,
 								  [&](int32_t &skill_id)
 								  { return in.number(skill_id); });
-					 });
+					 }) &&
+			       valid_named_set_origin(row);
 		},
 		true);
 }
@@ -329,8 +353,8 @@ bool valid_trade_tag(const player_snapshot &snapshot)
 
 bool valid_metadata(const player_snapshot &snapshot)
 {
-	// This tag is a SQL transaction input, not part of the persisted flat-file
-	// snapshot codec. Never silently encode an after-image without its history.
+	// This tag is a SQL transaction input, not part of the persisted snapshot
+	// codec. Never silently encode an after-image without its history.
 	if (snapshot.pending_world_quest.present || !valid_trade_tag(snapshot))
 		return false;
 	return snapshot.schema_version == PLAYER_SNAPSHOT_SCHEMA_VERSION && snapshot.pid > 0 &&
@@ -655,6 +679,7 @@ player_snapshot_codec_result player_snapshot_encode(const player_snapshot &snaps
 			if (tag.has_cargo_effect)
 				encode_affect(out, tag.cargo_effect);
 		}
+		out.string(snapshot.creation_account, 50);
 		if (!out.valid || out.bytes.size() > PLAYER_SNAPSHOT_MAX_BYTES)
 			return player_snapshot_codec_result::limit_exceeded;
 		player_snapshot validated = {};
@@ -689,7 +714,7 @@ player_snapshot_codec_result player_snapshot_decode(const uint8_t *encoded, size
 		if (wire_version == 1 || wire_version == 3 || wire_version == 5 ||
 		    wire_version == 7 || wire_version == 8 || wire_version == 9 ||
 		    wire_version == 10 || wire_version == 11 || wire_version == 12 ||
-		    wire_version == 13)
+		    wire_version == 13 || wire_version == 14)
 			snapshot.schema_version = PLAYER_SNAPSHOT_SCHEMA_VERSION;
 		if (snapshot.schema_version != PLAYER_SNAPSHOT_SCHEMA_VERSION)
 			return player_snapshot_codec_result::unsupported_version;
@@ -821,6 +846,8 @@ player_snapshot_codec_result player_snapshot_decode(const uint8_t *encoded, size
 					return player_snapshot_codec_result::invalid_value;
 			}
 		}
+		if (wire_version >= 15 && !in.string(snapshot.creation_account, 50))
+			return in.failure();
 		if (!valid_trade_tag(snapshot))
 			return player_snapshot_codec_result::invalid_value;
 		if (in.offset != in.size)

@@ -5,6 +5,7 @@ import subprocess
 from pathlib import Path
 
 from _paths import ROOT, HARNESS_STUBS, extract_function, source
+from _innate_numbers import with_innate_numbers
 
 innates = source('innates.c').read_text()
 table = re.search(r'const struct innate_data innates_data\[LAST_INNATE \+ 1\] = .*?\n};', innates, re.S).group()
@@ -25,7 +26,9 @@ prelude = r'''
 #include "item/objmisc.h"
 #include "net/comm.h"
 #include "magic/spells.h"
+#include "abilities/abilities.h"
 #include <cassert>
+#include <cstdio>
 #include <cstring>
 #include <cstdlib>
 #include <string>
@@ -39,6 +42,9 @@ zone_data *zone_table = zones;
 hometown_data hometowns[1]{};
 time_info_data time_info{};
 Skill skills[MAX_SKILLS];
+float combat_by_race[LAST_RACE + 1][3];
+float combat_by_class[CLASS_COUNT + 1][2];
+int damroll_cap;
 static int attacks;
 int GET_CLASS(P_char ch, unsigned int cls) { return (ch->player.m_class & cls) != 0; }
 bool affected_by_spell(P_char, int) { return false; }
@@ -77,6 +83,7 @@ void attack(P_char, P_char) { ++attacks; }
 '''
 
 functions = [
+    ('abilities.c', 'std::string damage_modifier_innate('),
     ('utility.c', 'int flag2idx('),
     ('innates.c', 'static int innate_char_race('),
     ('innates.c', 'static int innate_unlock_level('),
@@ -95,6 +102,8 @@ functions = [
 
 driver = r'''
 int main() {
+    for (auto &race : combat_by_race) race[1] = 1.0f;
+    for (auto &cls : combat_by_class) cls[1] = 1.0f;
     assign_innates();
     char_data player{}, mob{}, pet{}, groupmate{};
     pc_only_data pc{};
@@ -224,8 +233,8 @@ int main() {
 build = ROOT / 'bin/tests/planar-affinity'
 build.mkdir(parents=True, exist_ok=True)
 cpp, binary = build / 'harness.cpp', build / 'harness'
-cpp.write_text(prelude + macros + arrays + table + '\n'.join(
-    extract_function(file, signature) for file, signature in functions) + driver)
+cpp.write_text(with_innate_numbers(prelude + macros + arrays + table + '\n'.join(
+    extract_function(file, signature) for file, signature in functions) + driver))
 subprocess.run(['g++', '-std=c++20', '-g', '-ffunction-sections', '-fdata-sections',
                 '-fsanitize=address,undefined', '-fno-omit-frame-pointer', '-fno-pie', '-no-pie',
                 '-I' + str(ROOT / 'src'), str(cpp), str(HARNESS_STUBS), '-Wl,--gc-sections',

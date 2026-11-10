@@ -585,7 +585,9 @@ int race_size(int race);
 
 #define GET_ITEM_TYPE(obj) ((obj)->type)
 
-#define CAN_WEAR(obj, part) (IS_SET((obj)->wear_flags, part))
+#define CAN_WEAR(obj, part)                 \
+	(IS_SET((obj)->wear_flags, part) || \
+	 ((part) == ITEM_ATTACH_BELT && GET_ITEM_TYPE(obj) == ITEM_INSTRUMENT))
 
 #define OBJ_VNUM(obj)                                                                             \
 	(!obj ? panic_corruption_int("utils", "OBJ_VNUM called with NULL obj at %s:%d", __FILE__, \
@@ -646,6 +648,7 @@ int race_size(int race);
 #define _3RD_EXIT(ch, door) (world[_2ND_EXIT(ch, door)->to_room].dir_option[door])
 #define VIRTUAL_EXIT(rnum, door) (world[rnum].dir_option[door])
 
+// Preliminary exit selection only; actual movement must enforce door permissions for every mover.
 #define CAN_GO(ch, door)                                                                       \
 	(ch && EXIT(ch, door) && (EXIT(ch, door)->to_room != NOWHERE) &&                       \
 	 (!IS_SET(EXIT(ch, door)->exit_info, EX_CLOSED) || IS_AFFECTED2(ch, AFF2_PASSDOOR)) && \
@@ -1433,7 +1436,7 @@ char *CRYPT2(char *passwd, char *name);
 	 (GET_C_STR(ch) < 181) ? 120 : \
 				 130)
 
-#define ITEM_LOAD_CHECK(item, ival, zone_percent) item_load_check(item, ival, zone_percent)
-bool item_load_check(P_obj item, int ival, int zone_percent);
+#define ITEM_LOAD_CHECK(item, zone_percent) item_load_check(item, zone_percent)
+bool item_load_check(P_obj item, int zone_percent);
 
 #endif /* _DURIS_UTILS_H_ */

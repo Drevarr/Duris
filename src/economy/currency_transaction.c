@@ -16,13 +16,10 @@
 #include "economy/currency_value.h"
 #include "economy/auction_transaction.h"
 #include "economy/collector_transaction.h"
-#include "economy/shop_trade_transaction.h"
 
 #include "core/files.h"
-#include "flatfile/flatfile_player_repository.h"
 #include "net/gmcp.h"
 #include "persistence/persistence_checkpoint.h"
-#include "persistence/persistence_mode.h"
 #include "player/player_save_pipeline.h"
 #include "player/player_snapshot_repository.h"
 #include "sql/sql_player.h"
@@ -38,6 +35,7 @@
 #include <new>
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
 
 extern P_room world;
 
@@ -46,6 +44,7 @@ namespace
 currency_transaction_health health = {};
 
 std::unordered_map<uint32_t, int64_t> reserved_trade_payments;
+std::unordered_set<uint32_t> atomic_trade_wallets;
 std::unordered_map<uint32_t, int64_t> reserved_world_quests;
 uint32_t reserved_chest_pid = 0;
 std::string reserved_chest_account;
@@ -112,31 +111,14 @@ bool player_account(P_char character, std::string *account)
 void queue_bank_delta(const std::string &account, int racewar, const currency_vector &delta)
 {
 	static uint64_t sequence = 0;
-	persistence_job_write_fn write;
-	if (persistence_mode_get() == PERSISTENCE_MODE_FLATFILE_PRIMARY)
-	{
-		const char *root = persistence_mode_flatfile_root();
-		if (root)
-			write = [path = std::string(root), account, racewar, amounts = delta.amount,
-				 prepared = flatfile_authority_operation{}]() mutable
-			{
-				std::string error;
-				return flatfile_bank_delta_apply(path, account,
-								 static_cast<int8_t>(racewar),
-								 amounts, &prepared, &error);
-			};
-	}
-	else
-	{
-		bank_delta_snapshot bank;
-		bank.account_name = account;
-		bank.racewar = racewar;
-		bank.delta = delta.amount;
-		write = [bank]() { return bank_delta_repository_apply_from_pool(bank); };
-	}
-	if (write && persistence_writer_submit(persistence_job_kind::bank, ++sequence,
-					       sizeof(delta) + account.size(), std::move(write)) ==
-			     player_save_submit_result::accepted)
+	bank_delta_snapshot bank;
+	bank.account_name = account;
+	bank.racewar = racewar;
+	bank.delta = delta.amount;
+	if (persistence_writer_submit(persistence_job_kind::bank, ++sequence,
+				      sizeof(delta) + account.size(), [bank]()
+				      { return bank_delta_repository_apply_from_pool(bank); }) ==
+	    player_save_submit_result::accepted)
 	{
 		++health.bank_deltas;
 		return;
@@ -158,6 +140,8 @@ bool apply(P_char character, const currency_command_payload &payload,
 	    (payload.pid == reserved_chest_pid ||
 	     std::any_of(payload.bank_delta.amount.begin(), payload.bank_delta.amount.end(),
 			 [](int64_t delta) { return delta != 0; })))
+		return false;
+	if (atomic_trade_wallets.count(payload.pid))
 		return false;
 	if (reserved_world_quests.count(payload.pid) &&
 	    std::any_of(payload.wallet_delta.amount.begin(), payload.wallet_delta.amount.end(),
@@ -380,6 +364,7 @@ currency_transaction_health currency_transaction_health_copy(void)
 void currency_transaction_reset_for_tests(void)
 {
 	reserved_trade_payments.clear();
+	atomic_trade_wallets.clear();
 	reserved_world_quests.clear();
 	reserved_chest_pid = 0;
 	reserved_chest_account.clear();
@@ -404,9 +389,36 @@ catch (const std::bad_alloc &)
 	return false;
 }
 
+bool currency_transaction_reserve_atomic_trade(P_char character, int64_t payment)
+try
+{
+	if (!currency_transaction_reserve_trade(character, payment))
+		return false;
+	const uint32_t pid = static_cast<uint32_t>(GET_PID(character));
+	try
+	{
+		if (!atomic_trade_wallets.insert(pid).second)
+		{
+			reserved_trade_payments.erase(pid);
+			return false;
+		}
+	}
+	catch (...)
+	{
+		reserved_trade_payments.erase(pid);
+		throw;
+	}
+	return true;
+}
+catch (const std::bad_alloc &)
+{
+	return false;
+}
+
 void currency_transaction_release_trade(uint32_t pid)
 {
 	reserved_trade_payments.erase(pid);
+	atomic_trade_wallets.erase(pid);
 }
 
 bool currency_transaction_publish_trade(P_char character, int64_t payment)
@@ -438,8 +450,7 @@ try
 	    currency_transaction_wallet_busy(character) ||
 	    reserved_trade_payments.count(GET_PID(character)) ||
 	    auction_transaction_player_busy(character) ||
-	    collector_transaction_player_busy(character) ||
-	    shop_trade_transaction_player_busy(character))
+	    collector_transaction_player_busy(character))
 		return false;
 	const currency_vector before{ { GET_COPPER(character), GET_SILVER(character),
 					GET_GOLD(character), GET_PLATINUM(character) } };
@@ -486,7 +497,8 @@ bool currency_transaction_wallet_busy(P_char character)
 {
 	return currency_transaction_chest_busy(character) ||
 	       (character && IS_PC(character) && GET_PID(character) > 0 &&
-		reserved_world_quests.count(static_cast<uint32_t>(GET_PID(character))));
+		(atomic_trade_wallets.count(static_cast<uint32_t>(GET_PID(character))) ||
+		 reserved_world_quests.count(static_cast<uint32_t>(GET_PID(character)))));
 }
 
 bool currency_transaction_chest_account_busy(const char *account_name)
@@ -509,8 +521,7 @@ bool currency_transaction_reserve_chest(P_char character)
 	if (reserved_chest_pid || !reserved_trade_payments.empty() ||
 	    !player_account(character, &account) || currency_transaction_wallet_busy(character) ||
 	    auction_transaction_player_busy(character) ||
-	    collector_transaction_player_busy(character) ||
-	    shop_trade_transaction_player_busy(character))
+	    collector_transaction_player_busy(character))
 		return false;
 	reserved_chest_pid = static_cast<uint32_t>(GET_PID(character));
 	reserved_chest_account = std::move(account);

@@ -8,17 +8,21 @@
 #include "core/utils.h"
 #include "account/account.h"
 #include "item/storage_lockers.h"
+#include "item/starter_kit_intent.h"
+#include "item/item_transfer_command.h"
+#include "player/player_revision_state.h"
 #include "economy/boon_reward_transaction.h"
-#include "economy/shop_trade_transaction.h"
 #include "guild/artifact_admission.h"
 #include "guild/artifact_guild_delivery.h"
 #include "guild/artifact_guild_state.h"
 #include "persistence/persistence_log.h"
 #include "player/player_save_worker.h"
+#include "player/player_save_pipeline.h"
 #include "player/player_load_items.h"
 #include "economy/divine_boon_activity.h"
 #include "economy/divine_boon_delivery.h"
 #include "sql/sql_async.h"
+#include "sql/item_owner_rows.h"
 #include "economy/divine_trade_runtime.h"
 #include "economy/currency_transaction.h"
 
@@ -26,6 +30,87 @@
 #include <cerrno>
 
 #define HARNESS_STUB __attribute__((weak))
+// Output-only fixtures can keep their existing raw-queue capture. Runtime link
+// fixtures link output_links.c, replacing this boundary with the real scanner.
+HARNESS_STUB void write_to_q(const char *, txt_q *, int)
+{
+	std::abort();
+}
+HARNESS_STUB void write_output(const char *text, txt_q *queue)
+{
+	write_to_q(text, queue, 1);
+}
+// Ordinary-effect fixtures have no named equipment. Named-set regressions link
+// the real implementation, which replaces these empty ownership boundaries.
+HARNESS_STUB named_set_ordinary_cast::named_set_ordinary_cast(P_char, P_char, int) {}
+HARNESS_STUB named_set_ordinary_cast::~named_set_ordinary_cast() {}
+HARNESS_STUB void update_named_set_suspension(P_char, const affected_type *) {}
+HARNESS_STUB int named_set_cooldown_remaining(P_char, int)
+{
+	return 0;
+}
+HARNESS_STUB void start_named_set_cooldown(P_char, int, int) {}
+// Ordinary item fixtures do not provide durable starter-kit storage. Dedicated
+// starter/revision tests link the real implementations, overriding these refusals.
+HARNESS_STUB bool starter_kit_intent_bind(uint32_t, const critical_command &)
+{
+	return false;
+}
+HARNESS_STUB bool starter_kit_intent_finish(uint32_t, const critical_command &, bool)
+{
+	return false;
+}
+HARNESS_STUB starter_kit_state starter_kit_intent_read(uint32_t, critical_command *)
+{
+	return starter_kit_state::invalid;
+}
+HARNESS_STUB bool player_revision_snapshot_copy(int, player_revision_snapshot *)
+{
+	return false;
+}
+// A fixture without the save pipeline cannot prepare a new destination container.
+HARNESS_STUB player_save_pipeline_result player_save_pipeline_request(P_char,
+								      player_component_mask_t, int,
+								      int)
+{
+	return player_save_pipeline_result::unavailable;
+}
+HARNESS_STUB bool player_save_pipeline_reserve_trade(uint32_t,
+						     const player_pending_trade_snapshot &)
+{
+	return false;
+}
+HARNESS_STUB void player_save_pipeline_release_trade(uint32_t) {}
+HARNESS_STUB bool currency_transaction_reserve_atomic_trade(P_char, int64_t)
+{
+	return false;
+}
+HARNESS_STUB bool item_transfer_command_decode_result(const uint8_t *, size_t,
+						      item_transfer_result *)
+{
+	return false;
+}
+HARNESS_STUB bool sql_persistence_item_owner_fields_match(unsigned long long, const char *,
+							  unsigned long long, unsigned long long,
+							  const char *const *)
+{
+	return false;
+}
+// Fixtures without the account creation state machine have no pending Keep.
+HARNESS_STUB bool account_creation_pending(int)
+{
+	return false;
+}
+HARNESS_STUB bool account_character_body_held(int, struct descriptor_data *)
+{
+	return false;
+}
+HARNESS_STUB bool account_creation_owner_pending(const char *)
+{
+	return false;
+}
+HARNESS_STUB void account_creation_saved(const player_save_completion &) {}
+HARNESS_STUB void account_creation_pulse() {}
 // Fixtures without the player-save pipeline have no pending quest transition.
 HARNESS_STUB bool player_save_pipeline_world_quest_pending(int)
 {
@@ -36,15 +121,7 @@ HARNESS_STUB bool currency_transaction_wallet_busy(P_char ch)
 {
 	return currency_transaction_chest_busy(ch);
 }
-HARNESS_STUB bool shop_trade_transaction_blocks_commands(P_char)
-{
-	return false;
-}
 struct player_snapshot;
-HARNESS_STUB bool shop_trade_transaction_capture_items(P_char, player_snapshot *)
-{
-	return true;
-}
 // Isolated affect/abort fixtures have no shoreline movement callback to execute.
 HARNESS_STUB void event_water_crossing(P_char, P_char, P_obj, void *) {}
 // Isolated terminal-save fixtures have no account projection or departure state.
@@ -341,11 +418,6 @@ HARNESS_STUB bool collector_transaction_player_busy(P_char)
 	return false;
 }
 
-HARNESS_STUB bool shop_trade_transaction_player_busy(P_char)
-{
-	return false;
-}
-
 HARNESS_STUB int set_obj_condition(P_obj object, int condition)
 {
 	object->condition = condition;
@@ -371,3 +443,13 @@ HARNESS_STUB bool obj_name_matches(P_char, P_obj object, const char *name)
 void __attribute__((weak)) update_group_vitals(P_char) {}
 // Non-group fixtures do not deliver group observer notifications.
 HARNESS_STUB void update_groupies(P_char, bool) {}
+
+__attribute__((weak)) bool kept_character_recovery_pending(int)
+{
+	return false;
+}
+
+__attribute__((weak)) bool kept_character_recovery_owner_pending(const char *)
+{
+	return false;
+}

@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """Full-world flight discovery, tickets, copyover and restart on disposable authority.
 
-No arguments runs the flat-file leg; --backend mariadb --server PATH runs under
-with_disposable_mariadb.sh. No checkout .env or running game is used.
+Run under with_disposable_mariadb.sh; --server PATH uses an existing build.
+Without --server, build the MariaDB server with its real 250 ms clock.
+No checkout .env or running game is used.
 """
 import argparse
 from contextlib import contextmanager
@@ -14,11 +15,11 @@ import re
 import shutil
 import signal
 import subprocess
+import sys
 import tempfile
 import time
-import uuid
 
-import test_flatfile_combat_journey as journey
+import test_mariadb_combat_journey as journey
 from run_world_quest_dual_backend import setup_run_root
 
 ROOT = journey.ROOT
@@ -45,38 +46,7 @@ MASK = sum(1 << (mob - 47015) for mob, _, _ in STOPS)
 
 @contextmanager
 def authority(backend, runtime):
-    env = dict(PATH=os.environ.get('PATH', '/usr/bin:/bin'), ENVIRONMENT='local',
-               REDIS='FALSE', CHAOS_MUD='FALSE', LISTEN_ADDRESS='127.0.0.1',
-               DURIS_WEBSOCKET_LISTEN_ADDRESS='127.0.0.1')
-    if 'LD_LIBRARY_PATH' in os.environ:
-        env['LD_LIBRARY_PATH'] = os.environ['LD_LIBRARY_PATH']
-    if backend == 'flatfile':
-        state = runtime / 'state'
-        state.mkdir(mode=0o700)
-        env.update(PERSISTENCE_MODE='flatfile-primary', FLATFILE_STATE_DIR=str(state))
-        yield env, None
-        return
-    host = os.environ['TEST_DB_HOST']
-    assert host in ('127.0.0.1', 'localhost'), 'use a disposable loopback database'
-    database = 'flight_journey_' + uuid.uuid4().hex[:12]
-    env.update(PERSISTENCE_MODE='mariadb-primary', DB_TLS='FALSE', DB_HOST=host,
-               DB_PORT=os.environ.get('TEST_DB_PORT', '3306'), DB_NAME=database,
-               DB_USER=os.environ['TEST_DB_USER'], DB_PASSWD=os.environ['TEST_DB_PASSWORD'],
-               DB_ALLOWED_TARGETS=host + '/' + database, MYSQL_PWD=os.environ['TEST_DB_PASSWORD'])
-    mysql = ['mysql', '--protocol=tcp', '-h', host, '-P', env['DB_PORT'], '-u', env['DB_USER'], '-N', '-B']
-    mysql.append('--ssl-mode=DISABLED' if '--ssl-mode' in subprocess.check_output(
-        ['mysql', '--help'], text=True, stderr=subprocess.STDOUT) else '--skip-ssl')
-
-    def sql(statement, selected=True):
-        return subprocess.check_output(mysql + ([database] if selected else []),
-                                       input=statement, text=True, env=env).strip()
-
-    sql('CREATE DATABASE ' + database + ' CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci', False)
-    try:
-        sql((ROOT / 'migrations/bootstrap_multithread_safe.sql').read_text())
-        for step in (('adopt', '--kind', 'fresh_bootstrap'), ('run',)):
-            subprocess.run(['python3', 'scripts/migration_runner.py', *step], cwd=ROOT,
-                           env=env, check=True, capture_output=True)
+    with journey.mariadb_authority() as (env, sql):
         # The maintained importer reads only the copied fixture sources and explicit test DB.
         (runtime / 'scripts').mkdir()
         importer = runtime / 'scripts/import_help_to_prod.sh'
@@ -85,8 +55,6 @@ def authority(backend, runtime):
                                   text=True, env=env, capture_output=True, timeout=90)
         assert imported.returncode == 0, imported.stdout[-4000:] + imported.stderr[-4000:]
         yield env, sql
-    finally:
-        sql('DROP DATABASE ' + database, False)
 
 
 def command(client, text, timeout=20):
@@ -100,11 +68,7 @@ def command(client, text, timeout=20):
     return bytes(client.transcript[start:]).decode(errors='replace')
 
 
-def run(binary, backend, build, interruptions_only=False, reconnect_only=False):
-    inspector = build / 'flight-inspector'
-    if backend == 'flatfile':
-        subprocess.run(['python3', 'tests/async/test_flatfile_player_repository.py',
-                        '--build-inspector', str(inspector)], cwd=ROOT, check=True, timeout=180)
+def run(binary, backend, interruptions_only=False, reconnect_only=False, skip_interruptions=False):
     with tempfile.TemporaryDirectory(prefix='flight-' + backend + '-', dir=ROOT / 'bin/tests') as temporary:
         runtime = Path(temporary)
         _, critical, output_path = setup_run_root(runtime)
@@ -160,16 +124,13 @@ def run(binary, backend, build, interruptions_only=False, reconnect_only=False):
 
             def save(client, name=PLAYER):
                 client.send('save')
-                client.expect('Save complete for ' + name + '.', timeout=60)
+                client.expect('Saving ' + name + '.', timeout=60)
 
             def progress():
-                if sql:
-                    row = sql("SELECT learned_flight_stops,exp,level,copper,silver,gold,platinum FROM player_data WHERE name='" + PLAYER + "'")
-                    fields = [int(x) for x in row.split('\t')]
-                    return {'learned_flight_stops': fields[0], 'experience': fields[1],
-                            'level': fields[2], 'wallet': fields[3:]}
-                return json.loads(subprocess.check_output([str(inspector), env['FLATFILE_STATE_DIR'],
-                                                          'inspect', '1'], text=True))
+                row = sql("SELECT learned_flight_stops,exp,level,copper,silver,gold,platinum FROM player_data WHERE name='" + PLAYER + "'")
+                fields = [int(x) for x in row.split('\t')]
+                return {'learned_flight_stops': fields[0], 'experience': fields[1],
+                        'level': fields[2], 'wallet': fields[3:]}
 
             def visit(room):
                 moved = command(god, 'goto ' + str(room))
@@ -306,8 +267,6 @@ def run(binary, backend, build, interruptions_only=False, reconnect_only=False):
                 stop()
                 if sql:
                     sql("UPDATE player_data SET level=62,highest_level=62 WHERE name='" + GOD + "'")
-                else:
-                    journey.make_overlord(Path(env['FLATFILE_STATE_DIR']), GOD)
                 process = boot()
                 god = login(GOD, GOD_ACCOUNT)
                 player = login(PLAYER, ACCOUNT)
@@ -433,7 +392,8 @@ def run(binary, backend, build, interruptions_only=False, reconnect_only=False):
                 assert 'Kimordril' in command(player, 'list')
                 evidence['return_after_logout'] = True
                 print(backend + ': immobile ticket retained and empty return survived logout', flush=True)
-                qualify_interruptions()
+                if not skip_interruptions:
+                    qualify_interruptions()
                 # Dedicated services do not discover anything and keep their level gates.
                 for room, keyword, destination, fare in (
                     (619771, 'krrlytstalarryn', 'Cavern', 50),
@@ -529,7 +489,7 @@ def run(binary, backend, build, interruptions_only=False, reconnect_only=False):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--backend', choices=('flatfile', 'mariadb'), default='flatfile')
+    parser.add_argument('--backend', choices=('mariadb',), default='mariadb')
     parser.add_argument('--server', type=Path)
     focus = parser.add_mutually_exclusive_group()
     focus.add_argument('--interruptions-only', action='store_true',
@@ -537,16 +497,40 @@ def main():
     focus.add_argument('--reconnect-only', action='store_true',
                        help='qualify socket reconnect with a live paid-flight passenger')
     args = parser.parse_args()
+    if args.interruptions_only:
+        # Exit through run()'s cleanup when the route journey stops this child.
+        signal.signal(signal.SIGTERM, lambda *_: sys.exit(143))
     subprocess.run(['make', 'world'], cwd=ROOT, check=True, stdout=subprocess.DEVNULL)
     (ROOT / 'bin/tests').mkdir(parents=True, exist_ok=True)
-    with tempfile.TemporaryDirectory(prefix='flight-build-', dir=ROOT / 'bin/tests') as temporary:
-        build = Path(temporary)
-        if args.server:
-            binary = args.server.resolve()
-        else:
-            assert args.backend == 'flatfile', 'pass a MariaDB binary with --server'
-            binary = journey.build_flatfile_server(build / 'server')
-        run(binary, args.backend, build, args.interruptions_only, args.reconnect_only)
+    interruptions = None
+    if not (args.interruptions_only or args.reconnect_only):
+        # The interruptions need only two discovered stops and take half of the route's
+        # real-time flying: qualify them beside it, in a world of their own. Two migration
+        # runs cannot share one MariaDB server, so a MariaDB leg gets its own container.
+        child = [sys.executable, __file__, '--interruptions-only', '--backend', args.backend,
+                 *(['--server', str(args.server)] if args.server else [])]
+        child.insert(0, str(ROOT / 'tests/async/with_disposable_mariadb.sh'))
+        # The MariaDB wrapper's bash defers SIGTERM until its command ends, so that leg
+        # gets its own process group and the signal reaches the Python child directly.
+        interruptions = subprocess.Popen(child, cwd=ROOT,
+                                         process_group=0)
+    try:
+        with tempfile.TemporaryDirectory(prefix='flight-build-', dir=ROOT / 'bin/tests') as temporary:
+            build = Path(temporary)
+            if args.server:
+                binary = args.server.resolve()
+            else:
+                binary = journey.build_mariadb_server(build / 'server', real_clock=True)
+            run(binary, args.backend, args.interruptions_only, args.reconnect_only,
+                skip_interruptions=interruptions is not None)
+    except BaseException:
+        if interruptions:
+            # SIGTERM, so that the child and a MariaDB leg's wrapper still clean up.
+            os.killpg(interruptions.pid, signal.SIGTERM)
+            interruptions.wait()
+        raise
+    if interruptions:
+        assert interruptions.wait() == 0, 'flight interruption qualification failed'
 
 
 if __name__ == '__main__':

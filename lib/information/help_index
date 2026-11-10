@@ -186,9 +186,6 @@ Syntax: > aggr          : Check aggressiveness
         > aggr off      : Turn off aggressiveness
         > aggr 120      : You will only be aggressive to monsters when
                         : your hitpoints >=120
-
-NOTE: Paladins may *not* have this option set to ON, as it goes against all
-their training and principles.
 ===========================================================================
 See also: KILL HIT MURDER
 
@@ -734,6 +731,12 @@ wielder/wearer awesome powers. Currently there are twenty-five separate
 artifacts, each one-of-a-kind. They are unique and only one of each can be
 found in the game, EVER. This is only a list of the current artifacts, not
 including uniques or iouns. 
+
+You may hold one major artifact, one unique and one ioun at a time. If you
+hold two or more of any one type, the periodic artifact check makes all
+artifacts you wear or carry fall to the ground, including other types.
+Inventory counts as well as equipment, and even a brief overlap can trigger
+the check. The forced drop causes no damage or loss of remaining feeding time.
 
 &+LAvernus the life stealer&n
 ---------------------------------------------------------------------------
@@ -1286,10 +1289,9 @@ Cumulative:     No
 Duration:       Dependent on proficiency of caster
 Type of spell:  Protection
 
-This spell causes the victim's skin to toughen and harden to the consistency 
-of bark, granting a significant armor class improvement and slight 
-protection from melee damage. This also means there is a somewhat higher 
-increase in damage from fire.
+Barkskin toughens the victim's skin and improves armor class. It does not
+reduce melee damage directly. It increases damage taken from fire; the
+fire penalties from Barkskin and Ironwood combine when both are active.
 ===========================================================================
 
 #
@@ -1336,7 +1338,7 @@ bloodlust.
 
 "BATTLE-FORGER" "BATTLE FORGER" (Specialization)
 ===========================================================================
-Battle-Forger is a Alchemist specialization. Selection requires level 30, an eligible race, an appropriate teacher, no existing specialization or secondary class, and an expired respecialization timer.
+Battle-Forger is an Alchemist specialization. Selection requires level 30, an eligible race, an appropriate teacher, no existing specialization or secondary class, and an expired respecialization timer.
 
 ==Allowed races==
 
@@ -1425,7 +1427,7 @@ A Beastmaster is a multi-class Shaman/Druid.
 
 Notes on Beastmaster:
 Shamans use totems, and memorize spells without spellbooks.
-Druids commune, which is heavilly based on terrain, for both spells
+Druids commune, which is heavily based on terrain, for both spells
 and commune times.
 If you start as a Druid, you will commune all of your spells.
 If you start as a Shaman, you will memorize spells, but you will no longer
@@ -1592,7 +1594,7 @@ See Also: ANTI-PALADIN, WARRIOR, MULTI-CLASS, PRAY
 
 BLACKSMITH (Specialization)
 ===========================================================================
-Blacksmith is a Alchemist specialization. Selection requires level 30, an eligible race, an appropriate teacher, no existing specialization or secondary class, and an expired respecialization timer.
+Blacksmith is an Alchemist specialization. Selection requires level 30, an eligible race, an appropriate teacher, no existing specialization or secondary class, and an expired respecialization timer.
 
 ==Allowed races==
 
@@ -1804,6 +1806,7 @@ Syntax:         bodyslam <victim>
 This command is very similar to "Bash", except that it requires no shield
 and can only be used to start a fight. A successful bodyslam will send the
 victim sprawling, leaving them sitting on the ground.
+Its configured base success chance is 60% before combat modifiers.
 ===========================================================================
 See also: BASH
 
@@ -2169,7 +2172,7 @@ place to camp for the night and then type "camp". You must then wait a
 period of time before you can exit the game. If you leave the room in which 
 you are trying to set up camp or if you fight, camping will automatically
 cancel. Once you fully camp, you will be sent to the main menu, just as 
-when you rent.
+when you rent. Items flagged no rent fall to the floor when you finish.
 
 &+RWarning:&nIf you go link-dead, camping will stop (linkdead rent does 
         *not* reset your homeroom).
@@ -2382,7 +2385,7 @@ CENOBITE (MultiClass)
 A Cenobite is a multi-class Druid/Cleric.
 
 Notes on Cenobite:
-Druids commune, which is heavilly based on terrain, for both spells
+Druids commune, which is heavily based on terrain, for both spells
 and commune times.
 Clerics pray, and require no spellbooks or totems.
 If you start as a Druid, you will commune all your spells.
@@ -3822,7 +3825,7 @@ See also: RELOCATE
 
 "DARK DREAMER"
 ===========================================================================
-Dark Dreamer is a Illusionist specialization. Selection requires level 30, an eligible race, an appropriate teacher, no existing specialization or secondary class, and an expired respecialization timer.
+Dark Dreamer is an Illusionist specialization. Selection requires level 30, an eligible race, an appropriate teacher, no existing specialization or secondary class, and an expired respecialization timer.
 
 ==Allowed races==
 
@@ -3856,7 +3859,7 @@ Requirements are registration values, not automatic learning or preparation. Bas
 
 "DARK KNIGHT" (Specialization)
 ===========================================================================
-Dark Knight is a Anti-Paladin specialization. Selection requires level 30, an eligible race, an appropriate teacher, no existing specialization or secondary class, and an expired respecialization timer.
+Dark Knight is an Anti-Paladin specialization. Selection requires level 30, an eligible race, an appropriate teacher, no existing specialization or secondary class, and an expired respecialization timer.
 
 ==Allowed races==
 
@@ -3966,8 +3969,8 @@ Cumulative:     No
 Duration:       Dependent on proficiency of caster
 Type of spell:  Enchantment
 
-This potent spell grants all those grouped with the caster "Vitality" and
-"Protection from Living" spells.
+This spell grants Vitalize Undead and Protection from Living to the caster's
+group members in the caster's room. Groupmates elsewhere are unaffected.
 ===========================================================================
 See also: VITALITY, "PROTECTION FROM LIVING"
 
@@ -4115,9 +4118,11 @@ See also: ILLUSIONIST, SKILL_ILLUSIONIST
 #
 DELETE REROLL (General Information)
 ===========================================================================
-Player files can be deleted at the login menu. Once a character is deleted,
-you can NOT get it back. You may have several characters and often times
-people reroll their stats until they end up with stats that please them.
+Delete a character with account-menu option 3. After selecting the
+character, type its full name at the final warning to confirm permanent
+deletion; capitalization does not matter. Any other answer cancels.
+A deleted character cannot be recovered. An online character cannot be
+deleted while it is still in play.
 ===========================================================================
 See also: STATS, CLASSES, RACES, REIMBURSEMENT
 
@@ -4125,7 +4130,7 @@ See also: STATS, CLASSES, RACES, REIMBURSEMENT
 
 "DEMONIC RIDER" (Specialization)
 ===========================================================================
-Demonic Rider is a Anti-Paladin specialization. Selection requires level 30, an eligible race, an appropriate teacher, no existing specialization or secondary class, and an expired respecialization timer.
+Demonic Rider is an Anti-Paladin specialization. Selection requires level 30, an eligible race, an appropriate teacher, no existing specialization or secondary class, and an expired respecialization timer.
 
 ==Allowed races==
 
@@ -4646,7 +4651,7 @@ skill.
 Area of effect: <caster>
 Aggressive:     No
 Cumulative:     No
-Duration:       Forever
+Duration:       Until you leave the game
 Type of spell:  Summoning
 
 This spell creates a demonically possessed weapon.  The weapon is only
@@ -5441,7 +5446,7 @@ them, thus nullifying the full potential of that energy.
 Area of effect: <victim>
 Aggressive:     Yes
 Cumulative:     Yes
-Duration:       Permanent
+Duration:       Immediate damage; lingering recovery penalty up to 5 seconds
 Type of spell:  Generic
 
 "Energy Drain" literally drains the lifeblood from the victim, as it feeds 
@@ -5942,7 +5947,7 @@ Syntax:   exp (to see how much experience you currently have)
 
 Whenever you kill a monster or a player, you earn experience points. Once 
 you have earned enough experience, you raise a level in your class. Duris 
-has 56 mortal levels; you can check your progress by typing 'experience'.  
+has 56 mortal levels; you can check your progress by typing 'exp'.  
 The levels after 50 are only received by quaffing a specific potion, found 
 in zones.
 
@@ -6073,6 +6078,12 @@ means killing someone of the opposite racewar in order to gain a full frag.
 You must reach one full frag to sate your artifact within a number of days
 which varies between each item.  If you fail to feed, your artifact will
 be removed and placed back into the game where it loads, if any.
+
+You may hold one major artifact, one unique and one ioun at a time. If you
+hold two or more of any one type, the periodic artifact check makes all
+artifacts you wear or carry fall to the ground, including other types.
+Inventory counts as well as equipment, and even a brief overlap can trigger
+the check. The forced drop causes no damage or loss of remaining feeding time.
 ===========================================================================
 See also: ARTIFACT, UNIQUE, IOUN
 
@@ -6354,7 +6365,7 @@ victim, doing a respectable amount of damage.
 Area of effect: <caster>
 Aggressive:     No
 Cumulative:     No
-Duration:       Forever
+Duration:       Until you leave the game
 Type of spell:  Summoning
 
 This spell summons a blade of pure flame to appear for the Druid to wield.
@@ -6625,7 +6636,7 @@ A Forrestal is a multi-class Ranger/Druid.
 
 Notes on Forrestal:
 Rangers use spellbooks, and memorize spells.
-Druids commune, which is heavilly based on terrain, for both spells
+Druids commune, which is heavily based on terrain, for both spells
 and commune times.
 If you start as a Druid, you will commune all your spells.
 If you start as a Ranger, you will memorize all your spells, and you
@@ -6759,7 +6770,8 @@ Duration:       Instantaneous
 Type of spell:  Cold
 
 "Frostbite" generates an icy blast which engulfs its victim, chilling
-him down to the bone.
+him down to the bone. A victim who fails its saving throw is weakened,
+losing Strength, even if it shrugged off or absorbed the blast itself.
 ===========================================================================
 
 #
@@ -6779,7 +6791,7 @@ chills them to the bone.
 
 "FROST MAGUS"
 ===========================================================================
-Frost Magus is a Ethermancer specialization. Selection requires level 30, an eligible race, an appropriate teacher, no existing specialization or secondary class, and an expired respecialization timer.
+Frost Magus is an Ethermancer specialization. Selection requires level 30, an eligible race, an appropriate teacher, no existing specialization or secondary class, and an expired respecialization timer.
 
 ==Allowed races==
 
@@ -6930,6 +6942,12 @@ You are in a room and you see:
 If you wished to get the second box, you would type:
 
         "get 2.box"
+
+Join full object keywords with hyphens to narrow your choice: "get fire-sword"
+matches an object with both fire and sword keywords. "get 2.fire-sword" picks
+the second match, and "get all.fire-sword" takes all matching objects.
+Existing keywords such as two-handed still work. Each part must be a full
+keyword; leading, trailing or doubled hyphens do not form a combination.
 ===========================================================================
 See also: DROP, PUT
 
@@ -8158,11 +8176,11 @@ and type 'group <playername> rear' to send a group member to the rear
 ranks.  Your position in the ranks determines how much damage you inflict 
 (and receive) from spells and physical attacks.
 
-Players that form a group still get the FULL amount of experience points 
-when they kill a monster. This means there is no reason not to group with
-another player if you only look at the experience factor. Everyone gets exp
-regardless if they participate in the fight or not. In addition, frags are
-divided among grouped players. 
+Kill experience is shared according to group size and relative levels
+among eligible players in the same room, with other modifiers afterward.
+You need not land the killing blow to receive your group share.
+The group-size limit is separate from this calculation; see 'help group cap'.
+Frags are also divided among eligible grouped players.
 
 If you find yourself in need of a group, you may implement the "Group
 Needed" toggle.
@@ -8544,8 +8562,9 @@ non-hardcore characters. Hardcore characters also do not require the
 special "potions" as others do to move past level 50, they are able to
 simply exp right up to level 56. Their XP advancement can use two levels
 beyond the faction cap, bounded by 56; see HELP LEVEL CAP.
-Hardcore characters have five lives. Deaths one through four follow the ordinary
-death rules; the fifth counted death permanently deletes the character.
+Hardcore characters have three lives. Deaths one and two follow the ordinary
+death rules; the third counted death permanently deletes the character.
+This test policy remains open to balance discussion.
 Arena deaths do not consume a life.
 ===========================================================================
 
@@ -9368,7 +9387,7 @@ See also: SLEEP
 Area of effect: <caster>
 Aggressive:     N/A
 Cumulative:     No
-Duration:       3 hours
+Duration:       30 game hours; casting again renews the duration
 Type of spell:  Enchantment
 
 "Inertial Barrier" causes the caster to be enveloped in a low powered
@@ -9679,7 +9698,12 @@ KILL HIT MURDER (Command)
 ===========================================================================
 Syntax:         kill | hit | murder <victim>
 
-One way to initiate a fight.  
+One way to initiate a fight.
+
+Join full target keywords with hyphens: "kill fire-giant" selects a creature
+with both fire and giant keywords. "kill 2.fire-giant" selects the second
+matching creature. Existing keywords such as thri-kreen still work.
+Each part must be a full keyword; "fire-gi" does not abbreviate fire-giant.
 ===========================================================================
 
 #
@@ -10234,8 +10258,9 @@ subterfuge will be punished.
 
 Anything you drop in a locker room will be stored and saved as if you were 
 carrying it on your person and rented. This means items that are transient
-will crumble and items flagged no rent will disappear. Anyone who is on 
-your grant list will be able to access your locker as well. Please see 
+will crumble, and items flagged no rent can't be stored and are handed back
+to you. Anyone who is on your grant list will be able to access your locker
+as well. Please see
 "help grant" for information on giving others access to your locker!
 
 To help with sorting and finding eq stored in a locker the command "equip
@@ -10403,7 +10428,7 @@ See also: SORCERER, NECROMANCER, CONJURER, PSIONICIST, ILLUSIONIST,
 
 MAGICIAN
 ===========================================================================
-Magician is a Illusionist specialization. Selection requires level 30, an eligible race, an appropriate teacher, no existing specialization or secondary class, and an expired respecialization timer.
+Magician is an Illusionist specialization. Selection requires level 30, an eligible race, an appropriate teacher, no existing specialization or secondary class, and an expired respecialization timer.
 
 ==Allowed races==
 
@@ -10540,10 +10565,55 @@ will see the southern part of the world.
 #
 MARTIAL ARTS
 ===========================================================================
-This skill measures how skilled a monk is at using his body as a weapon.
-Until his martial arts skill is well practiced, he will not be able to deal
-out as much damage with his bare hands and feet.
-===========================================================================
+Martial arts improves a monk's bare-hand damage, armor class and base
+attacks. Your level and martial-arts rating determine the base attack range;
+weight and other combat effects can change the final number of attacks.
+
+==Hands==
+
+An item in your wield, secondary weapon, hold, shield or light slot limits
+you to one base monk attack. For bare-hand damage, occupying wield,
+secondary weapon, hold or shield also reduces your monk damage dice to 1d1.
+An equipped light limits attacks but does not reduce those damage dice.
+
+==Weight==
+
+These monk penalties use equipped items, not loose inventory. A worn
+container includes its effective contents weight, after any bag weight
+reduction. Normal carrying limits and general encumbrance still apply.
+STR means your current Strength. Divisions below discard fractions.
+
+Armor class: start with -4 times your level, minus your martial-arts rating.
+Your free full-weight allowance is (60 - level) / 6 pounds. Every pound
+above it adds 3 to this AC adjustment, making your AC worse. The monk
+adjustment is limited to -400 through +50. Strength does not increase
+this AC weight allowance.
+
+Bare-hand damage: your free full-weight allowance is level * STR / 100
+pounds. Every pound above it subtracts 1 from rolled monk damage after
+the martial-arts damage bonus. This cannot reduce that base damage below
+1; damroll and other combat adjustments apply afterward.
+
+Attacks: add half of each equipped item's weight, rounding each item down
+before adding. Your free allowance is STR / 2 pounds. Every full 10 pounds
+above it costs one base monk attack. Weight cannot add attacks or reduce
+you below one base monk attack. The weight warning reports this base loss,
+before slow and other combat modifiers, which can hide the final swing loss.
+NPC monks and trusted staff are exempt from this attack-weight penalty.
+
+At 100 STR with no other equipped weight, a 119-pound worn back container
+counts as 59 for attacks: no loss. At 120 pounds it counts as 60 and costs
+one base monk attack.
+A separate 1-pound equipped item counts as zero. Inventory does not change
+these results; putting that inventory inside a worn bag can change them.
+Other combat modifiers and bonus attacks still apply afterward.
+
+Most items also have a per-item equip weight limit; see Monk.
+
+==See also==
+
+* Monk
+* Monk Skills
 
 #
 "MASK" (Spell)
@@ -10667,14 +10737,14 @@ MEDITATE (Skill)
 ===========================================================================
 Syntax:         meditate (while resting)
 
-"Meditate" allows the player to memorize/pray for spells with a chance of
-halving the time. A single proficiency check is made at the half way point
-for each spell. If successful, the spell will be memorized/prayed for at
-that time. If unsuccessful, the spell will take the normal time before it
-is memorized/prayed. Because meditate is the focusing of the mind, most
-actions will stop the meditation.
+"Meditate" can shorten spell preparation by skipping an additional wait.
+For Tupor, it can also halve a newly calculated recovery interval. These
+are separate checks, so it does not guarantee that the entire recovery
+will take half the time. It can help later slots as well as the first.
+Tupor estimates allow for the remaining scheduled wait, but do not predict
+future Meditation successes. Most actions will stop the meditation.
 ===========================================================================
-See also: PRAY, MEMORIZE
+See also: PRAY, MEMORIZE, TUPOR
 
 #
 MEMORIZE PRAY FORGET (General Information)
@@ -10704,8 +10774,10 @@ Area of effect:	<victim>
 Aggressive:	Yes
 Cumulative:	N/A
 
-"Memory block" causes the victim to forget how to cast, purging the
-memory of spells from the victim's mind.
+Memory Block gives a victim who fails the power save a 50% chance to
+fail each cast. It lasts half the caster's level in real seconds,
+rounded down, with a minimum of one second. It does not erase learned
+spells. The casting restriction ends when the effect expires.
 ===========================================================================
 
 #
@@ -10925,7 +10997,8 @@ Duration:       Dependent on proficiency of caster
 Type of spell:  Enchantment
 
 "Miracle" is just that, a miracle. Casting this potent spell grants 
-everyone in the Cleric's group the spells "Vitality", "Armor", and "Bless".
+the Cleric's groupmates in the same room Vitality, Armor and Bless.
+Groupmates elsewhere are unaffected.
 ===========================================================================
 See also: "VITALITY", "ARMOR", "BLESS"
 
@@ -11049,6 +11122,39 @@ Equipment follows each item's class/race restrictions and the character's body
 slots. There is no blanket permission to equip every item of a weapon or armor
 type.
 
+==Equipment and weight==
+
+Monk weight rules use your current Strength (STR). Each item is normally
+limited to STR / 10 pounds, rounded down, when equipping it. The back slot
+is exempt from that item limit, but still counts toward worn weight.
+
+Armor class and bare-hand damage use the full weight of equipped items.
+For attacks, add half of each equipped item's weight, rounding each item
+down first. The free attack allowance is STR / 2, rounded down. Every full
+10 pounds above that allowance costs one base monk attack, leaving at least
+one. The weight warning reports lost base attacks before slow or other
+combat modifiers; the final swing count can be unchanged after rounding.
+
+Loose inventory does not count toward these monk weight penalties. Worn
+containers include their effective contents weight, after any bag weight
+reduction. Normal carrying limits and general encumbrance still apply.
+
+Keep your wield, secondary weapon, hold, shield and light slots free for
+your normal martial-arts attacks. See Martial Arts for the AC and damage
+allowances and the full combat rules.
+
+==Glove magic==
+
+Some gloves activate magic on a monk's barehand strikes when worn on the
+primary hands. Only gloves made for this purpose do so; wearing any other
+pair does not add an offensive proc. All monk specializations and secondary
+monks follow the same rule. A weapon strike uses its weapon's magic.
+
+A resolved punch, barehand counterattack or pressure-point strike can give
+one opportunity. Misses and blows that already kill the victim give none.
+The second pair of gloves gives no extra opportunity. Removing or changing
+the selected gloves cancels their unfinished magic.
+
 ==Allowed races==
 
 &+W*&n &+GGith&+Wyanki&n, &+WGith&+Gzerai&n, &+CHuman&n, &+LOrc&n, &+MTie&+cfl&+ming&n
@@ -11070,6 +11176,7 @@ specialization/multiclass state. Type specialize to see personal choices.
 ==See also==
 
 * Monk Skills
+* Martial Arts
 * Classes
 * Specialization
 * Multiclass
@@ -11867,6 +11974,8 @@ type.
 These are normal-roster matrix choices; alignment and server creation switches
 still apply. Other forms and event settings may differ.
 
+Holy Combat is a legacy label with no separate implemented combat bonus.
+
 ==Innate abilities==
 
 *&+canti-evil&n
@@ -11935,15 +12044,17 @@ NOTE: This spell can only be effective when cast on a medium sized or
 #
 PASSWORD
 ===========================================================================
-The "password" option, seen at the entry menu, allows you to change your
-character's password. Players should make it a rule to change their 
-passwords often to avoid the unpleasantness of having someone else gain 
-control of their character. It is the players' responsibility to safeguard 
-themselves by ensuring that they use a different password on each MUD they 
-log into. Gods are *not* responsible for any "hacked" or "stolen" 
-characters.
+Your password belongs to your account and protects all its characters. Use a
+unique password. Never share it or your email verification and reset codes.
+
+Change your account password with option 6 in the telnet account menu, or
+Account -> Password in the browser client.
+
+Forgot your password? Type ? at the telnet account password prompt, or choose
+Forgot password? in the browser client. Recovery must be enabled and your
+account must have an email address whose inbox you can access.
 ===========================================================================
-See also: RULES, REIMBURSEMENT
+See also: "PASSWORD RECOVERY", "ACCOUNT EMAIL", RULES
 
 #
 "PATH OF FROST" (Spell)
@@ -12456,6 +12567,9 @@ Type of spell:  Protection
 
 This spell will create a magical armor on the recipient that will make the 
 target less prone to attacks from evilly aligned monsters and characters.
+Against an evil attacker, a non-evil recipient lowers the attacker's hit
+score by the recipient's level / 4 (12 points at level 50). This is an
+accuracy penalty, not an additional damage reduction.
 ===========================================================================
 See also: "PROTECTION FROM GOOD"
 
@@ -12497,6 +12611,9 @@ Type of spell:  Protection
 
 This spell will create a magical armor on the recipient that will make the 
 target less prone to attacks from good aligned monsters and characters.
+Against a good attacker, a non-good recipient lowers the attacker's hit
+score by the recipient's level / 4 (12 points at level 50). This is an
+accuracy penalty, not an additional damage reduction.
 ===========================================================================
 See also: "PROTECTION FROM EVIL"
 
@@ -12887,8 +13004,9 @@ valid classes and their available specializations, racial stat factors and
 combat/spell speed. Its class list uses the current character creation
 restrictions, including enabled classes.
 
-Race innates lists only that race's abilities, including abilities gained at
-later levels. An asterisk marks a passive ability. Use help <ability name> for
+Race innates lists that race's abilities, including abilities gained at
+later levels. A nonzero melee and archery damage bonus or penalty is also
+shown as a passive feature; see help attack damage modifiers. An asterisk marks a passive ability. Use help <ability name> for
 details about an innate, or help <race name> for more lore and racial traits.
 
 Multiword race names work without quotes, such as race info mountain dwarf.
@@ -13624,6 +13742,7 @@ Syntax:         rent
 This command is for use in a reception or inn, which appear throughout the
 world. "Rent" will store your items and make you leave the game. The next 
 time you enter the game, you'll start out at the inn where you rented.
+Items flagged no rent can't be stored and fall to the floor when you leave.
 ===========================================================================
 See also: INNS, CAMP, QUIT, REIMBURSEMENT, IDLE
 
@@ -15705,6 +15824,7 @@ None.
 ==See also==
 
 * Monk
+* Martial Arts
 * Specialization
 * Spell circle
 
@@ -15762,6 +15882,8 @@ SKILL_PALADIN (Skillset)
 The following is a list of all skills and spells available to the Paladin class:
 These are base-class grants before specialization changes.
 Learning, preparation, equipment, and current ability conditions still apply.
+
+Holy Combat is a legacy label with no separate implemented combat bonus.
 
 ==Innate abilities==
 
@@ -16783,6 +16905,7 @@ Type of song:	Healing
 This song restores the lifeforce of those in the room, including those not
 in the singer's group. The amount it heals is highly dependent on level and
 skill in the song.
+Higher Charisma increases the healing restored each verse.
 ===========================================================================
 See also: SONGS, INSTRUMENT, PLAY, BARD, SKILL_BARD
 
@@ -18763,23 +18886,23 @@ See also: SPAM, KENON, KVARK
 #
 TOTEMS (General Information)
 ===========================================================================
-Totems are required by Shamans to cast their spells, as they allow them to
-focus their energies into magic.
+Single-class Shamans use totems to focus their spells. Multiclass Shamans
+can cast without a totem.
 
 Shaman spells are divided into "spheres" -animal, elemental, and
 spiritual. Lesser totems are used to cast spells in a certain sphere below
 6th circle, while greater totems are used to cast those spells 6th and
 over. Totems can also grant more than one sphere or high/low-level spells.
-Totems must be held while casting (but not required during memorizing).
+Keep the matching totem equipped or directly in your inventory to cast.
+Totems inside containers don't count. Memorizing doesn't require a totem.
 
-Newbie Shamans load with three totems (raven, limestone, ivory), each of
-which grants the lower spells for a certain sphere. (raven =animal,
-limestone =elemental, ivory =spiritual).
+The Shaman starter kit includes totems. Successful lore on a totem shows
+which spheres and tiers it grants.
 
 Higher totems can be bought at various Shaman-related stores around the
 mud, as well as created by the "Minor Creation" spell.
 ===========================================================================
-See also: SHAMAN, SKILL_SHAMAN
+See also: SHAMAN, SKILL_SHAMAN, TOTEMIC MASTERY
 
 #
 "TOWER OF IRON WILL" (Spell)
@@ -18922,20 +19045,14 @@ See also: RACES, RACEWARS, INNATE, INFRAVISION, BODYSLAM
 TROPHY (General Information)
 ===========================================================================
 Syntax:    trophy
+           trophy frags
 
-The trophy list is a feature which lets you gain a general idea of the
-amount of experience (relative to a particular mob) you are gaining  or the 
-mobs you kill. The trophy ensures that you do not gain experience by 
-"sitting on mobs" as the more you kill any particular mob, the less
-experience you will gain for it. If you kill too many of any particular
-mob, you will eventually gain no experience at all for it.
+"Trophy" lists any experience recorded for you in each zone. It is for
+tracking only: killing the same mobs again and again does not reduce the
+experience you gain. Only characters of level 25 and above are tracked,
+and when tracking is turned off it shows your saved totals.
 
-The trophy list will help your decisions by letting you know how many of
-any particular mob you have already killed. If you are in a group, you
-will only gain a portion of that kill added to your trophy. Therefore,
-you will see percentages on your trophy list. Trophy entries will also
-change colors as the amount of experience you get for a kill becomes
-less and less.
+"Trophy frags" lists the players you have fragged and how many times.
 ===========================================================================
 See also: EXPERIENCE
 
@@ -18962,6 +19079,9 @@ Syntax:         tupor (while resting, reclined, or asleep)
 
 Allows a Harpy or Ethermancer to recover spell slots. Use tupor while
 resting or asleep; recovery proceeds from the highest incomplete circle.
+The displayed estimate is for all missing slots together. During recovery
+it shows the estimated time remaining, including progress on the current
+slot. Meditation can shorten the estimate; future successes are not assumed.
 Waking or changing posture voluntarily ends the recovery without a shock,
 while forced interruptions can briefly stagger you.
 ===========================================================================
@@ -19092,6 +19212,12 @@ unique is one of a kind and therefore artifacts by nature. No unique is
 alike and they all bestow different properties.
 
 For a list of uniques, type "arti unique".
+
+You may hold one major artifact, one unique and one ioun at a time. If you
+hold two or more of any one type, the periodic artifact check makes all
+artifacts you wear or carry fall to the ground, including other types.
+Inventory counts as well as equipment, and even a brief overlap can trigger
+the check. The forced drop causes no damage or loss of remaining feeding time.
 ===========================================================================
 See also: ARTIFACT, IOUN, FEEDING
 
@@ -19622,12 +19748,18 @@ specialization/multiclass state. Type specialize to see personal choices.
 Area of effect: direction
 Aggressive:     No
 Cumulative:     N/A
-Duration:       Dependent on proficiency of caster 
+Duration:       7 minutes 30 seconds
 Type of spell:  Illusion
 
 This spell creates an illusionary stone wall with many eyes in it. It will
-show the caster the room from time to time. It will also show the room
-to the caster if  someone is trying to destroy the wall.
+occasionally show the caster the room when someone acts near the wall,
+including when someone hits it. Each side has a one-in-three viewing chance
+when more than 10 seconds have passed since its last eligible attempt.
+Hitting the wall uses that same chance and cooldown; it gives no extra view.
+The caster must be in the game and in a different room from the person acting.
+Immortals do not trigger views. Other characters must be at ground height.
+A failed roll, absent caster or caster in the same room still consumes the
+eligible attempt.
 ===========================================================================
 
 #
@@ -19899,6 +20031,12 @@ classes have the skill of using two weapons. It should be noted, however,
 that the skill "double attack" (allowing you to hit twice) can only be used
 with your primary weapon. You cannot hold anything else if wielding two 
 weapons (unless you are a thri-kreen).
+
+Ogres, Firbolgs, Minotaurs, Storm Giants and Wights can use a two-handed
+weapon in one hand because of their Huge natural size. Enlarge, Reduce and
+Titan Form do not change this benefit. Weapon weight limits and dual-wield
+training still apply; two-handed held items that are not weapons still
+need two hands. The weapon keeps its two-handed damage and proficiency.
 ===========================================================================
 See also: WEAR, REMOVE, EQUIPMENT, INVENTORY, "DUAL WIELD"
 
@@ -22538,9 +22676,36 @@ nothing but answer. Use 'shutdown' for real shutdowns.
 See also: SHUTDOWN
 ===========================================================================
 #
+COPYOVER (Immortal Command)
+===========================================================================
+Syntax: copyover [seconds]
+        copyover cancel
+
+Normally a Forger command (level 61); trusted staff may receive a copyover grant.
+With no delay, copyover restarts immediately. Delays use whole seconds. Only the
+initiator can cancel; the countdown also cancels if they leave play or lose
+permission. Cancel any other scheduled shutdown or restart first.
+
+Copyover saves players, equipment and pets, keeps playing plain Telnet connections,
+and loads a fresh world. Zones repopulate, fights end, groups must reform, and
+ordinary dropped items disappear. Separately saved corpses, storage, ships and
+shop records follow their normal reboot persistence.
+
+Login, account-menu, WebSocket and TLS sessions disconnect when the new server
+starts. When their connection can accept it, they receive a notice to reconnect
+in about 20 seconds. Pending saves must succeed before those sessions disconnect.
+If the executable fails to start, current sessions stay connected.
+
+Use shutdown hotboot to preserve the live world. Login and account-menu
+sessions reconnect after hotboot. Hotboot cancels if an in-game session cannot
+survive the handoff.
+
+See also: SHUTDOWN
+===========================================================================
+#
 SHUTDOWN (Immortal Command)
 ===========================================================================
-Syntax: shutdown ok|reboot|copyover|autoreboot [minutes] [reason]
+Syntax: shutdown ok|reboot|hotboot|autoreboot [minutes] [reason]
         shutdown pwipe confirm yes   (Overlord, MariaDB-primary only)
 
 Normally a Forger command (level 61); trusted staff may also use an explicit
@@ -22548,8 +22713,11 @@ shutdown grant. Optional delays are nonnegative whole minutes. Reasons for ordin
 a manual countdown; a valid new request replaces it. Invalid input leaves an
 existing countdown unchanged. Manual countdowns cancel if the issuer leaves play,
 disconnects or loses the required permission, including the final pending tick.
-Automatic reboots continue independently; shutdown copyover toggles their hotboot
-mode. Cancellation applies before execution begins.
+Automatic reboots continue independently; shutdown hotboot toggles their hotboot
+mode. Cancellation applies before execution begins. Hotboot preserves the live
+world and playing Telnet sessions. It cancels when a playing session cannot
+survive the handoff. Use the standalone copyover command for a fresh world. A scheduled copyover must be
+cancelled with copyover cancel by its initiator before using shutdown.
 
 Pwipe requires the full confirm phrase with no extra arguments and Overlord
 permission. It gives five minutes to cancel and is announced as PWIPE. Account
@@ -23564,7 +23732,7 @@ See also: chant, fist of dragon, ki strike, diamond soul, tower of iron will
 #
 "TOTEMIC MASTERY" (Skill)
 ===========================================================================
-"Totemic mastery" is an epic deepening of the shaman's covenant with the spirit realm. A master needs no carved focus in hand to prepare many of their spells, conjuring the requisite resonance from sheer understanding, and when the proper totem IS held their chants race ahead at remarkable speed. The spirits reward only the devoted.
+"Totemic mastery" is an epic deepening of the shaman's covenant with the spirit realm. A master can sometimes cast without a focus. With the matching totem equipped or in their inventory, they have a chance to cast faster. The spirits reward only the devoted.
 ===========================================================================
 See also: chant mastery, shaman, totems
 #
@@ -24299,7 +24467,7 @@ Cumulative:     No
 Duration:       Instantaneous
 Type of spell:  Healing 
 
-"Drain nature" sucks the life out of the surrounding land and pours it into the chosen recipient, knitting wounds; in the hands of a true blighter it also clears blinded eyes. Wild country gives freely - forests most generous, cities most grudging - and a second, weaker surge of stolen health follows the first. A Scourge coaxes half again more vigor from the land than ordinary blighters.
+"Drain nature" sucks the life out of the surrounding land and pours it into the chosen recipient, knitting wounds; in the hands of a true blighter it also clears blinded eyes. Each healing wave uses the recipient's current terrain, with forests most generous and cities most grudging. Scourge adds 50 to the first wave before terrain adjustments. Each later wave is half the previous wave's base amount, rounded down, and waves continue while the next wave exceeds 1. Other healing modifiers still apply, and healing cannot exceed the recipient's maximum hit points. This is not a fixed percentage or a flat +50 total; see 'help scourge' for an example.
 ===========================================================================
 See also: natures touch, create pond, contagion
 #
@@ -24380,10 +24548,10 @@ See also: energy drain, life leech, decaying flesh
 Area of effect: <self>
 Aggressive:     No
 Cumulative:     No
-Duration:       Short
+Duration:       Until lost or destroyed
 Type of spell:  Summoning 
 
-"Ensis unguis" tears a burning ember-talon blade free from the caster's own forearm, the flesh tearing at a price of blood - a tenth of all remaining life. The blood-soaked weapon smolders in the grip, spitting flameburst, fireball or even sunray at foes as the wielder's mastery of the dragon god deepens. The conjured blade crumbles away after a short time.
+"Ensis unguis" tears a burning ember-talon blade free from the caster's own forearm, the flesh tearing at a price of blood - a tenth of all remaining life. The blood-soaked weapon smolders in the grip, spitting flameburst, fireball or even sunray at foes as the wielder's mastery of the dragon god deepens. The conjured blade lasts until lost or destroyed, and once wielded it will not leave the hand without a remove curse.
 ===========================================================================
 See also: lancea cineralae, draconic apotheosis, edictum cineris
 
@@ -24643,7 +24811,7 @@ Cumulative:     No
 Duration:       Instantaneous
 Type of spell:  Summoning 
 
-"Holy blade" calls upon the heavens for a weapon to slay evil, whereupon an angelic figure materializes before the caster and places a gleaming golden blade in hand before vanishing as swiftly as it came. The conjured weapon is bound to the caster and remains until lost or destroyed.
+"Holy blade" calls upon the heavens for a weapon to slay evil, whereupon an angelic figure materializes before the caster and places a gleaming golden blade in hand before vanishing as swiftly as it came. The conjured weapon is bound to the caster and remains until lost, destroyed or you leave the game.
 ===========================================================================
 See also: doom blade, holy sword, theurgist, thaumaturge
 #
@@ -24944,10 +25112,10 @@ See also: thryms icerazor, stormcallers fury, lliendils stormshock
 Area of effect: <self>
 Aggressive:     No
 Cumulative:     Yes
-Duration:       Instantaneous (the conjured lance endures a long while before crumbling)
+Duration:       Until lost or destroyed
 Type of spell:  Summoning 
 
-"Lancea cineralae" wracks its caster with agony as a grotesque growth erupts from the shoulder and is torn free, becoming a burning lance bound to the dragoon's hand. The weapon drinks its maker's level: younger dragoons' lances spit gouts of flame, elders' burst with fireballs, and the mightiest hurl searing rays of sunlight. The gift costs a tenth of the caller's very lifeblood, and the ash-forged spear eventually crumbles to nothing.
+"Lancea cineralae" wracks its caster with agony as a grotesque growth erupts from the shoulder and is torn free, becoming a burning lance bound to the dragoon's hand. The weapon drinks its maker's level: younger dragoons' lances spit gouts of flame, elders' burst with fireballs, and the mightiest hurl searing rays of sunlight. The gift costs a tenth of the caller's very lifeblood. The ash-forged spear lasts until lost or destroyed, and once wielded it will not leave the hand without a remove curse.
 ===========================================================================
 See also: simulacrum anguis, stigmata draconica, edictum cineris
 #
@@ -25451,10 +25619,10 @@ See also: sanctuary, stigmata draconica, judicium fidei
 Area of effect: <self>
 Aggressive:     No
 Cumulative:     Yes
-Duration:       Instantaneous
+Duration:       Until lost or destroyed
 Type of spell:  Conjuration 
 
-"Simulacrum anguis" is a gruesome birth: the caster's entrails burst forth and writhe into a seared serpentine-viscera totem, a serpent-shaped weapon gripped still warm from the body. The horror hungers for flame, spitting bursts of fire at the priest's foes, and at great mastery even calls down rays of searing light. The ordeal drains a portion of the caster's current life, and the conjured relic crumbles to nothing before long.
+"Simulacrum anguis" is a gruesome birth: the caster's entrails burst forth and writhe into a seared serpentine-viscera totem, a serpent-shaped weapon gripped still warm from the body. The horror hungers for flame, spitting bursts of fire at the priest's foes, and at great mastery even calls down rays of searing light. The ordeal drains a portion of the caster's current life. The conjured relic lasts until lost or destroyed, and once wielded it will not leave the hand without a remove curse.
 ===========================================================================
 See also: ensis unguis, lancea cineralae, igneus vitae
 #
@@ -26809,13 +26977,39 @@ apply. Read 'help mounted combat', 'help mount' and 'help cast'.
 #
 Named Equipment Sets
 Use 'namedreport' to list the spells granted by named equipment sets,
-grouped by zone, with the required number of pieces.
-Wearing more than the required number increases the granted spells'
-caster level. The report marks one-minute cooldown spells in green
-and five-minute cooldown spells in yellow. Sets from zones not listed
-can still grant hit points.
-The report describes set bonuses; it is not a list of living named
-monsters or their current locations.
+grouped by source zone ID, with each spell's required piece count.
+Wear matching random armor and weapons to qualify. Keep at least one
+matching random armor piece equipped; weapons can add to the total.
+Carried items and the second and third belt attachments do not count.
+The first belt attachment and back slot can count.
+
+Each matching piece beyond the second adds 5 hit points: three pieces
+give +5 HP, five give +15 HP, and six give +20 HP. Spell thresholds
+are separate. For example, Tharnadia gives Armor at three pieces and
+Endurance at five. A set without a listed spell can still grant HP.
+Spell power when granted depends on the piece count and has a cap.
+Sets granting the same spell do not stack that spell. Ordinary casts
+retain their own durations when a set is equipped or removed.
+A Vitality cast no stronger than the set's grant has no effect.
+
+Sets match their source zone ID, even when two zones have the same
+visible name. Changing an item's visible name does not change its
+recorded origin. Older gear with an unambiguous source gains that
+identity through normal use and saving. Indistinguishable older tags,
+including Ceothia, Underworld, Braddistock and Misty Vale, retain their
+same-title HP bonus but grant no guessed zone spell. Those unresolved
+pieces do not combine with pieces whose zone identity is known.
+
+Some spells have conditions: Guardian Spirits requires a Shaman.
+Virtue helps good wearers against non-good targets and evil wearers
+against non-evil targets; neutral wearers gain no bonus. Globe of
+Darkness excludes Holy Light and Mage Flame.
+The report marks one-minute cooldown spells in green and five-minute
+cooldown spells in yellow. Removing, trading or re-equipping pieces,
+or reconnecting, does not clear your running cooldown.
+Use 'score' to inspect visible active effects. The report lists set
+bonuses, not living named monsters or their current locations.
+See also: Namedreport, Score.
 #
 Affects
 Use 'score' to inspect your character's visible ongoing effects,
@@ -27000,8 +27194,9 @@ Read 'help quest', 'help bartender' and 'help ask' for full details.
 #
 Namedreport
 Syntax: namedreport
-Lists the bonus spells granted by named equipment sets, grouped by zone,
-along with the required piece counts and cooldown colors.
+Lists named equipment set spells by source zone ID and name, with each
+spell's required piece count, conditional-effect notes and cooldown colors.
+Zones with identical names have separate IDs and separate sets.
 Read 'help named equipment sets' for full rules.
 #
 Alliancechat
@@ -27390,6 +27585,8 @@ requirements and remaining enhancements without consuming anything.
 An item needs a matching higher template and cannot exceed its permitted
 stat cap, currently 150% of its base stat. Some item affects forbid enhancing.
 The item-value limit for your level is three times your character level.
+Every form of enhancement must raise the item value shown by the game.
+If it cannot, you keep your item, materials and money.
 
 Superior enhancement costs 1 platinum plus 0.1 platinum per current item
 value, once per use, in addition to the listed materials. Materials must
@@ -27471,11 +27668,11 @@ Use 'society' for the guild command menu and 'help society' for syntax.
 'help society examples' gives worked examples. Available actions depend
 on your membership, guild rank and the action's requirements.
 
-Use 'gsay <message>' to speak to your guild. At a bank with locker access,
+Use 'gcc <message>' to speak to your guild. At a bank with locker access,
 'enter locker guild' enters the shared guild locker. Guildhall building
 uses 'construct'; read 'help construct' before spending guild funds.
 Read 'help guild' for guild organization and 'help rules' for play policy.
-See also: SOCIETY, GUILD, GSAY, CONSTRUCT, LOCKERS
+See also: SOCIETY, GUILD, GCC, CONSTRUCT, LOCKERS
 ===========================================================================
 
 #
@@ -27509,9 +27706,10 @@ Leaderboard
 Syntax: leaderboard
         leaderboard quests [page]
 
-The main leaderboard ranks the top 20 mortal characters (levels 1-56).
-Staff characters are excluded. It shows rank, level, score, player frags,
-ship reputation and total earned epics. Ties sort by name.
+The main leaderboard ranks the top 20 active mortal characters (levels 1-56).
+Staff and retired characters are excluded. It shows rank, level, score,
+player frags and ship reputation. Earned epic totals are deliberately hidden
+to protect PvP information. Ties sort by name.
 
 With the default scoring settings, the displayed score is:
   10 per level + experience / 1,000,000 + 100 per full player frag
@@ -27723,14 +27921,16 @@ spells <class or specialization>
 spells info <spell name>
 
 Bare spells shows your own spells, including for staff. Spells are grouped by
-Circle and name; future circles are labeled. Your class, specialization,
-secondary class and current maximum Circle describe whose access is shown.
+circle and name. Spells above your maximum circle are dimmed. The header shows
+your class, specialization, secondary class and maximum circle.
+Your spell interface command appears below the list when applicable.
 Book markers check inventory, hands and belt only for spellbook users.
 Circle access and book presence do not mean a spell is prepared or ready to cast.
 
 Use spells cleric for base grants or spells fire magus for a complete effective
-specialization catalog, including inherited spells and changes. Lost base
-spells are listed separately. Bard songs and instruments remain in skills.
+specialization catalog. An asterisk marks spells gained from the specialization.
+Lost base spells are listed separately. Bard songs and instruments use skills.
+The catalog shows the class's default spell interface when applicable.
 Catalogs are reference information, independent of your race, class and level.
 
 Use spells info fireball for registered aggression, class/spec circles and
@@ -27781,7 +27981,8 @@ use skills <class or specialization> and spells <class or specialization>.
 
 Use specialize at level 30. See help specialization for requirements.
 Class innates lists inherited abilities, unlock levels, and active/passive
-markers. Use help <ability name> for usage, or race innates <race> for racial
+markers. Nonzero melee and archery damage bonuses or penalties are also
+shown; see help attack damage modifiers. Use help <ability name> for usage, or race innates <race> for racial
 abilities.
 
 Names accept case-insensitive full names, spaces/hyphens and unique prefixes.
@@ -27917,3 +28118,576 @@ routes and fares. Buy the listed ticket and give it to that same carrier.
 Read 'help flights' for discovery, prices, restrictions and special trips.
 See also: Flights, Travel.
 #
+
+#
+"PASSWORD RECOVERY" "ACCOUNT EMAIL"
+===========================================================================
+To add or update your recovery email while logged in, choose option 5 in the
+telnet account menu, or Account -> Email in the browser client. Enter an inbox
+you control, then enter the verification code emailed there. Your registered
+address changes only after the code is accepted and the change is saved.
+You can use this same path to verify your current address or replace an old
+one. New accounts can play while verification is pending, but cannot recover
+by email until an inbox is verified.
+
+If you forgot your account password, enter your account name and type ? at
+the telnet password prompt. In the browser, choose Forgot password? at login.
+Read the emailed reset code, enter it, choose a new password and log in.
+The website uses the same account password.
+
+Codes work once and expire after 15 minutes or a game restart/copyover. Each
+account can request one verification code and one reset code per 10 minutes;
+each client address can request five codes in 10 minutes. Five wrong guesses
+exhaust a code. Check spam if mail does not arrive, then retry later. A request
+response does not reveal whether an account or email exists. If saving fails,
+retry the same code while it is valid. If recovery is unavailable, ask staff.
+
+Cannot access the registered inbox and cannot log in? Ask staff for manual
+account-ownership checks. Never give anyone your mailbox password.
+===========================================================================
+See also: PASSWORD, RULES
+#
+"CONTROLLER SPELLS"
+Controller is a Summoner specialization. Read 'help Controller Skills' for
+the base progression and 'help Controller' for specialization changes.
+Use 'spells controller' for current circle requirements, or 'spells' to
+see your own access and preparation.
+#
+"ASSASSINS"
+For the normal Rogue specialization, read 'help Rogue Assassin'.
+The retired standalone class is described by 'help Assassin'. Use
+'class info assassin' to inspect the current specialization.
+#
+"MAGICAL REDUCTION"
+Magical Reduction is a passive racial innate of Mountain Dwarves and
+Duergar, available from level 1. It contributes a 20% reduction to generic
+magical damage, alongside other damage modifiers. It does not provide this
+reduction against elemental damage and is separate from Magic Resistance.
+No command or activation cost is required. See 'help innates'.
+#
+"SUICIDE"
+Syntax: suicide
+
+This command kills your character after a Yes/No confirmation. Answer No
+to cancel. Normal death rules still apply, including Hardcore lives;
+it is not an account or character deletion command.
+
+You cannot use it while asleep, bound, jailed, or under recent PvP delay.
+Ocean and ship combat can also prevent it. Trusted staff cannot use it.
+Repeated use can send you to the cage. Read 'help death' and
+'help hardcore' before confirming.
+#
+
+"ACCOUNT EMAIL"
+To add, replace or verify a recovery inbox, use account-menu option 5 on
+telnet or Account -> Email in the browser client. Enter the code sent to
+the new inbox. Your current address stays unchanged until the code is
+accepted and saved; new accounts can play before verifying an address.
+
+Read 'help password recovery' for code expiry, request limits, password
+reset instructions and the staff fallback when you cannot access an inbox.
+#
+"KEPTCHAR"
+Overlord only. Inspect a broken, unentered character before any repair:
+  keptchar inspect <pid> <expected-name>
+  keptchar attach <pid> <expected-name> <verified-account> <evidence-ref>
+  keptchar release <pid> <expected-name> <expected-owner-or--> <evidence-ref>
+
+Ordinary kept characters resume through their account without this command.
+Verify ownership independently; a name, email or level alone is not proof.
+Attach preserves the existing character's stats, items and approval state.
+Release deletes the broken attempt and retains its retired identity; it
+cannot reconstruct a missing snapshot. Use '-' only for an ownerless row.
+
+Repairs refuse established or accepted characters, conflicting ownership,
+live bodies, pending saves or unresolved starter grants. Wait for the
+committed result and inspect again after a refusal or failure. Re-login to
+refresh an open account menu. Production repairs require owner permission.
+#
+BLOODLUST (General Information)
+===========================================================================
+Bloodlust is a temporary damage bonus against ordinary NPCs, not players
+or player-owned pets. It builds automatically from qualifying kills while
+you are below level 50. The victim must be no more than five levels below
+you and cannot be a player-owned or conjured pet.
+
+Further qualifying kills build or refresh the effect. Its maximum strength
+decreases above level 40. Ogres retain it longer than other races.
+Use 'bonus' to inspect your active Bloodlust and remaining duration.
+See also: BONUS, EXPERIENCE, EFFECTS
+===========================================================================
+
+#
+BLUE HAZE (General Information)
+===========================================================================
+Syntax: smoke <herb> <pipe>
+
+Blue Haze is a smoking herb. Carry the herb and a pipe, or hold them in
+your hands. Smoking consumes the herb and leaves your lungs needing time
+to recover; the normal smoking restrictions apply.
+
+It changes casting speed and can grant temporary hit points and hitroll.
+Existing vitality spells prevent its vitality benefits from stacking.
+Black Kush halves its duration. Smoking Blue Haze again extends the
+existing effect rather than adding another set of bonuses; it does not
+add vitality benefits that were blocked on the first smoke.
+See also: HERBS, EFFECTS, VITALITY
+===========================================================================
+
+#
+DERAMUTH (General Information)
+===========================================================================
+Deramuth is a port in Alatorin, in the Shanatar mountains, with a merchant
+district and shipyard. Its ferry docks serve Fort Boyard, Sarmiz'Duul and
+Venan'Trut. Check the dock and ship to identify your route before boarding.
+
+Use 'buy ticket' at the route's ticket machine and keep your ticket for
+the journey. Use 'enter <ship>' to board a docked ferry. From its boarding
+area, 'look out' shows the current port and 'disembark' takes you ashore.
+You must be standing and out of combat to disembark.
+See also: FERRY, SHIPS, SHIP_COMMANDS
+===========================================================================
+
+#
+LANTAN SCIENTIFIC TOOLS (General Information)
+===========================================================================
+Carry a set directly in your inventory when using 'salvage <item>'.
+The tools are consumed during salvage. They protect against destruction
+from a failed Salvage skill roll and improve recipe discovery chances;
+they do not guarantee a recipe or make an ineligible item salvageable.
+
+You still need the Salvage skill. Use 'examine <item>' for the assessment
+your skill allows, and read 'help recipes' for learning and using recipes.
+See also: SALVAGE, RECIPES, CRAFT, FORGE
+===========================================================================
+
+#
+
+#
+"Epic Costs Epic Skills Cost"
+Epic training spends epic points and platinum. Use 'epic skills' to find
+skills and teachers; ask the appropriate teacher about a skill to see the
+next step's cost. 'help epic skill cost' lists step and mastery prices.
+Training begins at level 30 and still requires the skill's eligibility.
+
+==See also==
+
+Epic skill cost, Epic skills, Epics
+
+#
+"Ketch"
+The Ketch is a merchant ship hull. Its base requirements are level 25 and
+2,500,000 copper (2,500 platinum), before sails, weapons and other fittings.
+It has eight equipment slots, cargo capacity 20, contraband capacity 3,
+and room for eight people. Its listed maximum speed is 78.
+A hull needs suitable sails before it can travel. Consult the ship shop's
+current list for the actual purchase and fitting options.
+
+==See also==
+
+Ships, Ship1, Ship3
+
+#
+"Mind of the Dragon"
+Mind of the Dragon is a passive innate for Way of the Dragon Monks,
+obtained at level 30. It needs no activation command or resource payment.
+It gives a separate 50% check against sneaky strikes and backstabs, a 50%
+check for immediate search success, and halves a thief's steal chance.
+These checks do not guarantee protection against every attack or theft.
+
+==See also==
+
+Mind of dragon, Way of the Dragon, Monk, Innate
+
+#
+"Planes"
+Planes are separate regions of the world, including the Astral and
+Ethereal planes and the elemental planes of Air, Earth, Fire and Water.
+Travel depends on the specific spell, portal or innate you use: consult
+'help plane shift', 'help gate' or 'help nether gate' for that method.
+A route to another plane does not guarantee a return route. Read the
+individual plane's help and prepare for its hazards before entering.
+
+==See also==
+
+Astral Plane, Ethereal Plane, Elemental Plane of Air,
+Elemental Plane of Earth, Elemental Plane of Fire, Elemental Plane of Water,
+Plane shift, Gate, Nether Gate
+
+#
+"Ramming"
+To ram a ship, first lock a target and reach a current speed of at least
+20, then use 'order ram'. Your ship must be afloat, undocked, and ready
+after its previous ram. This arms ramming mode; impact occurs when your
+ship reaches the target, rather than immediately when you give the order.
+Use 'order ram off' to cancel. Losing your target or dropping below the
+required speed cancels ramming mode. Ramming can damage your own ship.
+
+==See also==
+
+Ship2, Ship4, Ships
+
+#
+"Bleeding"
+A negative hit-point total can leave you incapacitated or dying, unable
+to use many normal commands. These conditions lose hit points instead of
+regenerating normally, so seek healing promptly. 'help bandage' explains
+first aid, and 'help fortitude' describes that spell's limited protection.
+Bleeding from a specific attack, such as garrote, follows that attack's
+own rules; the word is not one universal damage effect.
+
+==See also==
+
+Bandage, Fortitude, Garrote, Death
+
+#
+"Earthen Fist"
+The earthen fist described in spell messages is Earthen Grasp, not a
+separate spell named Earthen Fist. Read 'help earthen grasp' for the
+single-target spell or 'help greater earthen grasp' for its group version.
+
+==See also==
+
+Earthen Grasp, Greater Earthen Grasp
+
+#
+"Illusionist Spells"
+Use 'spells illusionist' for the base Illusionist spell catalog, or
+'spells' for your own available spell list. 'help illusionist skills'
+lists the class's base spells and skills. Specializations change that
+base list; consult your specialization's help for additions and removals.
+Spell listings do not mean that you have learned or prepared every spell.
+
+==See also==
+
+Illusionist, Illusionist Skills, Spells, Memorize
+
+#
+"Takedown Takedowns"
+Takedowns are maneuvers that knock an opponent down, including bash,
+trip and several class-specific attacks. There is no standalone 'takedown'
+command. Use the maneuver you know and read its help for targets, size
+restrictions, defenses and recovery time.
+A maneuver can wait for your recovery after a previous bash or takedown;
+repeating the command does not bypass that wait. 'skills info <skill>'
+shows the maneuver's current rules and recovery information.
+
+==See also==
+
+Bash, Trip, Tackle, Kneel, Skills
+
+#
+"Ability Information"
+Use 'spells info <spell>', 'skills info <skill>' or 'innate info <name>'
+to read an ability's requirements and mechanics. Names can be multiword;
+for example, 'spells info fireball' or 'skills info bash'.
+Pages show applicable costs, ranges, durations, recovery rules and your
+access or current status. Numbers depend on your character and the
+ability's stated conditions; they do not promise a hit or successful cast.
+Reading a page does not cast, activate, train or spend an ability.
+
+==See also==
+
+Spells, Skills, Innate
+
+#
+Group Cap
+The current group-size threshold is 20 for either racewar side. GROUP
+enforces the leader's side limit when adding players; pet admission has
+separate rules. This is not an experience exemption for smaller groups.
+Kill experience is shared according to group size and relative levels
+among eligible players in the same room, with other modifiers afterward.
+Read 'help group' for joining, consent and group commands.
+
+#
+Levitation
+Read 'help levitate' for the spell and racial levitation abilities.
+Use 'spells info levitate' or 'innate info levitate' for your applicable
+requirements and mechanics. 'innates' lists your available innates.
+
+#
+Summon Spell
+Read 'help summon' for bringing a creature to you. Summon Beast,
+Conjure Elemental and other summoning spells have separate rules;
+use 'spells info <spell name>' for the specific spell you mean.
+
+#
+Exp Loss
+Ordinary non-arena deaths can cost experience from level 30 onward,
+and that loss can lower your level. Below level 30, ordinary death
+does not remove experience. Liches have separate level-loss rules.
+The normal base penalty is 15% of the next-level experience amount;
+active difficulty and experience settings can modify it.
+Hardcore counted lives are a separate rule: read 'help hardcore'.
+Read 'help death', 'help experience' and 'help resurrect' for recovery.
+
+#
+Frostmage
+Read 'help frost magus' for the Ethermancer ice specialization and its
+requirements, spells, skills and innate abilities. 'spells frost magus'
+lists its spell progression; a listed spell still needs to be learned
+and prepared as appropriate.
+
+#
+Scoundrel Skills
+Read 'help bard skills' for the base Bard songs and skills, and
+'help scoundrel' for specialization additions and changed skill caps.
+Use 'skills info <skill name>' for your access and the skill's mechanics.
+
+#
+Ship Weapon List
+At a shipwright, use 'list weapons' to see available ship weapons,
+prices, weight, ammunition, range and damage. Read 'help ship weapons'
+for the full guide. This is separate from personal weapon skill lists.
+
+#
+Class List
+Read 'help classes' for classes, 'help <class name>' for a class profile
+and 'help <class name> skills' for its base progression.
+Specializations add or remove abilities; consult their own help too.
+Normal character-creation choices depend on race and alignment.
+
+#
+Path of the Frost
+Read 'help path of frost' for the Frost Magus spell. Use
+'spells info path of frost' for its requirements and current mechanics.
+
+#
+Shaman Spells
+Read 'help shaman skills' for spell circles and base skills, and
+'help shaman' for the class and specializations. 'spells shaman'
+browses its base spell progression. Totems and preparation still
+follow the rules in 'help totems' and 'help commune'.
+
+#
+Tharn Map
+Read 'help tharnadia' for the city overview and 'help moves' for
+movement commands. This guide does not supply a Tharnadia street map
+or a walkthrough. Use the area's visible exits as you explore.
+
+#
+Max Level
+Read 'help level cap' for the shared progression limit and requirements
+above experience-earned levels. A level or spell-circle registration
+does not override the current cap. 'score' shows your current level.
+
+#
+Tight Quarters
+Single-file rooms restrict who you can reach. Most room-wide area
+spells cannot be cast there; single-target room spells require an
+adjacent target unless you are casting on yourself. Ranged spells
+have their own checks. Read 'help group' for group ranks and positions.
+#
+Black Kush
+Black Kush is a smoking herb. Read 'help smoke' for using herbs and
+smoking equipment. Its effects depend on the herb's strength and your
+attributes: it modifies Intelligence, Wisdom and Power, lowers Strength
+and Agility, and slows ordinary combat rounds. Psionicists also receive
+a mana-regeneration bonus. Blue Haze halves the new dose's duration.
+Smoking it again while affected extends an existing effect's duration.
+#
+Lifeleak
+Lifeleak is a poison, not a spell you cast by that name. Each poison
+pulse removes 10 hit points, stopping at 1 HP. Pulses normally occur
+every 20 seconds; Slow Poison stretches that interval to 60 seconds.
+The poison can wear off after a pulse. Read 'help remove poison',
+'help slow poison' and 'help mixpoison'.
+#
+Moveleak
+Moveleak is a poison that removes 10 movement points per pulse, stopping
+at zero. Pulses normally occur every 10 seconds; Slow Poison stretches
+that interval to 30 seconds. The poison can wear off after a pulse.
+Read 'help remove poison', 'help slow poison' and 'help mixpoison'.
+#
+Saving Throws
+Saving throws help resist attacks and other hostile effects. Lower
+save values are generally better. The attack determines which save it
+uses and what success changes; saving does not always prevent the
+entire effect. Read 'help saving throw' and the particular ability's
+help or 'spells info <spell>' for its defenses and outcomes.
+#
+Lockpick
+Use 'pick <door or container>' with suitable lock picks. Some locks
+cannot be picked, and picks can break. Read 'help pick locks' for the
+command; 'skills info pick lock' shows your skill's current mechanics.
+#
+Detect Subversion
+Detect Subversion is a passive Bounty Hunter innate from level 30.
+It helps reveal illusions when looking at creatures and objects.
+It has no activation command or separate mana cost. Use 'innates'
+to check your available innates and 'help bounty hunter' for the spec.
+#
+Battlefield Aid
+Battlefield Aid is a passive Bounty Hunter innate from level 41.
+It is listed among the specialization's innates, but its old first-aid
+and bandaging bonuses are not used by the current bandage command.
+There is no separate activation command. Read 'help bandage' for the
+healing that the current skill provides.
+See also: Bandage, Bounty Hunter.
+#
+Interception
+Interception is the passive innate named Intercept, gained by Bounty
+Hunters at level 31. While standing, it can stop an incoming attack
+and temporarily reduce that attacker's attacks. Luck affects success.
+It cannot intercept an attacker already held by this effect.
+Use 'innate info intercept' for your rolls and duration.
+See also: Bounty Hunter.
+#
+Named Equipment Stats / Named Eq Sets / Namedsets
+Read 'help named equipment sets' for matching pieces, hit-point
+bonuses, spell thresholds, origin rules and cooldowns. Use 'namedreport'
+to see each supported zone's spells and required piece counts.
+Use 'score' to inspect your visible active effects.
+#
+Barbarian Skills
+Barbarian is a race. Your class and specialization determine your
+learned skill progression; the race also grants its own innates.
+Use 'skills' for your skills, 'innates' for available innates, and
+'help barbarian' for the race. Use 'skills <class name>' to
+browse a class's skill progression.
+#
+Rested Experience
+At login, at least nine hours offline grants Rested; at least twenty
+hours grants Well-Rested. These grant 150% and 200% of ordinary eligible
+experience respectively and do not stack with each other. The login
+grant lasts 150 ticks; new characters receive a starting Well-Rested
+grant on first entry. Account-menu option 8 checks offline eligibility.
+Read 'help rested' and 'help well-rested' for the related effects.
+#
+Shiplist
+At a dock, use 'list' to inspect hulls, weapons, equipment and cargo.
+Read 'help ship list' for those listings and 'help ship commands'
+for ship operation. There is no separate player 'shiplist' command.
+#
+Create Chest
+Inside a MariaDB-backed locker, use 'eq chest create <name> [password]'
+to buy a private chest for 500 platinum, up to five per locker.
+Read 'help eq chest' for access, payment and management rules.
+#
+Sorc Skills
+Use 'skills' to list your own skills or 'skills sorcerer' for
+the base-class catalog. Read 'help sorcerer skills' for the full base
+progression and your specialization's help for changes to that list.
+Use 'spells' to browse spells and 'spells info <spell>' for details.
+#
+Exp Loss
+Death can cost experience and levels from level 30 onward. Arena
+deaths are exempt from this ordinary experience penalty; Liches have
+separate level-loss handling. Read 'help death' for death and corpse
+recovery, and 'help experience' for progression. 'exp' shows your
+current experience. A routine reboot does not impose a death penalty.
+
+#
+ATTACK DAMAGE MODIFIERS
+===========================================================================
+Race innates and class innates show a passive melee and archery damage bonus
+or penalty when it differs from zero. For example, +15% multiplies that
+attack's damage by 1.15; -17.5% multiplies it by 0.825. Neutral modifiers
+are omitted. These features are always applied when their attack qualifies;
+you do not need to activate or train them.
+
+They affect ordinary melee attacks, including unarmed attacks, and archery.
+Spells and special attacks have their own rules: backstab and the Monk's
+HP-based special hit do not use this modifier. It does not increase your
+accuracy, attack count or attack speed, and later defenses still apply.
+
+Racial and class modifiers multiply: +15% from both gives +32.25%, not +30%.
+Multiclass characters use the higher of their two class multipliers.
+Specializations use their base class modifier: Thief and Assassin use Rogue.
+
+Use race innates <race> or class innates <class or specialization> to view
+the current values. These modifiers are separate from your damroll limit.
+===========================================================================
+See also: RACE, CLASS, INNATE, MULTICLASS
+#
+Dauntless
+Dauntless is a passive Barbarian racial innate gained at level 41.
+It grants immunity to fear effects that check fear immunity, including
+the fear part of Dragon Roar and Gaze. It needs no activation, mana or
+cooldown. It does not prevent unrelated forced movement.
+Use 'race innates barbarian' to see the racial unlocks.
+See also: Barbarian, Dragon Roar, Gaze.
+#
+Spell Frost Magus
+Read 'help frost magus' for the specialization's changed spell circles
+and 'help ethermancer skills' for its base grants. Use 'spells frost magus'
+to browse the class catalog and 'spells info <spell>' for spell mechanics.
+Listed spells still need to be learned and prepared.
+#
+Sorc Spells
+Read 'help sorcerer skills' for the base spell circles and skill levels.
+Your specialization's help lists additions and removals. Use 'spells'
+for your own spells and 'spells info <spell>' for mechanics.
+See also: Sorcerer, Sorcerer Spells.
+#
+Mix Poison / Mix Poisons
+The command is 'mixpoison', without a space. Use 'mixpoison list' to see
+recipes available at your level and mix skill. With no argument it makes
+three doses of the first eligible recipe whose ingredients you carry,
+using one poison vial and the ingredients. Apply a dose with
+'apply <vial> <weapon>'. Read 'help mixpoison' for recipe requirements.
+#
+Rapier Dirk
+Read 'help rapier and dirk' for the passive sword-and-dirk innate.
+It requires a sword in the primary hand and a dirk in the secondary hand;
+a sword alone does not qualify. There is no separate activation command.
+#
+Namesets
+Read 'help named equipment sets' for matching equipment, bonuses,
+spell thresholds and cooldowns. Use 'namedreport' to see supported zones
+and the number of pieces needed for each spell.
+#
+Race Size
+Ordinary starting races have these base sizes:
+Small: Halfling, Gnome, Goblin, Kobold.
+Medium: Human, Grey Elf, Mountain Dwarf, Githzerai, Drow, Duergar,
+        Orc, Githyanki, Thri-kreen, Tiefling.
+Large: Barbarian, Centaur, Troll, Drider.
+Huge: Firbolg, Ogre, Minotaur.
+
+Size-changing effects have their own limits. Huge or larger player
+base size lets a two-handed weapon cost one hand; Enlarge, Reduce and
+Titan Form do not change that base-size allowance.
+See also: Size, Enlarge, Reduce, Wield.
+#
+Drow Shrug
+Shrugging is racial spell resistance, separate from the 'shrug' social.
+Your race and level determine its base strength; spell penetration and
+spell-specific defenses also matter. Use 'innate info magic resistance'
+for your current chance and 'race innates drow elf' for the racial list.
+See also: Drow Elf, Shrug, Magic Resistance.
+#
+Max Dex / Max_Dex
+Maximum Dexterity is the cap on your effective Dexterity, separate from
+your current Dexterity. An equipment maximum-Dexterity bonus raises both
+the current attribute and its cap. Epic Dexterity has its own training rules.
+Read 'help dexterity' and 'help epic dexterity' for the related attributes.
+#
+Attacks
+Your class, level, skills, weapons and active effects determine your
+ordinary attacks. High Dexterity can grant extra attacks, subject to
+weapon weight and Strength; a bonus is a chance, not a guaranteed swing.
+Monks have separate equipment-weight rules described by
+'help martial arts'. Attack count, attack speed and damage are separate.
+See also: Dexterity, Dual Wield, Haste, Attack Damage Modifiers.
+#
+Pantherskin
+Pantherskin is an object keyword on the black pantherskin robes from
+the Savannah of Broken Trusts. It is equipment, not an ability command.
+Use 'look pantherskin' to inspect a copy you can see, and Identify to
+learn the properties of the actual item; saved or modified copies can
+differ from newly loaded equipment.
+See also: Equipment, Identify, Get.
+#
+Tent
+You do not need a tent object to use 'camp'. Choose suitable dry terrain,
+finish fighting, then remain in place until camping completes. Movement,
+combat or going link-dead interrupts camping. 'camp abort' cancels it.
+The tents placed in zones are individual objects and scenery; inspect
+the one near you with 'look tent'. Read 'help camp' for leaving the game.
+#
+Darkfall
+Darkfall is Darkfall Forest, a wilderness zone. Grellinar, the high ranger,
+is an Epic Agility teacher there. Epic training has its own level,
+eligibility and payment rules; finding a teacher does not grant a skill.
+Read 'help epic' and 'help epic agility' before seeking that training.

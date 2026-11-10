@@ -23,6 +23,10 @@ artifacts.
 This repository contains the game server, world data, area-building toolchain,
 database schema, regression tests, and operational scripts.
 
+MariaDB is the only supported persistence backend. Every server, including local,
+minimal-world and test instances, needs a configured database. Flat-file
+persistence and database-free server builds are not supported.
+
 ## Architecture
 
 ```mermaid
@@ -85,8 +89,8 @@ nc 127.0.0.1 4000
 ```
 
 The generated `.env.docker` is ignored, mode `0600`, and contains random
-database credentials. The database, filesystem-backed player state, recovery
-journals, backups, certificate, and logs live in named Docker volumes and
+database credentials. The MariaDB data, recovery journals, backups, certificate,
+and logs live in named Docker volumes and
 survive ordinary container rebuilds.
 This stack is a local/development alternative to the native setup below; it is
 not the production deployment model. See the [Docker deployment guide](docs/operations/DOCKER.md)
@@ -113,8 +117,8 @@ sudo apt install ./bin/packages/duris-build-deps_1.0_all.deb
 
 `equivs` is only the bootstrap tool used to build the metapackage. The manifest
 then installs Git, Python, dos2unix, the compiler, GNU Make, GDB, Valgrind,
-clang-format, MariaDB-compatible client and server packages, and the XML,
-compression, TLS, JSON, Redis, BSD, libcurl (SMTP), and MySQL/MariaDB
+clang-format, MariaDB client and server packages, and the XML,
+compression, TLS, JSON, Redis, BSD, libcurl (SMTP), and MariaDB
 development libraries required by the repository. The compiler supplies the
 ASan/UBSan runtimes used by the sanitizer build. Redis itself is optional, and so
 is the SMTP relay: account password recovery by email stays off unless

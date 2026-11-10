@@ -1,6 +1,6 @@
 # Item ability rollout and rollback
 
-This runbook covers the initial delivery of [#290](https://github.com/LuminariMUD/Duris/issues/290), through #291–#297. It prepares a deployment; it does not authorize production changes. The master, every category and the five native artifact flags ship disabled. See the [verification record](../testing/ITEM_ABILITY_ROLLOUT.md) for the distinction between real server encounters, forced native callback fixtures and benchmarks.
+This runbook covers the initial delivery of [#290](https://github.com/LuminariMUD/Duris/issues/290), through #291–#297. It prepares a deployment; it does not authorize production changes. The master, every category and the five native artifact flags ship disabled. Use the current focused runtime and MariaDB repository tests linked from the feature references; controlled harnesses and benchmarks do not establish live-server rollout readiness.
 
 ## Delivered roster and editor boundary
 
@@ -23,10 +23,37 @@ DurisStudio is a private editor outside this repository, so its boundary is a st
 ## Prepare a wave
 
 1. Record the server revision, backend, wave roster, catalog/profile revisions, costs and responsible operator. Synthetic test budgets are test inputs, not approved production balance.
-2. Qualify a coherent backup using [BACKUPS.md](BACKUPS.md), including players, item custody, world/corpse/locker state, journals and mana. Flat-file backups must use the managed path that takes the mana writer lock.
-3. SQL installations require additive **0016_artifact_mana**, applied and verified through the immutable migration runner after 0015. Preserve history and manifest checksums. It adds the InnoDB per-UID authority without filling items. Flat-file primary uses protected `domains/artifact-mana-<uid>` records and needs no SQL migration. Storage failure never switches mana to another backend.
+2. Qualify a coherent backup using [BACKUPS.md](BACKUPS.md), including players, item custody, world/corpse/locker state, journals and mana.
+3. MariaDB requires additive **0016_artifact_mana**, applied and verified through the immutable migration runner after 0015. Preserve history and manifest checksums. It adds the InnoDB per-UID authority without filling items. Storage failure never switches mana to another backend.
 4. Rehearse restore/startup with the intended binary and schema in isolation. Verify stable UIDs, retained depletion, empty new/cloned pools and schema compatibility. Run the linked verification commands and native permission/group/race/class checks for the selected roster.
 5. Complete the private editor handoff before promising an editor authoring workflow.
+
+## Disposable server journeys
+
+Build the ordinary 250 ms server and generated world, then run the maintained
+journeys against private schemas. The wrapper creates and removes its own local
+MariaDB container; it does not source the checkout environment.
+
+```sh
+for family in tsunami studio ioun; do
+  tests/async/with_disposable_mariadb.sh python3 tests/async/run_item_pilot_journey.py \
+    --binary bin/server/dms_new --family "$family" --output "bin/tests/item-pilot-$family.json"
+done
+tests/async/with_disposable_mariadb.sh python3 tests/async/run_item_config_journey.py \
+  --binary bin/server/dms_new --output bin/tests/item-config.json
+tests/async/with_disposable_mariadb.sh python3 tests/async/run_item_mana_encounter_journey.py \
+  --binary bin/server/dms_new --output bin/tests/item-encounter.json
+tests/async/with_disposable_mariadb.sh python3 tests/async/run_item_overlap_journey.py \
+  --binary bin/server/dms_new --output bin/tests/item-overlap.json
+```
+
+The 2026-11-09 MariaDB qualification passed all seven pilot cases, configuration
+rollback/reload and private metrics, sustained combat/player-encounter recharge,
+and both native dual-weapon and ordinary mortal casting overlaps. Pilot checks
+include committed per-UID depletion/version, interruption, crash/no revival,
+nested storage/restart, corpse-loot identity and paid native ioun interception.
+The [conversion plan](../ongoing-projects/issue-870-mariadb-journeys-plan.md)
+records exact binary provenance, case commands, retained failures and results.
 
 ## Configuration acceptance matrix
 

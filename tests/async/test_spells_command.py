@@ -12,9 +12,12 @@ HARNESS = r'''
 #include "core/utils.h"
 #include "cmd/wikihelp.h"
 #include "magic/spells.h"
+#include "abilities/abilities.h"
 #include <cassert>
 #include <cstdarg>
 #include <cstdio>
+#include <regex>
+#include <sstream>
 #include <string>
 extern const struct class_names class_names_table[];
 extern const char *specdata[][MAX_SPEC];
@@ -22,6 +25,8 @@ Skill skills[MAX_AFFECT_TYPES + 1];
 static std::string output, help_name, help_result = "Syntax: cast 'fireball' <victim>";
 static P_char visible, book_target;
 static int lookups, book_checks;
+static bool wearing_necroplasm;
+int is_wearing_necroplasm(P_char) { return wearing_necroplasm; }
 void send_to_char(const char *text, P_char) { output += text; }
 void send_to_char_f(P_char, const char *format, ...) {
     char text[8192]; va_list args; va_start(args, format);
@@ -38,6 +43,26 @@ P_obj SpellInSpellBook(P_char target, int spell, int mode) {
     return spell == SPELL_FIREBALL ? reinterpret_cast<P_obj>(1) : nullptr;
 }
 std::string wiki_help_single(std::string name) { help_name = name; return help_result; }
+static std::string fireball_mechanics(P_char) { return "  Fire damage: 1-2\n"; }
+AbilityFacts ability_facts(int spell) { return spell == SPELL_FIREBALL ? fireball_mechanics : nullptr; }
+// Every availability row's circle starts in the same column; returns the rows checked.
+static int circles_line_up(const std::string &text) {
+    const size_t start = text.find("Class / specialization availability\n");
+    std::istringstream rows(text.substr(start, text.find("Unlisted specializations") - start));
+    std::string row;
+    size_t column = std::string::npos;
+    int count = 0;
+    std::getline(rows, row);
+    while (std::getline(rows, row)) {
+        size_t at = row.find("Circle ");
+        if (at == std::string::npos) at = row.find("Unavailable");
+        if (at == std::string::npos) continue;
+        if (column == std::string::npos) column = at;
+        assert(at == column);
+        ++count;
+    }
+    return count;
+}
 static std::string run(P_char ch, std::string args) {
     output.clear(); help_name.clear(); lookups = book_checks = 0;
     do_spells(ch, args.data(), 0);
@@ -82,26 +107,40 @@ int main() {
     npc.player.m_class = CLASS_CONJURER | CLASS_CLERIC;
     npc.player.level = 50; npc.specials.act = ACT_ISNPC;
     auto text = run(&ch, "");
-    assert(text.find("Scholar : SPELLS") != std::string::npos && lookups == 0);
-    assert(text.find("Circle 1 (circle accessible)") != std::string::npos);
-    assert(text.find("Circle 3 (future circle)") != std::string::npos);
-    assert(text.find("Circle 12 (future circle)") != std::string::npos);
-    assert(text.find("fireball [in spellbook]") != std::string::npos);
-    assert(text.find("fireball") < text.find("Zeta spell"));
-    assert(book_target == &ch && text.find("capless spell") == std::string::npos);
-    assert(text.find("Undefined") == std::string::npos && text.find("invalid circle") == std::string::npos);
+    assert(text == ">====[ Scholar | Conjurer | Max Circle 1 ]====<\n"
+                   "\n1st CIRCLE:\nburning hands\n"
+                   "\n3rd CIRCLE:\nfireball [in spellbook]\nZeta spell\n"
+                   "\n12th CIRCLE:\nmirror image\n"
+                   "\nmemorize is your spell interface\n"
+                   "See: spells <class or specialization> | spells info <spell name>\n");
+    assert(lookups == 0 && book_target == &ch);
+    assert(output.find("&+B1st CIRCLE:&n\nburning hands\n") != std::string::npos);
+    assert(output.find("&+B3rd CIRCLE:&n\n&+Lfireball [in spellbook]&n\n") != std::string::npos);
+    assert(output.ends_with("&+Wmemorize&n is your spell interface\n"
+                            "See: &+Wspells <class or specialization>&n | "
+                            "&+Wspells info <spell name>&n\n"));
     assert(run(&ch, "all").find("staff only") != std::string::npos);
     assert(run(&ch, "a").find("staff only") != std::string::npos);
     visible = &other;
     assert(run(&ch, "Cleric").find("BASE CLASS") != std::string::npos && lookups == 0);
     assert(run(&ch, "target Cleric").find("staff-only") != std::string::npos && lookups == 0);
     assert(run(&ch, "stranger").find("staff-only") != std::string::npos && lookups == 0);
-    assert(run(&ch, "fire magus").find("fire form") != std::string::npos);
-    assert(run(&ch, "fire magus").find("burning hands") != std::string::npos);
-    assert(run(&ch, "conjurer").find("fire form") == std::string::npos);
+    text = run(&ch, "fire magus");
+    assert(text.find("Circle 10\n  * fire form\n") != std::string::npos);
+    assert(text.find("Circle 1\n  burning hands\n") != std::string::npos);
+    assert(text.find("Circle 2\n  fireball\n") != std::string::npos);
+    assert(text.find("\n  * indicates spells gained from spec.\n") != std::string::npos);
+    assert(text.find("memorize is the default spell interface") != std::string::npos);
     text = run(&ch, "conjurer");
+    assert(text.find("fire form") == std::string::npos && text.find('*') == std::string::npos);
     assert(text.find("fireball") < text.find("Zeta spell"));
-    assert(run(&ch, "WaTeR-MaGuS").find("Spells lost from base class:\n  fireball") != std::string::npos);
+    text = run(&ch, "WaTeR-MaGuS");
+    assert(text.find("\n  Spells lost from base class:\n  fireball") != std::string::npos);
+    assert(text.find('*') == std::string::npos);
+    fire.rlevel[SPEC_WATER] = 1;
+    text = run(&ch, "water magus");
+    assert(text.find("Circle 1\n  burning hands\n  * fire form\n") != std::string::npos);
+    assert(text.find("\n  * indicates spells gained from spec. Spells lost from base class:\n  fireball") != std::string::npos);
     assert(run(&ch, "assassin").find("(Rogue)") != std::string::npos);
     assert(run(&ch, "thief").find("(Rogue)") != std::string::npos);
     assert(run(&ch, "dark knight").find("(Anti-Paladin)") != std::string::npos);
@@ -119,6 +158,9 @@ int main() {
     assert(run(&ch, "info Undefined").find("Provide a known") != std::string::npos);
     text = run(&ch, " info   FiReBaLl  ");
     assert(help_name == "fireball" && text.find("cast 'fireball'") != std::string::npos);
+    assert(circles_line_up(text) == 3); // the conjurer row and its two changed specializations
+    assert(text.find("\n    Fire Magus (Conjurer)") != std::string::npos);
+    assert(text.find("readiness to cast.\n\n  Mechanics\n  Fire damage: 1-2\n\n  Helpfile details") != std::string::npos);
     assert(text.find("Registered aggression: Yes") != std::string::npos);
     assert(text.find("Circle 2 (changed)") != std::string::npos);
     assert(text.find("Unavailable (lost from base class)") != std::string::npos);
@@ -130,10 +172,17 @@ int main() {
     assert(run(&ch, "info fireball").find("Not available through") != std::string::npos);
     ch.player.spec = SPEC_FIRE;
     assert(run(&ch, "info fire form").find("Circle 10 (added)") != std::string::npos);
+    // A specialization whose class has no row of its own is not indented under another.
+    text = run(&ch, "info fire form");
+    assert(text.find("\n  Water Magus (Conjurer) Circle 1 (added)\n"
+                     "  Fire Magus (Conjurer)  Circle 10 (added)\n") != std::string::npos);
+    assert(circles_line_up(text) == 2);
     assert(run(&ch, "info fireball").find("Your required Circle: 2") != std::string::npos);
-    ch.player.spec = 0;
     ch.player.secondary_class = CLASS_CLERIC;
+    assert(run(&ch, "").starts_with(">====[ Scholar | Conjurer / Fire Magus + Cleric | Max Circle 3 ]====<\n"));
+    ch.player.spec = 0;
     assert(run(&ch, "info heal").find("Your required Circle: 7") != std::string::npos);
+    assert(run(&ch, "info heal").find("readiness to cast.\n\n  Helpfile details") != std::string::npos);
     // A primary grant takes precedence even if a secondary grant is earlier.
     skills[SPELL_FIREBALL].m_class[flag2idx(CLASS_CLERIC)-1].rlevel[0] = 1;
     assert(run(&ch, "info fireball").find("Your required Circle: 3") != std::string::npos);
@@ -153,11 +202,16 @@ int main() {
     ch.player.m_class = CLASS_CONJURER; ch.player.race = RACE_ILLITHID;
     run(&ch, ""); assert(book_checks == 0);
     ch.player.race = RACE_HUMAN; ch.player.m_class = CLASS_WARRIOR;
-    assert(run(&ch, "").find("No eligible spells") != std::string::npos);
+    text = run(&ch, "");
+    assert(text.find("No eligible spells") != std::string::npos);
+    assert(text.find("is your spell interface") == std::string::npos);
+    assert(run(&ch, "warrior").find("default spell interface") == std::string::npos);
     ch.player.level = 62;
-    assert(run(&ch, "").find("Scholar : SPELLS") != std::string::npos);
-    assert(run(&ch, "target Cleric").find("Cleric : SPELLS") != std::string::npos && lookups == 1);
-    assert(run(&ch, "someone").find("Cleric : SPELLS") != std::string::npos);
+    assert(run(&ch, "").starts_with(">====[ Scholar | Warrior | Max Circle 12 ]====<\n"));
+    text = run(&ch, "target Cleric");
+    assert(text.starts_with(">====[ Cleric | Cleric | Max Circle 6 ]====<\n") && lookups == 1);
+    assert(text.find("is your spell interface") == std::string::npos);
+    assert(run(&ch, "someone").starts_with(">====[ Cleric | Cleric | Max Circle 6 ]====<\n"));
     assert(run(&ch, "Cleric").find("BASE CLASS") != std::string::npos && lookups == 0);
     assert(run(&ch, "target").find("Provide one visible") != std::string::npos && lookups == 0);
     assert(run(&ch, "target Cleric extra").find("Provide one visible") != std::string::npos && lookups == 0);
@@ -166,7 +220,7 @@ int main() {
     assert(run(&ch, "info internal spell").find("No ordinary class/specialization grants") != std::string::npos);
     visible = &npc;
     text = run(&ch, "target Trainer");
-    assert(text.find("Trainer : SPELLS") != std::string::npos && book_checks == 0);
+    assert(text.starts_with(">====[ Trainer | Cleric Conjurer | Max Circle 10 ]====<\n") && book_checks == 0);
     assert(text.find("heal") != std::string::npos && text.find("fireball") != std::string::npos);
     visible = nullptr;
     assert(run(&ch, "target absent").find("No such visible") != std::string::npos);
@@ -183,7 +237,46 @@ int main() {
     assert(run(&ch, "al").find("staff only") != std::string::npos);
     assert(run(&ch, "info internal spell").find("Provide a known") != std::string::npos);
     run(&ch, "target Trainer"); assert(lookups == 0);
-    puts("PASS: spells routes, all names, effective grants, real circle rules, book paths, NPCs and permissions");
+
+    for (int cls : {CLASS_SHAMAN, CLASS_DRUID, CLASS_RANGER, CLASS_DRAGOON, CLASS_BLIGHTER,
+                    CLASS_CLERIC, CLASS_PSIONICIST, CLASS_WARLOCK, CLASS_ETHERMANCER})
+        add(SPELL_MAGIC_MISSILE, "magic missile", cls, 1);
+    ch.player.level = 6;
+    const struct {
+        int primary, secondary, race;
+        const char *command;
+    } interfaces[] = {
+        {CLASS_SHAMAN, 0, RACE_HUMAN, "memorize"},
+        {CLASS_DRUID, 0, RACE_HUMAN, "commune"},
+        {CLASS_RANGER, 0, RACE_HUMAN, "commune"},
+        {CLASS_DRAGOON, 0, RACE_HUMAN, "commune"},
+        {CLASS_BLIGHTER, 0, RACE_HUMAN, "deforest"},
+        {CLASS_CLERIC, 0, RACE_HUMAN, "pray"},
+        {CLASS_PSIONICIST, 0, RACE_HUMAN, "will"},
+        {CLASS_WARLOCK, 0, RACE_HUMAN, "assimilate"},
+        {CLASS_ETHERMANCER, 0, RACE_HUMAN, "tupor"},
+        {CLASS_CONJURER, 0, RACE_HARPY, "tupor"},
+        {CLASS_CONJURER, 0, RACE_PSBEAST, "focus"},
+        {CLASS_CONJURER, 0, RACE_LICH, "assimilate"},
+        {CLASS_CLERIC, 0, RACE_ANGEL, "assimilate"},
+        {CLASS_WARRIOR, CLASS_BLIGHTER, RACE_HUMAN, "deforest"},
+        {CLASS_WARRIOR, CLASS_SHAMAN, RACE_HUMAN, "memorize"},
+        {CLASS_CLERIC, CLASS_BLIGHTER, RACE_HUMAN, "pray"},
+        {CLASS_DRUID, 0, RACE_ILLITHID, "will"},
+    };
+    for (const auto &[primary, secondary, race, command] : interfaces) {
+        ch.player.m_class = primary; ch.player.secondary_class = secondary; ch.player.race = race;
+        run(&ch, "");
+        assert(output.find(std::string("\n&+W") + command + "&n is your spell interface\nSee:") != std::string::npos);
+        if (!secondary && race == RACE_HUMAN) {
+            run(&ch, class_names_table[flag2idx(primary)].normal);
+            assert(output.find(std::string("\n  &+W") + command + "&n is the default spell interface\n") != std::string::npos);
+        }
+    }
+    ch.player.m_class = CLASS_CONJURER; ch.player.race = RACE_HUMAN;
+    wearing_necroplasm = true;
+    assert(run(&ch, "").find("assimilate is your spell interface") != std::string::npos);
+    puts("PASS: spells routes, grants, spell interfaces, circle rules, book paths, NPCs and permissions");
 }
 '''
 
@@ -198,6 +291,13 @@ def main():
         ("utility.c", "ClassSkillInfo SKILL_DATA_ALL("),
         ("memorize.c", "int get_spell_circle(P_char ch, int spl)"),
         ("memorize.c", "int get_max_circle("), ("memorize.c", "bool book_class("),
+        ("memorize.c", "bool praying_class("), ("memorize.c", "bool meming_class("),
+        ("memorize.c", "static bool can_assimilate("),
+        ("memorize.c", "const char *spell_interface_command("),
+        ("memorize.c", "const char *default_spell_interface_command("),
+        ("abilities.c", "std::string info_field("),
+        ("abilities.c", "static std::string bright_numbers("),
+        ("abilities.c", "std::string mechanics_section("),
         ("wikihelp.c", "string trim("),
     )]
     build = ROOT / "bin/tests"
@@ -206,19 +306,32 @@ def main():
         directory = Path(temporary)
         source = directory / "spells.cpp"
         source.write_text(HARNESS.replace("int main() {", "\n".join(functions) + "\nint main() {"))
-        for backend in ("mariadb", "flatfile"):
-            binary = directory / backend
-            flags = ["-D__NO_MYSQL__", "-Isrc/no_mysql"] if backend == "flatfile" else []
-            subprocess.run(["g++", "-std=c++20", "-Wall", "-Wextra", "-Werror",
-                            "-ffunction-sections", "-fdata-sections", "-Wl,--gc-sections",
-                            "-fsanitize=address,undefined", "-fno-sanitize-recover=undefined", "-Isrc",
-                            "-I/usr/include/mysql", "-I/usr/include/libxml2", *flags,
-                            str(source), "src/cmd/spells.c", "src/core/common.c", "-o", str(binary)],
-                           cwd=ROOT, check=True)
-            subprocess.run([str(binary)], cwd=directory, check=True)
+        binary = directory / "spells"
+        subprocess.run(["g++", "-std=c++20", "-Wall", "-Wextra", "-Werror",
+                        "-ffunction-sections", "-fdata-sections", "-Wl,--gc-sections",
+                        "-fsanitize=address,undefined", "-fno-sanitize-recover=undefined", "-Isrc",
+                        "-I/usr/include/mysql", "-I/usr/include/libxml2",
+                        str(source), "src/cmd/spells.c", "src/core/common.c", "-o", str(binary)],
+                       cwd=ROOT, check=True)
+        subprocess.run([str(binary)], cwd=directory, check=True)
 
-        # A cold flat-file help failure must leave the real browser facts usable.
+        # A cold help failure must leave the real browser facts usable.
         driver = r'''
+// wikihelp.c links these for race pages; a cold catalog never reaches them.
+int class_table[LAST_RACE + 1][CLASS_COUNT + 1];
+int allowed_secondary_classes[1][5];
+extern const mcname multiclass_names[];
+const mcname multiclass_names[1] = {};
+int get_property(const char *, int fallback) { return fallback; }
+const char *stat_to_string_damage_pulse(float) { return ""; }
+const char *stat_to_string_spell_pulse(float) { return ""; }
+int ansi_strlen(const char *text) { return static_cast<int>(strlen(text)); }
+std::string single_spec_list(int, int) { return ""; }
+std::string list_innates(int, int, int) { return ""; }
+std::string list_spells(int, int) { return ""; }
+std::string list_songs(int, int) { return ""; }
+std::string list_skills(int, int) { return ""; }
+bool is_allowed_race_spec(int, unsigned int, int) { return false; }
 int main() {
     add(SPELL_FIREBALL, "fireball", CLASS_CONJURER, 3);
     char_data ch{}; pc_only_data pc{}; ch.only.pc = &pc;
@@ -226,8 +339,8 @@ int main() {
     ch.player.m_class = CLASS_CONJURER; ch.player.level = 1;
     auto text = run(&ch, "info fireball");
     assert(text.find("Your required Circle: 3") != std::string::npos);
-    assert(text.find("error with the help system") != std::string::npos);
-    puts("PASS: real flat-file help unavailability preserves browser facts and access");
+    assert(text.find("Help is temporarily unavailable") != std::string::npos);
+    puts("PASS: real help unavailability preserves browser facts and access");
 }
 '''
         prelude = HARNESS.split("int main() {", 1)[0]
@@ -235,10 +348,11 @@ int main() {
             'std::string wiki_help_single(std::string name) { help_name = name; return help_result; }', '')
         source.write_text(prelude + "\n".join(functions[:-1]) + driver)
         binary = directory / "help-unavailable"
-        subprocess.run(["g++", "-std=c++20", "-D__NO_MYSQL__", "-Isrc/no_mysql", "-Isrc",
+        subprocess.run(["g++", "-std=c++20", '-I/usr/include/mysql', "-Isrc",
                         "-I/usr/include/libxml2", "-ffunction-sections", "-fdata-sections",
                         "-Wl,--gc-sections", str(source), "src/cmd/spells.c", "src/core/common.c",
-                        "src/cmd/wikihelp.c", "src/flatfile/flatfile_help_catalog.c",
+                        "src/cmd/wikihelp.c", "src/cmd/help_cache.c", "src/net/output_links.c",
+                        "src/net/ansi.c", "src/net/unicode.c",
                         str(HARNESS_STUBS), "-o", str(binary)], cwd=ROOT, check=True)
         subprocess.run([str(binary)], cwd=directory, check=True)
 

@@ -534,6 +534,12 @@ async def create_character(client, account, character, side, build):
     await client.send("n")
     await client.expect("keep this character")
     await client.send("y")
+    await client.expect("Please select an option")
+    await client.send("1")
+    await client.expect(character)
+    await client.send(character)
+    await client.expect("(Y/N)")
+    await client.send("y")
     await client.expect("PRESS RETURN")
     await client.send("")
     await client.expect("Your starter kit is ready", "Your Chaos Equipment has been prepared!!", timeout=60)
@@ -736,7 +742,7 @@ async def prepare_fighters(staff, clients, rows, run_dir):
                 raise BattleError(f"{name}: native score does not show full starting resources")
             row["starting_resources"] = {resource: int(current) for resource, current, _ in resources}
             row["vitals"] = player.gmcp["Char.Vitals"]
-            await player.command("save", expected=f"Save complete for {name}.")
+            await player.command("save", expected=f"Saving {name}.")
             row["preparation"] = "ready"
             print(f"Prepared {row['side']} {row['index'] + 1}: {row['race']} {row['class']} ({name})", flush=True)
         except Exception as error:
@@ -800,7 +806,7 @@ async def prepare_actions(staff, clients, rows, directory):
     # retain native consumption; the attack/healing loadout was not spent here.
     for row in rows:
         await staff.command(f"restore {row['name']}", expected="Done.")
-        await clients[row["name"]].command("save", expected=f"Save complete for {row['name']}.")
+        await clients[row["name"]].command("save", expected=f"Saving {row['name']}.")
     (Path(directory) / "preparation.json").write_text(json.dumps(rows, indent=2))
 
 
@@ -1013,7 +1019,7 @@ async def run_combat(staff, clients, rows, caps, stop, duration):
                 row["final_save"] = "native death terminal save; no individual completion acknowledgement"
             elif not player.error and result["stop"]["confirmed"]:
                 try:
-                    await player.command("save", expected=f"Save complete for {row['name']}.")
+                    await player.command("save", expected=f"Saving {row['name']}.")
                     row["final_save"] = "acknowledged"
                 except Exception as error:
                     row["final_save"] = str(error)

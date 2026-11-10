@@ -28,10 +28,12 @@
 #include "cmd/mail.h"
 #include "core/safe_format.h"
 #include "core/safe_io.h"
+#include "item/named_set_effects.h"
 using namespace std;
 
 struct AccountBankBalances;
 struct OutputContext;
+struct Rolls;
 enum class regen_resource : uint8_t;
 
 /* Legacy special-procedure callbacks expose their tagged payload as char *.
@@ -92,7 +94,6 @@ void account_delete_char_loaded(P_desc);
 void account_display_info(P_desc, char *);
 void delete_account(P_desc, char *);
 void verify_delete_account(P_desc, char *);
-void generate_account_confirmation_code(P_desc, char *);
 void display_account_information(P_desc d, P_acct account = NULL);
 void display_account_information_to_char(P_char ch, P_acct account);
 void clear_account(P_acct);
@@ -309,7 +310,6 @@ void do_shapechange(P_char, char *, int);
 void do_subterfuge(P_char, char *, int);
 void do_trip(P_char, char *, int);
 void do_dirttoss(P_char, char *, int);
-void do_trap(P_char, char *, int);
 P_char morph(P_char, int, int);
 P_char un_morph(P_char);
 void do_stampede(P_char, char *, int);
@@ -387,7 +387,6 @@ int itemvalue(P_obj obj);
 void do_dice(P_char ch, char *arg, int cmd);
 
 /* actoff.c */
-bool CheckMultiProcTiming(P_char);
 bool single_stab(P_char ch, P_char victim, P_obj weapon);
 bool flank(P_char ch, P_char victim);
 bool circle(P_char ch, P_char victim);
@@ -593,6 +592,7 @@ void do_tedit(P_char, char *, int);
 void do_depiss(P_char, char *, int);
 void do_repiss(P_char, char *, int);
 void do_approve(P_char, char *, int);
+void do_keptchar(P_char, char *, int);
 void do_advance(P_char, char *, int);
 void do_affectpurge(P_char, char *, int);
 void do_allow(P_char, char *, int);
@@ -639,6 +639,7 @@ void do_release(P_char, char *, int);
 void do_reroll(P_char, char *, int);
 void do_restore(P_char, char *, int);
 void do_return(P_char, char *, int);
+bool return_from_staff_switch(P_desc);
 void do_revoke(P_char, char *, int);
 /*void do_revoketitle(P_char, char *, int);*/
 void do_secret(P_char, char *, int);
@@ -647,6 +648,7 @@ void do_sethome(P_char, char *, int);
 void revert_sethome(P_char);
 void do_shutdow(P_char, char *, int);
 void do_shutdown(P_char, char *, int);
+void do_copyover(P_char, char *, int);
 void write_shutdown_info(const char *immortal_name, const char *reason);
 void do_silence(P_char, char *, int);
 void do_snoop(P_char, char *, int);
@@ -729,6 +731,7 @@ std::vector<std::string> remove_all_artifacts_sql(int pid);
 void artifacts_forget_deleted_character(int pid);
 void setupMortArtiList_sql(void);
 void arti_cache_init(void);
+void arti_cache_retry(void);
 bool artifacts_load(void);
 void artifacts_forget_deleted_account_character(int pid);
 void artifact_feed_set_timer(int vnum, time_t timer);
@@ -786,6 +789,7 @@ void board_load_board(const char *, char **, char **, int *);
 void board_reset_board(char **, char **, int *);
 void board_save_board(const char *, char **, char **, int *);
 void initialize_boards(void);
+void assign_board_object_procs(void);
 
 /* chaos.c */
 
@@ -814,6 +818,7 @@ void initialize_logs(P_char ch, bool reset_logs);
 void clear_logs(P_char);
 void act(const char *, int, P_char, P_obj, void *, int);
 void act(const char *, int, P_char, P_obj, void *, int, const OutputContext &);
+void act_trio(const char *, const char *, const char *, int, P_char, P_obj, P_char);
 void close_socket(P_desc);
 void close_sockets(int);
 int is_desc_valid(P_desc);
@@ -879,10 +884,14 @@ void MemReport(void);
 void boot_db(int);
 void boot_pose_messages(void);
 void boot_world(int);
-void boot_zones(int);
+// Offline metadata loading does not initialize randomized reset timers.
+void boot_zones(int, bool initialize_reset_timers = true);
 void clear_char(P_char);
 uint64_t allocate_character_runtime_id();
 P_char find_character_by_runtime_id(uint64_t);
+/** The only way onto character_list; extract_char pairs it with forget_live_character. */
+void character_list_add(P_char);
+void forget_live_character(P_char);
 void clear_object(P_obj);
 void ensure_pconly_pool(void);
 void free_char(P_char);
@@ -928,7 +937,6 @@ bool intercept_defensiveproc(P_char, P_char);
 char get_alias(P_char ch, char *argument);
 void create_alias_file(const char *dir, char *name);
 void create_alias_name(char *name);
-int equipped_value(P_char ch);
 void newbie_reincarnate(P_char ch);
 void random_recipe(P_char ch, P_char victim);
 P_obj random_zone_item(P_char ch);
@@ -1102,6 +1110,7 @@ int melee_damage(P_char ch, P_char vict, double dam, int type, struct damage_mes
 int PartySizeMod(int, int, int, int);
 int TryRiposte(P_char, P_char);
 int vamp(P_char, double, double, bool allow_improved_healing = true);
+int plague_heal_block_percent(const Rolls &rolls);
 void heal(P_char, P_char, int, int);
 bool blind(P_char, P_char, int);
 void retarget_event(P_char ch, P_char victim, P_obj obj, void *data);
@@ -1163,11 +1172,13 @@ enum class character_delete_result
 	reconciliation_required
 };
 // Deletes ch's stored state and, once that is done, lets memory forget the character.
-// done gets the outcome on the game thread: at once on flat-file, on a later pulse on
-// MariaDB, where the deletion is one writer job. Never consumes ch, which may leave the
-// game before done runs.
+// done gets the outcome on the game thread on a later pulse: the deletion is one writer
+// job. Never consumes ch, which may leave the game before done runs.
 void delete_character(P_char ch, bool delete_locker = true,
 		      std::function<void(character_delete_result)> done = {});
+struct kept_character_recovery_record;
+void delete_kept_character(const kept_character_recovery_record &record,
+			   std::function<void(character_delete_result)> done);
 P_obj read_one_object(char *);
 int restoreAffects(char *, P_char);
 int restoreCharOnly(P_char, char *);
@@ -1347,6 +1358,7 @@ void affect_remove(P_char, struct affected_type *);
 struct affected_type *affect_to_char(P_char, struct affected_type *);
 void affect_to_char_with_messages(P_char, struct affected_type *, const char *, const char *);
 struct room_affect *affect_to_room(int, struct room_affect *);
+void affect_room_refresh(int, struct room_affect *, int);
 void affect_room_remove(int, struct room_affect *);
 char affect_total(P_char, int);
 void all_affects(P_char, int);
@@ -1354,6 +1366,8 @@ void apply_affs(P_char, int);
 void balance_affects(P_char);
 void char_from_room(P_char);
 bool char_to_room(P_char, int, int);
+// Only the ordinary movement executor may preserve Essence during placement.
+bool char_to_room(P_char, int, int, bool ordinary_movement);
 void equip_char(P_char, P_obj, int, int);
 void extract_char(P_char);
 void hold_durable_pet_items(P_char);
@@ -1367,7 +1381,11 @@ void extract_obj(P_obj obj,
 void obj_from_char(P_obj);
 // The object a pointer kept across a wait still names, or NULL once it was extracted.
 P_obj find_live_object(P_obj expected, uint64_t uid);
+void remember_live_object(P_obj);
+void forget_live_object(P_obj);
 void obj_from_obj(P_obj);
+// For a caller that saves the container itself, after the item's new owner.
+void obj_from_obj_unsaved(P_obj);
 bool obj_can_nest(P_obj obj, P_obj obj_to);
 bool obj_is_in_container(P_obj obj, P_obj container);
 void recalc_container_weight(P_obj);
@@ -1414,6 +1432,7 @@ int io_con_hitp(P_char);
 void assign_innates();
 void event_hatred_check(P_char, P_char, P_obj, void *);
 bool start_hatred_check(P_char);
+void schedule_pc_events(P_char);
 string list_innates(int, int, int);
 void do_innate_decrepify(P_char, P_char);
 bool has_divine_force(P_char);
@@ -1547,6 +1566,7 @@ int can_call_woodland_beings(P_char, int);
 int can_raise_undead(P_char, int);
 int can_raise_draco(P_char, int, bool);
 bool should_area_hit(P_char, P_char);
+bool should_stationary_area_hit(P_char, P_char);
 /* True while cast_as_damage_area() is inside its victim loop (core/utility.c).
  * The damage pipeline is never told which spell it is scaling, so this is how a
  * modifier learns that the damage in front of it came from an area spell. */
@@ -1861,6 +1881,8 @@ P_obj Find_process_entry(P_char, P_obj, int);
 P_obj SpellBookAtHand(P_char);
 bool meming_class(P_char);
 bool praying_class(P_char);
+const char *spell_interface_command(P_char);
+const char *default_spell_interface_command(unsigned int cls);
 void *has_memorized(P_char, int);
 int knows_spell(P_char, int);
 void use_spell(P_char, int);
@@ -1892,6 +1914,8 @@ void change_spells_in_circle(P_char, int, int);
 void check_for_scribe_nukage_object(P_obj);
 void do_forget(P_char, char *, int);
 void do_memorize(P_char, char *, int);
+// Returns estimated pulses left, including queued work after the scheduled event.
+int64_t spell_preparation_estimate(P_char ch, bool &active);
 void do_assimilate(P_char, char *, int);
 void do_scribe(P_char, char *, int);
 void do_teach(P_char, char *, int);
@@ -2044,7 +2068,7 @@ void event_patrol_move(P_char ch, P_char vict, P_obj obj, void *data);
 
 /* modify.c */
 
-void page_string_real(struct descriptor_data *d, char *str);
+void page_string_real(struct descriptor_data *d, char *str, std::span<const OutputLink> links = {});
 int replace_str(char **, char *, char *, int, int);
 void format_text(char **, int, struct descriptor_data *, int);
 void parse_action(int, char *, struct descriptor_data *);
@@ -2060,12 +2084,14 @@ char *next_page(char *, struct descriptor_data *);
 int count_pages(char *, struct descriptor_data *);
 void paginate_string(char *, struct descriptor_data *);
 void page_string(struct descriptor_data *, char *, int);
+void free_paging_data(struct descriptor_data *);
 void show_string(struct descriptor_data *, const char *);
 
 /* storage_lockers.c */
 
 bool locker_container_access_allowed(P_char actor, P_obj container);
 bool locker_leave_for_extraction(P_char ch);
+void locker_return_norent_items(P_char ch);
 bool personal_locker_in_use(const char *char_name);
 void for_debug_print_char_list(P_char ch);
 
@@ -2094,8 +2120,8 @@ int get_name(char return_namn[256], int SEX = -1, uint64_t id = 0);
 
 int tossHint(P_char ch);
 void loadHints();
-void approve_name(char *name);
-void create_denied_file(const char *, char *);
+void approve_name(const char *name);
+void create_denied_file(const char *, const char *);
 int getNewPCidNumb(void);
 void setNewPCidNumbfromFile(void);
 char *statstr(int);
@@ -2112,7 +2138,7 @@ int find_hometown(int race, bool force, int racewar = RACEWAR_NONE);
 int find_starting_alignment(int, int);
 int number_of_players(void);
 void add_stat_bonus(P_char, int, int);
-void deny_name(char *);
+void deny_name(const char *);
 void display_characteristics(P_desc);
 void display_stats(P_desc);
 void echo_off(P_desc);
@@ -2125,7 +2151,6 @@ void load_obj_to_newbies(P_char);
 void nanny(P_desc, char *);
 void newby_announce(P_desc);
 void print_recommended_action(P_desc);
-void schedule_chaos_new_character_kit_before_entry(P_char);
 void restore_chaos_character_kit(P_char, const char *);
 bool chaos_kit_equipment_ready(P_char, P_char);
 void equip_chaos_kit(P_char);
@@ -2159,6 +2184,9 @@ int can_raise_greater_draco(P_char ch);
 void spell_corpseform(int, P_char, char *, int, P_char, P_obj);
 void event_corpseform_wearoff(P_char, P_char, P_obj, void *);
 void spell_undead_to_death(int, P_char, char *, int, P_char, P_obj);
+bool resurrect_corpse(int level, P_char ch, P_obj corpse);
+int grow_spike(int level, P_char ch, P_char victim, int room, bool stationary_growth);
+int spike_growth_damage(int damage, int room);
 
 /* new_skills.c */
 
@@ -2443,11 +2471,12 @@ void short_affect_update(void);
 void short_pc_update(void);
 void stop_all_followers(P_char);
 void stop_follower(P_char);
-bool checkTotem(P_char ch, P_obj obj, int skill);
-bool hasTotem(P_char ch, int skill);
+const char *missing_shaman_totem(P_char ch, int skill);
 void wear_off_message(P_char, struct affected_type *);
 bool has_innate(P_char, int);
+bool innate_calming_active(P_char);
 bool check_innate_time(P_char, int, int duration = 0);
+void innate_info(P_char, const char *);
 const char *get_god_name(P_char);
 
 /* spec.assign.c */
@@ -2455,7 +2484,6 @@ const char *get_god_name(P_char);
 void assign_mobiles(void);
 void assign_objects(void);
 void assign_rooms(void);
-void item_procs(void);
 void room_procs(void);
 
 /* specials.c */
@@ -2596,6 +2624,7 @@ void spell_cure_serious(int, P_char, char *, int, P_char, P_obj);
 void spell_curse(int, P_char, char *, int, P_char, P_obj);
 void spell_cyclone(int, P_char, char *, int, P_char, P_obj);
 void spell_doom_blade(int, P_char, char *, int, P_char, P_obj);
+void spell_holy_blade(int, P_char, char *, int, P_char, P_obj);
 void spell_darkness(int, P_char, char *, int, P_char, P_obj);
 void spell_detect_evil(int, P_char, char *, int, P_char, P_obj);
 void spell_detect_good(int, P_char, char *, int, P_char, P_obj);
@@ -2967,6 +2996,7 @@ void trapdamage(P_char ch, P_obj obj);
 
 /* properties.c */
 bool initialize_properties();
+bool initialize_property_values();
 void do_properties(P_char, char *, int);
 void do_difficulty(P_char, char *, int);
 void do_pulse(P_char, char *, int);

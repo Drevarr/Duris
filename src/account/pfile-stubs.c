@@ -94,7 +94,7 @@ int calculate_mana(P_char)
 	return 1;
 }
 
-void extract_obj(void *obj, int)
+void extract_obj(P_obj obj, int)
 {
 	FREE(obj);
 }
@@ -123,9 +123,7 @@ struct affected_type *get_spell_from_char(P_char, int, void *, int)
  * Those two translation units still reference the wider runtime; the offline
  * tool never reaches those paths, so stub them rather than pull the server in.
  */
-#include "persistence/persistence_mode.h"
 #include "persistence/persistence_observability.h"
-#include "flatfile/flatfile_character_delete.h"
 #include "guild/assocs.h"
 
 P_index obj_index = NULL;

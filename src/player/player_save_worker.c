@@ -30,9 +30,7 @@
 #include <thread>
 #include <utility>
 
-#ifndef __NO_MYSQL__
 #include <mysql/mysql.h>
-#endif
 
 namespace
 {
@@ -138,11 +136,7 @@ player_save_apply_result write_job(const queued_job &job)
 
 void writer_main()
 {
-#ifndef __NO_MYSQL__
 	const bool mysql_ready = sql_worker_thread_init() == 0;
-#else
-	const bool mysql_ready = true;
-#endif
 	for (;;)
 	{
 		{
@@ -208,6 +202,7 @@ void writer_main()
 			.completed_at_usec = completed,
 			.failed_field = applied.failed_field,
 			.rolled_back = applied.rolled_back,
+			.creation_not_committed = applied.creation_not_committed,
 		};
 		update_max(health.max_capture_to_apply_usec, started - job.queued_at_usec);
 		update_max(health.max_apply_usec, completed - started);
@@ -232,10 +227,8 @@ void writer_main()
 		if (stop_requested)
 			break;
 	}
-#ifndef __NO_MYSQL__
 	if (mysql_ready)
 		mysql_thread_end();
-#endif
 	std::lock_guard<std::mutex> lock(worker_mutex);
 	writer_exited = true;
 	writer_idle.notify_all();
@@ -251,8 +244,13 @@ player_save_submit_result enqueue(queued_job job, persistence_job_admit_fn admit
 	}
 	const persistence_job_owner key = { job.kind, job.owner };
 	const auto found = queued_by_owner.find(key);
-	const bool replace_tail = !admit && found != queued_by_owner.end() &&
-				  found->second == std::prev(queue.end());
+	// Partial player captures may replace a tail only when they include every
+	// component it carries; otherwise the earlier payload still needs writing.
+	const bool replace_tail =
+		!admit && found != queued_by_owner.end() &&
+		found->second == std::prev(queue.end()) &&
+		(job.kind != persistence_job_kind::player ||
+		 !(found->second->snapshot.components & ~job.snapshot.components));
 	const size_t retained_bytes = queued_bytes + (inflight ? inflight->bytes : 0) -
 				      (replace_tail ? found->second->bytes : 0);
 	const size_t pending_jobs = queue.size() + (inflight ? 1 : 0) + results.size();

@@ -3,6 +3,7 @@
 #include "core/utils.h"
 #include "core/json_utils.h"
 #include "net/gmcp.h"
+#include "net/chat_presentation.h"
 #include "net/comm.h"
 #include "item/item_actions.h"
 #include "item/encumbrance_policy.h"
@@ -20,6 +21,7 @@
 #include "world/db.h"
 #include "magic/spells.h"
 #include "combat/damage.h"
+#include "item/named_set_origin.h"
 #include "item/random_equipment.h"
 #include "world/vnum.obj.h"
 #include "guild/assocs.h"
@@ -481,6 +483,28 @@ bool player_load_item_graph_materialize_detached(const std::vector<player_item_s
 {
 	return false; // Restoration itself is covered by the publication/load harnesses.
 }
+static unsigned preparation_estimates;
+static int64_t preparation_pulses;
+static bool preparation_active;
+
+int64_t spell_preparation_estimate(P_char, bool &active)
+{
+	++preparation_estimates;
+	active = preparation_active;
+	return preparation_pulses;
+}
+
+// Origin persistence has its own regression; these payloads never carry a marker.
+named_set_identity named_set_origin(const obj_data *)
+{
+	return {};
+}
+
+bool set_named_set_origin(obj_data *, int)
+{
+	return false;
+}
+
 #include "production.inc"
 
 static std::string payload(P_desc d, const char *package)
@@ -511,6 +535,84 @@ static void flush()
 {
 	gmcp_flush_dirty_ship_contacts();
 	gmcp_flush_dirty_ship_info();
+}
+
+static void links_contract(P_char actor)
+{
+	const auto previous = actor->desc;
+	const auto previous_list = descriptor_list;
+	for (bool websocket : { false, true })
+	{
+		descriptor_data d{};
+		d.character = actor;
+		d.connected = CON_PLAYING;
+		d.websocket = websocket;
+		d.gmcp_enabled = 1;
+		actor->desc = &d;
+		descriptor_list = &d;
+		wire.erase(&d);
+		ws_wire.erase(&d);
+		packages.erase(&d);
+		auto control = [&](const std::string &request)
+		{
+			control_clock_us += 1000000;
+			gmcp_handle_input(&d, request.data(), request.size());
+		};
+		control("Core.Supports.Set [\"Duris.Capabilities 1\",\"Duris.Links 2\"]");
+		assert(!gmcp_links_enabled(&d));
+		control("Core.Supports.Add [\"Duris.Links 1\"]");
+		assert(gmcp_links_enabled(&d));
+		control("Duris.Subscribe [\"Duris.Links 1\"]");
+		assert(!d.gmcp_interests);
+		gmcp_flush_capabilities(&d);
+		auto capabilities = payload(&d, "Duris.Capabilities");
+		assert(capabilities.find("\"Duris.Links\":1") != std::string::npos &&
+		       capabilities.find("\"supported\":[\"Duris.Links\"]") != std::string::npos &&
+		       capabilities.find("\"active\":[]") != std::string::npos);
+		const char *text = "[[help]] https://example.test/?x=1&name=two";
+		for (int channel : { 0, 1, 2 })
+		{
+			const auto before = packages[&d].size();
+			if (channel == 0)
+				gmcp_comm_channel(actor, "fcc", "Tester", text);
+			else if (channel == 1)
+				gmcp_comm_channel_ex(actor, "nchat", "Tester", text, "good");
+			else
+				gmcp_broadcast_channel("info", "System", text, nullptr);
+			assert(packages[&d].size() == before + 1);
+			cJSON *root = cJSON_Parse(payload(&d, "Comm.Channel").c_str());
+			assert(root && std::string(cJSON_GetStringValue(
+					       cJSON_GetObjectItem(root, "text"))) == text);
+			auto *body = cJSON_GetObjectItem(root, "bodyPresentation");
+			auto *links = cJSON_GetObjectItem(body, "links");
+			assert(cJSON_GetArraySize(links) == 1 &&
+			       std::string(cJSON_GetStringValue(cJSON_GetObjectItem(
+				       cJSON_GetArrayItem(links, 0), "kind"))) == "url");
+			if (channel == 1)
+				assert(cJSON_GetObjectItem(root, "alignment"));
+			cJSON_Delete(root);
+		}
+		control("Core.Supports.Remove [\"Duris.Links 1\"]");
+		assert(!gmcp_links_enabled(&d));
+		gmcp_comm_channel(actor, "fcc", "Tester", text);
+		cJSON *legacy = cJSON_Parse(payload(&d, "Comm.Channel").c_str());
+		assert(legacy && !cJSON_GetObjectItem(legacy, "bodyPresentation"));
+		cJSON_Delete(legacy);
+		control("Core.Supports.Set [\"Duris.Capabilities 1\",\"Duris.Time 1\",\"Duris.Session 1\",\"Duris.Combat 1\",\"Char.Items 1\",\"Char.SpellPreparation 1\",\"Duris.Links 1\"]");
+		gmcp_flush_capabilities(&d);
+		assert(!d.gmcp_control_pending &&
+		       payload(&d, "Duris.Capabilities").find("Duris.Links") != std::string::npos);
+		control("Duris.Subscribe [\"Duris.Time 1\",\"Duris.Combat 1\",\"Char.Items 1\",\"Char.SpellPreparation 1\",\"Duris.Links 1\"]");
+		gmcp_flush_capabilities(&d);
+		assert(!d.gmcp_control_pending && d.gmcp_interests == GMCP_INTEREST_STREAMS);
+		SET_BIT(actor->specials.act3, PLR3_NOGMCP);
+		assert(!gmcp_links_enabled(&d));
+		REMOVE_BIT(actor->specials.act3, PLR3_NOGMCP);
+		d.gmcp_enabled = 0;
+		assert(!gmcp_links_enabled(&d));
+	}
+	actor->desc = previous;
+	descriptor_list = previous_list;
 }
 
 static void control_time_contract(P_char actor)
@@ -2088,10 +2190,85 @@ static void items_fairness_contract()
 	descriptor_list = saved_list;
 }
 
+static void spell_preparation_contract()
+{
+	char_data actor{};
+	pc_only_data pc{};
+	descriptor_data d{};
+	actor.only.pc = &pc;
+	actor.player.name = const_cast<char *>("Preparer");
+	actor.runtime_id = 301;
+	actor.desc = &d;
+	d.character = &actor;
+	d.descriptor = 61;
+	d.connected = CON_PLAYING;
+	d.gmcp_enabled = 1;
+	descriptor_list = &d;
+
+	const auto send = [&](const char *input)
+	{
+		gmcp_handle_input(&d, input, strlen(input));
+		gmcp_flush_initial_states();
+	};
+	send("Core.Supports.Set [\"Duris.Capabilities 1\",\"Char.SpellPreparation 1\"]");
+	gmcp_spell_preparation_changed(&actor);
+	gmcp_flush_initial_states();
+	assert(preparation_estimates == 0);
+	assert(std::find(packages[&d].begin(), packages[&d].end(), "Char.SpellPreparation") ==
+	       packages[&d].end());
+
+	send("Duris.Subscribe [\"Char.SpellPreparation 1\"]");
+	assert(preparation_estimates == 1);
+	assert(payload(&d, "Char.SpellPreparation") ==
+	       "{\"state\":\"complete\",\"estimatedSeconds\":0}");
+
+	affected_type form{};
+	gmcp_spell_preparation_affect_changed(&actor, &form);
+	gmcp_flush_initial_states();
+	assert(preparation_estimates == 1);
+
+	preparation_pulses = WAIT_SEC * 12 + 1;
+	preparation_active = true;
+	form.bitvector4 = AFF4_VAMPIRE_FORM;
+	gmcp_spell_preparation_affect_changed(&actor, &form);
+	gmcp_spell_preparation_changed(&actor);
+	gmcp_flush_initial_states();
+	for (int flush = 0; flush < 4; ++flush)
+		gmcp_flush_initial_states();
+	assert(preparation_estimates == 2);
+	assert(payload(&d, "Char.SpellPreparation") ==
+	       "{\"state\":\"active\",\"estimatedSeconds\":13}");
+
+	d.write_failed = true;
+	gmcp_spell_preparation_changed(&actor);
+	gmcp_flush_initial_states();
+	assert(preparation_estimates == 2);
+	d.write_failed = false;
+
+	gmcp_handle_negotiation(&d, TELNET_DONT);
+	preparation_active = false;
+	gmcp_spell_preparation_changed(&actor);
+	gmcp_flush_initial_states();
+	assert(preparation_estimates == 2);
+	gmcp_handle_negotiation(&d, TELNET_DO);
+	gmcp_flush_initial_states();
+	assert(preparation_estimates == 3);
+	assert(payload(&d, "Char.SpellPreparation") ==
+	       "{\"state\":\"paused\",\"estimatedSeconds\":13}");
+
+	send("Duris.Subscribe []");
+	gmcp_spell_preparation_changed(&actor);
+	gmcp_flush_initial_states();
+	assert(preparation_estimates == 3);
+	preparation_pulses = 0;
+	descriptor_list = nullptr;
+}
+
 int main()
 {
 	for (auto &label : where)
 		label = "wielded";
+	spell_preparation_contract();
 	items_contract(false);
 	items_contract(true);
 	nested_items_contract(false);
@@ -2607,6 +2784,7 @@ int main()
 	wire.clear();
 	gmcp_send_room_map(&a, "hidden");
 	assert(wire.empty());
+	links_contract(&a);
 	control_time_contract(&a);
 	session_contract(&a, false);
 	session_contract(&a, true);

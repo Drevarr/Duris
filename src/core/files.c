@@ -9,6 +9,8 @@
  */
 
 #include "combat/trap_legacy.h"
+#include "account/kept_character_recovery.h"
+#include <optional>
 #include "core/prototypes.h"
 #include "world/difficulty.h"
 #include "core/structs.h"
@@ -23,12 +25,6 @@
 #include "guild/assocs.h"
 #include "core/config.h"
 #include "persistence/deferred_save_policy.h"
-#include "flatfile/flatfile_character_delete.h"
-#include "flatfile/flatfile_corpse_restore.h"
-#include "flatfile/flatfile_item_repository.h"
-#include "flatfile/flatfile_player_repository.h"
-#include "flatfile/flatfile_player_domain_repository.h"
-#include "flatfile/flatfile_shopkeeper_restore.h"
 #include "item/item_ownership_runtime.h"
 #include "item/encumbrance_policy.h"
 #include "combat/justice.h"
@@ -41,7 +37,6 @@
 #include "player/player_revision_state.h"
 #include "player/player_snapshot_capture.h"
 #include "player/player_snapshot_repository.h"
-#include "persistence/persistence_mode.h"
 #include "world/handler.h"
 #include "world/random.zone.h"
 #ifndef _PFILE_
@@ -1074,35 +1069,8 @@ bool queue_corpse_save(P_obj corpse, bool remove)
 			return false;
 		collector_death_enrollment_for(corpse, &snapshot.collector_death);
 	}
-	persistence_job_write_fn write;
-	if (persistence_mode_get() == PERSISTENCE_MODE_FLATFILE_PRIMARY)
-	{
-		const char *root = persistence_mode_flatfile_root();
-		if (!root)
-			return false;
-		flatfile_corpse_record record;
-		record.owner_pid = static_cast<uint32_t>(corpse->value[CORPSE_PID]);
-		record.owner_name = snapshot.player_name;
-		record.save_id = static_cast<uint32_t>(snapshot.save_id);
-		record.room_vnum = snapshot.room_vnum;
-		record.short_description = snapshot.short_description;
-		record.description = snapshot.description;
-		record.keywords = snapshot.keywords;
-		record.weight = snapshot.weight;
-		record.values = snapshot.values;
-		record.items = snapshot.items;
-		for (player_item_snapshot &item : record.items)
-			item.equipment_slot = -1;
-		write = [record, remove, death = snapshot.collector_death,
-			 path = std::string(root)]()
-		{
-			std::string error;
-			return flatfile_corpse_snapshot_apply(path, record, remove, death, &error);
-		};
-	}
-	else
-		write = [snapshot]()
-		{ return corpse_snapshot_repository_apply_from_pool(snapshot); };
+	persistence_job_write_fn write = [snapshot]()
+	{ return corpse_snapshot_repository_apply_from_pool(snapshot); };
 	const size_t bytes =
 		sizeof(snapshot) + snapshot.items.size() * sizeof(player_item_snapshot);
 	const player_save_submit_result submitted = persistence_writer_submit(
@@ -1298,6 +1266,19 @@ void locker_post_save_hook(P_char ch)
 		(*world[ch->in_room].funct)(ch->in_room, ch, (-81), NULL);
 }
 
+bool publish_initial_character_baseline(P_char ch)
+{
+	if (!ch || IS_NPC(ch) || !ch->desc || !ch->desc->account)
+		return false;
+	if (!find_char_in_list(ch->desc->account->acct_character_list, GET_NAME(ch)))
+		add_char_to_account(ch->desc);
+	const auto *membership =
+		find_char_in_list(ch->desc->account->acct_character_list, GET_NAME(ch));
+	if (!membership || membership->pid != GET_PID(ch))
+		return false;
+	return true;
+}
+
 int writeCharacter(P_char ch, int type, int room)
 {
 	if (!ch || !GET_NAME(ch))
@@ -1326,16 +1307,9 @@ int writeCharacter(P_char ch, int type, int room)
 	    (world[ch->in_room].funct))
 		room = (*world[ch->in_room].funct)(ch->in_room, ch, (-80), NULL);
 
-#ifdef __NO_MYSQL__
-	const bool terminal_type = !player_save_pipeline_is_nonterminal_type(type);
-	const bool queued_save = !terminal_type;
-#else
-	// On MariaDB a terminal save is queued like any other; the caller disposes of the
+	// A terminal save is queued like any other; the caller disposes of the
 	// character (persistence_save_character_terminal() does the same).
-	const bool queued_save = true;
-#endif
-	if (!is_locker_char && GET_PID(ch) > 0 &&
-	    !IS_SET(ch->runtime_flags, CHAR_RFLAG_NO_DB_BASELINE) && queued_save)
+	if (!is_locker_char && GET_PID(ch) > 0)
 	{
 		room = calculate_save_room(ch, type, room);
 		const player_save_pipeline_result queued = player_save_pipeline_request(
@@ -1344,142 +1318,6 @@ int writeCharacter(P_char ch, int type, int room)
 		return queued == player_save_pipeline_result::queued ||
 		       queued == player_save_pipeline_result::coalesced;
 	}
-
-#ifdef __NO_MYSQL__
-	if (!is_locker_char &&
-	    (terminal_type || IS_SET(ch->runtime_flags, CHAR_RFLAG_NO_DB_BASELINE)))
-	{
-		P_obj obj, obj2;
-		int i;
-		const bool establishing_baseline =
-			IS_SET(ch->runtime_flags, CHAR_RFLAG_NO_DB_BASELINE);
-		room = calculate_save_room(ch, type, room);
-		if (ch->desc)
-			ch->desc->rtype = type;
-		// A new player's first save must land before its domains are read back;
-		// any other terminal save is queued and the caller extracts at once.
-		if (establishing_baseline)
-		{
-			if (player_save_pipeline_terminal(ch, type, room, 5000) !=
-			    player_save_terminal_result::database_acknowledged)
-				return 0;
-		}
-		else
-		{
-			const player_save_pipeline_result queued = player_save_pipeline_request(
-				ch, PLAYER_CHECKPOINT_COMPONENT_ALL, type, room);
-			if (queued != player_save_pipeline_result::queued &&
-			    queued != player_save_pipeline_result::coalesced)
-				return 0;
-		}
-		if (establishing_baseline)
-		{
-			flatfile_player_domain_record domains;
-			std::string domain_error;
-			const char *account = get_account_name_safe(ch);
-			if (!account || !*account || !strcmp(account, "Unknown"))
-			{
-				statuslog(
-					56,
-					"&+RALERT&n: new-player bank revision sync failed: missing account context");
-				return 0;
-			}
-			const auto domain_result = flatfile_player_domain_load(
-				persistence_mode_flatfile_root(), GET_PID(ch), account,
-				GET_RACEWAR(ch), &domains, &domain_error);
-			if (domain_result != flatfile_player_domain_result::ok ||
-			    !domains.domains.bank_revision ||
-			    std::any_of(domains.domains.bank.begin(), domains.domains.bank.end(),
-					[](uint64_t amount) { return amount > INT_MAX; }) ||
-			    std::any_of(domains.domains.wallet.begin(),
-					domains.domains.wallet.end(),
-					[](uint64_t amount) { return amount > INT_MAX; }))
-			{
-				statuslog(
-					56,
-					"&+RALERT&n: new-player bank revision sync failed (domain result %d): %s",
-					static_cast<int>(domain_result),
-					domain_result == flatfile_player_domain_result::ok ?
-						"invalid bank revision or currency balance overflow" :
-					domain_error.empty() ? "authority load failed" :
-							       domain_error.c_str());
-				persistence_alert(AVATAR, "player", "redacted", "none", "none",
-						  "bank_revision_sync_failed", NULL);
-				return 0;
-			}
-			const item_owner_identity owner = { item_owner_type::player,
-							    static_cast<uint64_t>(GET_PID(ch)), 0 };
-			uint64_t owner_revision = 0;
-			std::vector<flatfile_item_ownership_record> owned_items;
-			std::string ownership_error;
-			const auto ownership = flatfile_item_repository_load_owner(
-				persistence_mode_flatfile_root(), owner, &owner_revision,
-				&owned_items, &ownership_error);
-			if (ownership != flatfile_item_repository_result::ok || !owner_revision ||
-			    !item_ownership_runtime_hydrate_owner(owner, owner_revision))
-			{
-				statuslog(
-					56,
-					"&+RALERT&n: new-player item ownership revision sync failed");
-				persistence_alert(AVATAR, "player", "redacted", "none", "none",
-						  "ownership_revision_sync_failed", NULL);
-				return 0;
-			}
-			// Creation can precede CON_PLAYING, so hydrate this character explicitly.
-			// Publish only after every required authority read/validation succeeded.
-			const AccountBankBalances balances = {
-				static_cast<int>(domains.domains.bank[0]),
-				static_cast<int>(domains.domains.bank[1]),
-				static_cast<int>(domains.domains.bank[2]),
-				static_cast<int>(domains.domains.bank[3])
-			};
-			GET_BALANCE_COPPER(ch) = balances.copper;
-			GET_BALANCE_SILVER(ch) = balances.silver;
-			GET_BALANCE_GOLD(ch) = balances.gold;
-			GET_BALANCE_PLATINUM(ch) = balances.platinum;
-			ch->only.pc->bank_revision = domains.domains.bank_revision;
-			GET_COPPER(ch) = domains.domains.wallet[0];
-			GET_SILVER(ch) = domains.domains.wallet[1];
-			GET_GOLD(ch) = domains.domains.wallet[2];
-			GET_PLATINUM(ch) = domains.domains.wallet[3];
-			ch->only.pc->wallet_revision = domains.domains.wallet_revision;
-			publish_account_bank_balances_revision(account, GET_RACEWAR(ch), &balances,
-							       domains.domains.bank_revision);
-		}
-		if (!sync_account_character_projection(ch, room, TRUE))
-		{
-			statuslog(56,
-				  "&+RALERT&n: flat-file account character projection save failed");
-			persistence_alert(AVATAR, "account", "redacted", "none", "none",
-					  "write_failed", "character projection save failed");
-		}
-		clear_player_dirty_container_flags(ch);
-		REMOVE_BIT(ch->runtime_flags, CHAR_RFLAG_DIRTY_EQUIPMENT);
-		REMOVE_BIT(ch->runtime_flags, CHAR_RFLAG_DIRTY_INVENTORY);
-		REMOVE_BIT(ch->runtime_flags, CHAR_RFLAG_NO_DB_BASELINE);
-		if (terminal_type)
-		{
-			for (i = 0; i < MAX_WEAR; ++i)
-				save_equip[i] = ch->equipment[i] ? unequip_char(ch, i, TRUE) : NULL;
-			all_affects(ch, FALSE);
-			updateShortAffects(ch);
-			for (i = 0; i < MAX_WEAR; ++i)
-				if (save_equip[i])
-				{
-					extract_obj(save_equip[i]);
-					save_equip[i] = NULL;
-				}
-			for (obj = ch->carrying; obj; obj = obj2)
-			{
-				obj2 = obj->next_content;
-				extract_obj(obj);
-			}
-			all_affects(ch, TRUE);
-		}
-		locker_post_save_hook(ch);
-		return 1;
-	}
-#endif
 
 	logit(LOG_DEBUG, "writeCharacter: nothing saves %s (locker or no pid)", GET_NAME(ch));
 	return 0;
@@ -1512,7 +1350,15 @@ character_delete_result forget_deleted_character(const deleted_character &delete
 	// Names are unique: only the live sessions of the character's account list it.
 	for (P_desc d = descriptor_list; d; d = d->next)
 		if (d->account)
-			remove_char_from_list(d->account, deleted.name.c_str(), false);
+			for (auto *member = d->account->acct_character_list; member;
+			     member = member->next)
+				if (member->pid == deleted.pid &&
+				    !strcasecmp(member->charname, deleted.name.c_str()))
+				{
+					remove_char_from_list(d->account, deleted.name.c_str(),
+							      false);
+					break;
+				}
 #endif
 	delete_ship_runtime(deleted.name.c_str());
 	std::string zone_story_error;
@@ -1530,39 +1376,12 @@ character_delete_result forget_deleted_character(const deleted_character &delete
 }
 } // namespace
 
-void delete_character(P_char ch, bool delete_locker,
-		      std::function<void(character_delete_result)> done)
+static void
+delete_character_identity(const deleted_character &deleted, bool delete_locker,
+			  [[maybe_unused]] sql_work guild_work,
+			  std::function<void(character_delete_result)> done,
+			  std::optional<kept_character_recovery_record> recovery = std::nullopt)
 {
-	if (!done)
-		done = [](character_delete_result) {};
-	if (!ch || !GET_NAME(ch) || GET_PID(ch) <= 0)
-	{
-		done(character_delete_result::refused);
-		return;
-	}
-	const deleted_character deleted = {
-		GET_PID(ch), GET_NAME(ch),
-		GET_ASSOC(ch) ? static_cast<int>(GET_ASSOC(ch)->get_id()) : 0, GET_FRAGS(ch)
-	};
-#ifdef __NO_MYSQL__
-	if (!delete_locker || !artifact_save_drain(3000))
-	{
-		done(character_delete_result::refused);
-		return;
-	}
-	std::string error;
-	const auto result = flatfile_character_delete(persistence_mode_flatfile_root(), deleted.pid,
-						      deleted.name, &error);
-	if (result != flatfile_character_delete_result::ok &&
-	    result != flatfile_character_delete_result::already_deleted)
-	{
-		logit(LOG_DEBUG, "delete_character(): flat deletion failed for pid %d: %s",
-		      deleted.pid, error.empty() ? "unspecified authority failure" : error.c_str());
-		done(character_delete_result::refused);
-		return;
-	}
-	done(forget_deleted_character(deleted));
-#else
 	// One writer job, so one transaction: a failure anywhere leaves the character's
 	// rows, mapping and memory as they were, and loadable for a retry.
 	std::vector<std::string> statements = {
@@ -1574,32 +1393,28 @@ void delete_character(P_char ch, bool delete_locker,
 			   deleted.pid),
 		remove_all_locker_access_statement(deleted.name.c_str()),
 	};
+	if (recovery)
+		statements.insert(
+			statements.begin(),
+			sql_format(
+				"INSERT IGNORE INTO account_characters(account_name,pid,char_name,deleted_at) VALUES('%s',%d,'%s',NOW())",
+				escape_str(recovery->owner.c_str()).c_str(), deleted.pid,
+				escape_str(deleted.name.c_str()).c_str()));
 	for (std::string &statement : remove_all_artifacts_sql(deleted.pid))
 		statements.push_back(std::move(statement));
-	sql_work guild_work;
-	if (GET_ASSOC(ch))
-	{
-		auto guild_statements = GET_ASSOC(ch)->statements_without_member(ch);
-		if (!guild_statements.empty())
-		{
-			guild_work =
-				kingdom_guild_save_work(static_cast<int>(GET_ASSOC(ch)->get_id()),
-							std::move(guild_statements));
-			if (!guild_work)
-			{
-				done(character_delete_result::refused);
-				return;
-			}
-		}
-	}
+
 	if (delete_locker)
 		statements.push_back(sql_delete_locker_statement(deleted.pid, 0));
 	statements.push_back(sql_delete_ship_statement(deleted.name.c_str()));
 	statements.push_back(sql_format("DELETE FROM player_data WHERE pid=%d", deleted.pid));
 	if (!sql_read_work(
-		    [statements, guild_work = std::move(guild_work)](MYSQL *connection,
-								     sql_rows *) -> unsigned int
+		    [statements, recovery, guild_work = std::move(guild_work)](
+			    MYSQL *connection, sql_rows *) -> unsigned int
 		    {
+			    if (recovery)
+				    if (const auto error = kept_character_recovery_release_guard(
+						connection, *recovery))
+					    return error;
 			    if (guild_work)
 				    if (const unsigned int error = guild_work(connection))
 					    return error;
@@ -1620,48 +1435,68 @@ void delete_character(P_char ch, bool delete_locker,
 			    }
 			    // Runtime cleanup also forgets unplaced rows and their proof/snapshot.
 			    done(forget_deleted_character(deleted));
-		    }))
+		    },
+		    recovery.has_value()))
 		done(character_delete_result::refused);
-#endif
 }
+void delete_character(P_char ch, bool delete_locker,
+		      std::function<void(character_delete_result)> done)
+{
+	if (!done)
+		done = [](character_delete_result) {};
+	if (!ch || !GET_NAME(ch) || GET_PID(ch) <= 0)
+	{
+		done(character_delete_result::refused);
+		return;
+	}
+	const deleted_character deleted{ GET_PID(ch), GET_NAME(ch),
+					 GET_ASSOC(ch) ? static_cast<int>(GET_ASSOC(ch)->get_id()) :
+							 0,
+					 GET_FRAGS(ch) };
+	sql_work guild_work;
+	if (GET_ASSOC(ch))
+	{
+		auto guild_statements = GET_ASSOC(ch)->statements_without_member(ch);
+		if (!guild_statements.empty())
+		{
+			guild_work =
+				kingdom_guild_save_work(static_cast<int>(GET_ASSOC(ch)->get_id()),
+							std::move(guild_statements));
+			if (!guild_work)
+			{
+				done(character_delete_result::refused);
+				return;
+			}
+		}
+	}
+	delete_character_identity(deleted, delete_locker, std::move(guild_work), std::move(done));
+}
+
+void delete_kept_character(const kept_character_recovery_record &record,
+			   std::function<void(character_delete_result)> done)
+{
+	if (!kept_character_recovery_releasable(record))
+	{
+		done(character_delete_result::refused);
+		return;
+	}
+	delete_character_identity({ record.pid, record.name, 0, 0 }, true, {}, std::move(done),
+				  record);
+}
+
 #endif
 
 void PurgeCorpseFile(P_obj corpse)
 {
-	char *tmp;
-	char Gbuf1[MAX_STRING_LENGTH], Gbuf2[MAX_STRING_LENGTH];
-
 	if (!corpse || (corpse->type != ITEM_CORPSE) || !IS_SET(corpse->value[1], PC_CORPSE))
 	{
 		logit(LOG_DEBUG, "item not a corpse in PurgeCorpseFile");
 		return;
 	}
-#ifndef _PFILE_
-	if (persistence_mode_get() == PERSISTENCE_MODE_FLATFILE_PRIMARY)
-	{
-		if (!skip_corpse_save && corpse->value[CORPSE_SAVEID] &&
-		    !queue_corpse_save(corpse, true))
-			persistence_alert(AVATAR, "corpse", "flatfile_remove", "none", "none",
-					  "queue_failed", "save_id=%d",
-					  corpse->value[CORPSE_SAVEID]);
-		return;
-	}
-#endif
-
-	snprintf(Gbuf2, MAX_STRING_LENGTH, "%s%d", corpse->action_description,
-		 corpse->value[CORPSE_SAVEID]);
-	for (tmp = Gbuf2; *tmp; tmp++)
-		*tmp = LOWER(*tmp);
-
-	checked_snprintf(Gbuf1, MAX_STRING_LENGTH, "%s/Corpses/%s", SAVE_DIR, Gbuf2);
-	strcpy(Gbuf2, Gbuf1);
-	strcat(Gbuf2, ".bak");
-
-	unlink(Gbuf1);
-	unlink(Gbuf2);
 
 #ifndef _PFILE_
-	if (corpse->action_description && corpse->value[CORPSE_SAVEID] &&
+	// A corpse leaving the world during the boot restore keeps its saved row.
+	if (!skip_corpse_save && corpse->action_description && corpse->value[CORPSE_SAVEID] &&
 	    !queue_corpse_save(corpse, true))
 		persistence_alert(AVATAR, "corpse", "remove", "none", "none", "queue_failed",
 				  "save_id=%d", corpse->value[CORPSE_SAVEID]);
@@ -2871,6 +2706,7 @@ P_obj restoreObjects(char *buf, P_char ch, int not_room)
 				}
 				obj->ex_description = NULL;
 				int nDescs = GET_SHORT(buf);
+				bool origin_seen = false;
 				struct extra_descr_data **lastOne = &(obj->ex_description);
 				while (*lastOne)
 					lastOne = &((*lastOne)->next);
@@ -2878,8 +2714,49 @@ P_obj restoreObjects(char *buf, P_char ch, int not_room)
 				{
 					CREATE(ed, extra_descr_data, 1, MEM_TAG_EXDESCD);
 					ed->next = NULL;
+					char *keyword_start = buf;
 					ed->keyword = GET_STRING(buf);
+					const size_t keyword_bytes =
+						buf - keyword_start - short_size;
+					char *description_start = buf;
 					ed->description = GET_STRING(buf);
+					const size_t description_bytes =
+						buf - description_start - short_size;
+					int origin = 0;
+					const auto origin_status = sql_decode_named_set_origin(
+						ed->keyword ? std::string_view(ed->keyword,
+									       keyword_bytes) :
+							      std::string_view(),
+						ed->description ?
+							std::string_view(ed->description,
+									 description_bytes) :
+							std::string_view(),
+						&origin);
+					if (origin_status ==
+						    sql_named_set_origin_decode_status::invalid ||
+					    (origin_status ==
+						     sql_named_set_origin_decode_status::decoded &&
+					     origin_seen))
+					{
+						logit(LOG_FILE,
+						      "restoreObjects: invalid named set origin for item %d; restore refused",
+						      V_num);
+						if (ed->keyword)
+							str_free(ed->keyword);
+						if (ed->description)
+							str_free(ed->description);
+						FREE(ed);
+						if (!dummy_obj)
+							extract_obj(obj, FALSE);
+						for (const auto &container : containers)
+							if (container.first)
+								extract_obj(container.first, FALSE);
+						return nullptr;
+					}
+					origin_seen =
+						origin_seen ||
+						origin_status ==
+							sql_named_set_origin_decode_status::decoded;
 					if (sql_item_extra_descr_is_spellbook_marker(ed->keyword))
 					{
 						// Old flatfiles could put the binary native marker through
@@ -2919,7 +2796,7 @@ P_obj restoreObjects(char *buf, P_char ch, int not_room)
 			{
 				for (i = 0; i < 4; i++)
 				{
-					obj->timer[i] = GET_INTE(buf);
+					obj->timer[i] = static_cast<int32_t>(GET_INTE(buf));
 				}
 			}
 
@@ -3223,6 +3100,7 @@ P_obj read_one_object(char *read_buf)
 			}
 			obj->ex_description = NULL;
 			int nDescs = GET_SHORT(buf);
+			bool origin_seen = false;
 			struct extra_descr_data **lastOne = &(obj->ex_description);
 			while (*lastOne)
 				lastOne = &((*lastOne)->next);
@@ -3230,8 +3108,39 @@ P_obj read_one_object(char *read_buf)
 			{
 				CREATE(ed, extra_descr_data, 1, MEM_TAG_EXDESCD);
 				ed->next = NULL;
+				char *keyword_start = buf;
 				ed->keyword = GET_STRING(buf);
+				const size_t keyword_bytes = buf - keyword_start - short_size;
+				char *description_start = buf;
 				ed->description = GET_STRING(buf);
+				const size_t description_bytes =
+					buf - description_start - short_size;
+				int origin = 0;
+				const auto origin_status = sql_decode_named_set_origin(
+					ed->keyword ? std::string_view(ed->keyword, keyword_bytes) :
+						      std::string_view(),
+					ed->description ? std::string_view(ed->description,
+									   description_bytes) :
+							  std::string_view(),
+					&origin);
+				if (origin_status == sql_named_set_origin_decode_status::invalid ||
+				    (origin_status == sql_named_set_origin_decode_status::decoded &&
+				     origin_seen))
+				{
+					logit(LOG_FILE,
+					      "read_one_object: invalid named set origin for item %d; restore refused",
+					      V_num);
+					if (ed->keyword)
+						str_free(ed->keyword);
+					if (ed->description)
+						str_free(ed->description);
+					FREE(ed);
+					extract_obj(obj, FALSE);
+					return nullptr;
+				}
+				origin_seen = origin_seen ||
+					      origin_status ==
+						      sql_named_set_origin_decode_status::decoded;
 				if (sql_item_extra_descr_is_spellbook_marker(ed->keyword))
 				{
 					// Old flatfiles could put the binary native marker through
@@ -3271,7 +3180,7 @@ P_obj read_one_object(char *read_buf)
 		{
 			for (int i = 0; i < 4; i++)
 			{
-				obj->timer[i] = GET_INTE(buf);
+				obj->timer[i] = static_cast<int32_t>(GET_INTE(buf));
 			}
 		}
 
@@ -3615,21 +3524,10 @@ int restoreItemsOnly(P_char ch, int /*flatrate*/)
 
 void restoreCorpses(void)
 {
-	if (persistence_mode_get() == PERSISTENCE_MODE_FLATFILE_PRIMARY)
-	{
-		std::string error;
-		const char *root = persistence_mode_flatfile_root();
-		const auto restored = flatfile_corpse_restore_catalog(root ? root : "", &error);
-		if (restored != flatfile_corpse_restore_result::ok &&
-		    restored != flatfile_corpse_restore_result::not_found)
-			fatal_boot_error("corpse", "flat-file corpse restore failed: %s",
-					 error.empty() ? "invalid authoritative state" :
-							 error.c_str());
-		return;
-	}
-#ifndef __NO_MYSQL__
-	sql_load_all_corpses();
-#endif
+	if (!sql_load_all_corpses())
+		fatal_boot_error(
+			"corpse",
+			"MySQL corpse restore failed; authoritative items were not changed");
 }
 
 /** Pet only functions below. Calls some from above. **/
@@ -3907,32 +3805,11 @@ static bool queue_saved_item_save(P_obj item, const char *item_key, bool remove)
 		snapshot.room_vnum = world[item->loc.room].number;
 		snapshot.owner.id = static_cast<uint64_t>(snapshot.room_vnum);
 	}
-	// A flat-file removal takes the item's graph out of its room's record.
-	if ((!remove || persistence_mode_get() == PERSISTENCE_MODE_FLATFILE_PRIMARY) &&
-	    player_item_snapshot_tree_capture(item, &snapshot.items, nullptr) !=
-		    player_snapshot_capture_result::ok)
+	if (!remove && player_item_snapshot_tree_capture(item, &snapshot.items, nullptr) !=
+			       player_snapshot_capture_result::ok)
 		return false;
-	persistence_job_write_fn write;
-	if (persistence_mode_get() == PERSISTENCE_MODE_FLATFILE_PRIMARY)
-	{
-		const char *root = persistence_mode_flatfile_root();
-		if (!root)
-			return false;
-		flatfile_saved_world_item_record record;
-		record.item_key = snapshot.item_key;
-		record.room_vnum = snapshot.room_vnum;
-		record.items = snapshot.items;
-		for (player_item_snapshot &entry : record.items)
-			entry.equipment_slot = -1;
-		write = [record, remove, path = std::string(root)]()
-		{
-			std::string error;
-			return flatfile_saved_item_snapshot_apply(path, record, remove, &error);
-		};
-	}
-	else
-		write = [snapshot]()
-		{ return saved_item_snapshot_repository_apply_from_pool(snapshot); };
+	persistence_job_write_fn write = [snapshot]()
+	{ return saved_item_snapshot_repository_apply_from_pool(snapshot); };
 	const size_t bytes =
 		sizeof(snapshot) + snapshot.items.size() * sizeof(player_item_snapshot);
 	const player_save_submit_result submitted = persistence_writer_submit(
@@ -3945,6 +3822,22 @@ void writeSavedItem(P_obj item)
 {
 	if (!item)
 		return;
+
+	// A saved record holds a whole tree: nested storage is saved by its outermost owner.
+	P_obj root = item;
+	while (OBJ_INSIDE(root))
+		root = root->loc.inside;
+	if (root != item && root->type == ITEM_STORAGE && OBJ_ROOM(root))
+	{
+		writeSavedItem(root);
+		return;
+	}
+	if (root != item && root->type == ITEM_CORPSE &&
+	    IS_SET(root->value[CORPSE_FLAGS], PC_CORPSE))
+	{
+		writeCorpse(root);
+		return;
+	}
 
 	if (item->cost < 100 && item->db_item_id <= 0 && item->type != ITEM_STORAGE)
 		return;
@@ -3974,14 +3867,7 @@ void writeSavedItem(P_obj item)
 
 void restoreSavedItems(void)
 {
-	if (persistence_mode_get() == PERSISTENCE_MODE_FLATFILE_PRIMARY)
-	{
-		/* restoreCorpses() has already staged and published the shared room catalog. */
-		return;
-	}
-#ifndef __NO_MYSQL__
 	sql_restore_saved_items();
-#endif
 }
 
 void PurgeSavedItemFile(P_obj item)
@@ -4000,8 +3886,6 @@ void PurgeSavedItemFile(P_obj item)
 	if (!queue_saved_item_save(item, Gbuf2, true))
 		persistence_alert(AVATAR, "saved_item", "purge", "none", "none", "queue_failed",
 				  "item_uid=%llu", static_cast<unsigned long long>(item->obj_uid));
-	if (persistence_mode_get() == PERSISTENCE_MODE_FLATFILE_PRIMARY)
-		return;
 
 	checked_snprintf(Gbuf1, MAX_STRING_LENGTH, "%s/SavedItems/%s", SAVE_DIR, Gbuf2);
 	strcpy(Gbuf2, Gbuf1);
@@ -4050,39 +3934,15 @@ int writeShopKeeper(P_char ch, int shop_nr)
 
 void restore_shopkeepers(void)
 {
-	if (persistence_mode_get() == PERSISTENCE_MODE_FLATFILE_PRIMARY)
-	{
-		std::string error;
-		const char *root = persistence_mode_flatfile_root();
-		const auto restored = flatfile_shopkeeper_restore_catalog(
-			root ? root : "", &error, shopkeeper_boot_restock());
-		if (restored != flatfile_shopkeeper_restore_result::ok &&
-		    restored != flatfile_shopkeeper_restore_result::not_found)
-			fatal_boot_error("shopkeeper", "flat-file shopkeeper restore failed: %s",
-					 error.empty() ? "invalid authoritative state" :
-							 error.c_str());
-		return;
-	}
-#ifndef __NO_MYSQL__
 	if (!sql_restore_shopkeepers(shopkeeper_boot_restock()))
 		fatal_boot_error(
 			"shopkeeper",
 			"SQL shopkeeper restore incomplete; refusing to publish partial stock");
-#endif
 }
 
 bool save_dirty_shopkeepers(bool force)
 {
-	// Flat-file trades commit stock/custody atomically in their own journal.
-	// Legacy SQL dirty flags are not an outstanding SQL save in that mode.
-	if (persistence_mode_get() == PERSISTENCE_MODE_FLATFILE_PRIMARY)
-		return true;
-#ifndef __NO_MYSQL__
 	return sql_save_dirty_shopkeepers(force);
-#else
-	(void)force;
-	return true;
-#endif
 }
 
 // old guildhalls (deprecated) - Torgal 1/2010

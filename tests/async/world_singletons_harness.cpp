@@ -60,10 +60,6 @@ bool entry_hazard = false;
 void (*entry_hook)(P_char) = nullptr;
 int (*departure_hook)(P_char) = nullptr;
 P_char refused_entry = nullptr;
-persistence_mode persistence_mode_get()
-{
-	return PERSISTENCE_MODE_MARIADB_PRIMARY;
-}
 bool sql_save_shopkeeper(P_char ch, int shop)
 {
 	++shops_saved;
@@ -477,6 +473,14 @@ int main()
 		obj_to_char(read_object(4, REAL), ordinary);
 		obj_to_char(read_object(4, REAL), ordinary);
 		char bytes[4096];
+		for (bool fixed : { false, true })
+		{
+			ordinary->only.npc->training_dummy = true;
+			ordinary->only.npc->training_dummy_fixed = fixed;
+			assert(copyover_write_mob_to_buffer(ordinary, bytes, sizeof(bytes)) == -1);
+		}
+		ordinary->only.npc->training_dummy = false;
+		ordinary->only.npc->training_dummy_fixed = false;
 		const int size = copyover_write_mob_to_buffer(ordinary, bytes, sizeof(bytes));
 		assert(size > 0);
 		extract_char(ordinary);
@@ -792,6 +796,18 @@ int main()
 	assert(!world[2].people);
 	reconcile_shopkeepers(false);
 	assert_local_dealers();
+
+	// A fixed keeper whose prototype can wander is still the same shop after
+	// file copyover. Return it to the configured room before catalog capture.
+	P_char fixed = mob_at(3, 4);
+	bind_shopkeeper(fixed, 1);
+	P_obj fixed_stock = read_object(4, REAL);
+	obj_to_char(fixed_stock, fixed);
+	const auto fixed_id = GET_IDNUM(fixed);
+	reconcile_shopkeepers(true);
+	assert(fixed->in_room == 5 && GET_BIRTHPLACE(fixed) == rooms[5].number);
+	assert(GET_IDNUM(fixed) == fixed_id && fixed_stock->loc.carrying == fixed);
+	assert(live_shopkeepers(1) == std::vector<P_char>{ fixed });
 
 	// A recovered generation with zero dealers converges to the same five
 	// identities and independently snapshot-able inventories.

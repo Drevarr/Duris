@@ -12,7 +12,7 @@ import shutil
 import tempfile
 import time
 
-import test_flatfile_combat_journey as journey
+import test_mariadb_combat_journey as journey
 from run_divine_refusal_journey import drain
 from run_item_pilot_journey import Server
 from run_paladin_balance_journey import command
@@ -54,7 +54,7 @@ def run(binary):
             server.start(full_world=True)
             staff = server.client = journey.MudClient(server.port)
             journey.create_character(staff, expected_room=None)
-            staff.send("save"); staff.expect("Save complete for Taverek.")
+            staff.send("save"); staff.expect("Saving Taverek.")
             staff.send("quit"); staff.expect("ACCOUNT MENU", timeout=45)
             server.stop()
             journey.make_overlord(state, journey.CHARACTER)

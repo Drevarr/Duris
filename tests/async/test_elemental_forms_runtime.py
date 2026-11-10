@@ -11,7 +11,9 @@ from _paths import ROOT, HARNESS_STUBS, extract_function, source
 
 prelude = r'''
 #include "core/prototypes.h"
+#include "item/named_set_effects.h"
 #include "core/utils.h"
+#include "net/gmcp.h"
 #include "core/files.h"
 #include "core/mm.h"
 #include "magic/spells.h"
@@ -19,6 +21,7 @@ prelude = r'''
 #include "world/events.h"
 #include "combat/damage.h"
 #include "player/player_snapshot_codec.h"
+#include "abilities/abilities.h"
 #include <cassert>
 #include <cstring>
 #include <string>
@@ -43,6 +46,7 @@ bool NewSaves(P_char, int, int) { return save_roll; }
 bool has_innate(P_char ch, int id) { return id == INNATE_LIVING_STONE && GET_SPEC(ch, CLASS_CONJURER, SPEC_EARTH); }
 int number(int low, int high) { return low == 1 && high == 4 ? die_roll : (low == 0 && high == 5 ? aura_roll : (low == 0 && high == 3 ? 2 : low)); }
 int dice(int count, int) { return count * 5; }
+const Rolls live_rolls = { dice, number };
 bool IS_OUTDOORS(int room) { return !IS_ROOM(room, ROOM_INDOORS); }
 int get_default_save_mod(P_char, P_char, int, int) { return 0; }
 int spell_damage(P_char, P_char, double dam, int type, uint, damage_messages *, int *) {
@@ -104,17 +108,47 @@ functions = [
     ('magic.c', 'const char *elemental_form_failure_message('),
     ('magic.c', 'const char *elemental_summon_failure_message('),
     ('magic.c', 'const char *elemental_aura_failure_message('),
+    ('magic.c', 'static int elemental_aura_duration('),
+    ('magic.c', 'static int elemental_aura_max_stat('),
     ('magic.c', 'void spell_elemental_aura('),
+    ('psionics.c', 'static int fire_aura_duration('),
+    ('psionics.c', 'static int fire_aura_ac('),
+    ('psionics.c', 'static int fire_aura_str_max('),
+    ('psionics.c', 'static int fire_aura_nimbleness('),
+    ('psionics.c', 'static int fire_aura_con_max('),
+    ('psionics.c', 'static int fire_aura_full_form_save('),
     ('psionics.c', 'void spell_fire_aura('),
+    ('magic.c', 'static int air_form_duration('),
     ('magic.c', 'void spell_air_form('),
+    ('magic.c', 'static int earth_form_duration('),
     ('magic.c', 'void spell_earth_form('),
+    *(('magic.c', f'static int fire_form_{number}(')
+      for number in ('duration', 'armor_class', 'strength', 'dexterity', 'agility', 'constitution')),
     ('magic.c', 'void spell_fire_form('),
+    *(('magic.c', f'static int water_form_{number}(')
+      for number in ('duration', 'strength', 'dexterity', 'agility', 'constitution')),
     ('magic.c', 'void spell_water_form('),
     ('magic.c', 'static bool has_other_skin_spell('),
     ('magic.c', 'bool has_skin_spell('),
+    *(('magic.c', f'static int stone_skin_{number}(')
+      for number in ('absorb', 'living_stone', 'conjurer', 'sorcerer', 'other', 'duration', 'layers')),
     ('magic.c', 'void spell_stone_skin('),
+    ('magic.c', 'static int earthen_maul_damage('),
+    ('magic.c', 'static int earthen_maul_saved('),
+    ('magic.c', 'static int earthen_maul_terrain('),
     ('magic.c', 'void spell_earthen_maul('),
     ('fight.c', 'bool decrease_skin_counter('),
+    ('fight.c', 'int displacement_absorb_roll('),
+    ('fight.c', 'float biofeedback_melee_share('),
+    ('fight.c', 'float stone_skin_melee_share('),
+    ('fight.c', 'float shadow_shield_melee_share('),
+    ('fight.c', 'float ironwood_melee_share('),
+    ('fight.c', 'float drakescale_aegis_melee_share('),
+    ('fight.c', 'int skin_spell_deduct('),
+    ('fight.c', 'static int critical_attack_roll('),
+    ('fight.c', 'static int critical_attack_disarm_roll('),
+    ('fight.c', 'static int critical_attack_vitality('),
+    ('fight.c', 'static int critical_attack_vitality_floor('),
     ('fight.c', 'bool critical_attack('),
 ]
 skills = source('skills.c').read_text()
@@ -165,9 +199,12 @@ PRODUCTION_DURATION_LOOP
 '''.replace('PRODUCTION_DURATION_LOOP', updates[tick_start:tick_end])
 
 physical = extract_function('fight.c', 'int melee_damage(')
+skin_helpers = ''.join(extract_function('fight.c', signature) for signature in (
+    'float iceflow_armor_melee_share(',
+    'float negative_feedback_barrier_melee_share('))
 skin_start = physical.index('\t// Earth elementals ignore earth aura.')
 skin_end = physical.index('\n\tif (affected_by_spell(ch, ACH_DRAGONSLAYER)', skin_start)
-skin_path = '''
+skin_path = skin_helpers + '''
 int physical_skin_path(P_char ch, P_char victim, double dam, unsigned int flags = 0) {
     double reduction = 0; unsigned int skin = 0; bool dragonfist = false;
 PRODUCTION_SKIN
@@ -381,6 +418,17 @@ int main() {
         assert(earth.affected == head && head->next->next == nullptr);
         clear(&earth);
     }
+    // Shadow Shield: its own factor, unchanged flat deduction and hit budget.
+    affected_type shadow{};
+    shadow.type = SPELL_SHADOW_SHIELD; shadow.modifier = 2; shadow.duration = 4;
+    affect_to_char(&earth, &shadow);
+    assert(physical_skin_path(&ordinary, &earth, 200, PHSDAM_NOREDUCE) == 200);
+    assert(earth.affected->modifier == 2);
+    assert(physical_skin_path(&ordinary, &earth, 200) == int((200 - 46) * double(shadow_shield_melee_share())));
+    assert(earth.affected->modifier == 1);
+    assert(physical_skin_path(&ordinary, &earth, 50) == 4);
+    assert(!affected_by_spell(&earth, SPELL_SHADOW_SHIELD));
+    assert(physical_skin_path(&ordinary, &earth, 200) == 200);
     // Actual Maul handler: matched dice retain normal/indoor/mountain/lava tiers
     // for both Earth Magi and Druids; earthless/airborne fallback stays normal.
     for (int cls : {CLASS_CONJURER, CLASS_DRUID}) {

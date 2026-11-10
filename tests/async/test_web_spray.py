@@ -14,7 +14,9 @@ from _paths import ROOT, HARNESS_STUBS, extract_function, source
 
 PRELUDE = r'''
 #include "core/prototypes.h"
+#include "item/named_set_effects.h"
 #include "core/utils.h"
+#include "net/gmcp.h"
 #include "core/profile.h"
 #include "core/files.h"
 #include "core/mm.h"
@@ -30,6 +32,7 @@ PRELUDE = r'''
 #include <vector>
 
 P_char character_list;
+uint64_t character_removal_generation;
 bool do_profile = false;
 PROFILE_DEFINE(short_affect_liveness)
 void set_short_affected_by(P_char, int, int) {}
@@ -144,7 +147,10 @@ static void advance(int pulses) {
 P_char get_linked_char(P_char ch, ush_int) { return ch == rider_fixture ? mount_fixture : nullptr; }
 P_char get_linking_char(P_char ch, ush_int) { return ch == mount_fixture ? rider_fixture : nullptr; }
 void char_from_room(P_char ch) { ch->in_room = NOWHERE; }
-bool char_to_room(P_char ch, int room, int) {
+// Departure rules have their own runtime matrix; this harness isolates movement completion.
+static bool leave_walking_group(P_char ch, int, int) { char_from_room(ch); return true; }
+bool char_to_room(P_char ch, int room, int, bool ordinary_movement) {
+    assert(ordinary_movement);
     if (!placement_ok) return false;
     ch->in_room = room;
     if (carry) {
@@ -166,6 +172,7 @@ void telemetry_gameplay_movement(P_char) {}
 '''
 
 DRIVER = r'''
+void innate_info(P_char, const char *) {}
 static void clear(P_char ch) {
     while (ch->affected) affect_remove(ch, ch->affected);
     assert(!ch->nevents);
@@ -299,17 +306,22 @@ table = re.sub(r'(\{ "[^"]+", )(\w+)( \})',
                lambda m: m[1] + (m[2] if m[2] == 'do_web_spray' else 'NULL') + m[3], table)
 assert 'ADD_RACIAL_INNATE(INNATE_WEB_SPRAY, RACE_DRIDER, 31);' in innates
 
-production = '\n'.join(extract_function(file, signature) for file, signature in [
+production = '#include "abilities/abilities.h"\n' + extract_function('utility.c', 'int dice(int num, int size)') + '\nconst Rolls live_rolls = { dice, number };\n'
+production += '''P_char find_character_by_runtime_id(uint64_t id) { for(P_char c=character_list;c;c=c->next) if(id&&c->runtime_id==id) return c; return nullptr; }\n'''
+production += '\n'.join(extract_function(file, signature) for file, signature in [
     ('utility.c', 'int BOUNDED('),
     ('interp.c', 'void argument_interpreter('), ('interp.c', 'char *one_argument('),
     ('interp.c', 'bool is_abbrev('),
     ('utility.c', 'int strn_cmp('), ('sparser.c', 'char *skip_spaces('),
-    ('innates.c', 'bool has_innate('), ('innates.c', 'bool can_use_innate('),
+    ('innates.c', 'bool has_innate('), ('innates.c', 'static struct affected_type *find_innate_timer('), ('innates.c', 'static int innate_rest_seconds('), ('innates.c', 'static int innate_uses('), ('innates.c', 'bool can_use_innate('),
     ('innates.c', 'P_char parse_victim('), ('innates.c', 'bool check_innate_time('),
     ('affects.c', 'struct affected_type *get_spell_from_char('),
     ('affects.c', 'bool affected_by_spell('), ('affects.c', 'void event_short_affect('),
     ('affects.c', 'struct affected_type *affect_to_char('),
     ('affects.c', 'void affect_remove('), ('affects.c', 'void affect_from_char('),
+    ('innates.c', 'static int web_spray_interval('), ('innates.c', 'static int web_spray_rest('), ('innates.c', 'static int web_spray_lag('),
+    ('innates.c', 'static float web_spray_chance('), ('innates.c', 'static int web_spray_duration('), ('innates.c', 'static int web_spray_drain('),
+    ('innates.c', 'static int web_spray_roll('), ('innates.c', 'static int web_spray_tear_roll('), ('innates.c', 'static int web_spray_tear_threshold('),
     ('innates.c', 'void event_web_spray('), ('innates.c', 'void do_web_spray(P_char ch,'),
     ('innates.c', 'void web_spray_move_check('),
     ('files.c', 'ush_int getShort('), ('files.c', 'uint getInt('), ('files.c', 'long getLong('),

@@ -32,6 +32,7 @@
 #include "player/player_log.h"
 #include "net/ansi.h"
 #include "net/output_channel.h"
+#include "net/output_links.h"
 #include "net/output_preference_state.h"
 #include "economy/shopkeeper_save_policy.h"
 #include "telemetry/telemetry_types.h"
@@ -135,6 +136,7 @@ typedef struct combat_data *P_combat;
 #define AFFTYPE_LINKED_OBJ BIT_12
 #define AFFTYPE_SET_AFFECT BIT_13
 #define AFFTYPE_DAM_WARD BIT_14
+#define AFFTYPE_SET_SUSPENDED BIT_15 // dormant set grant while an ordinary cast applies
 #define AFFTYPE_STORE (AFFTYPE_NOAPPLY | AFFTYPE_NODISPEL | AFFTYPE_NOSHOW)
 #define MAX_FORGE_ITEMS 1000
 #define MEMTYPE_FULL AFFTYPE_CUSTOM1
@@ -956,6 +958,10 @@ struct room_data
 #define PLR3_EPICWATCH BIT_20 /* For Immortals: displays calls to epiclog */
 #define PLR3_PET_DAMAGE BIT_21
 #define PLR3_NOGMCP BIT_22 /* Player has disabled GMCP */
+#define PLR3_KEPT_CHARACTER BIT_23 /* approval policy was decided at Keep */
+#define PLR3_APPROVAL_PENDING BIT_24 /* staff decision survives disconnect/restart */
+#define PLR3_STARTER_KIT_PENDING BIT_25 /* first entry owes its bound kit */
+#define PLR3_CHAOS_STARTER_KIT BIT_26 /* kit policy decided at first entry */
 
 /* For players : Prompt flags (16 bits max) */
 #define PROMPT_NONE BIT_1
@@ -1195,6 +1201,9 @@ struct affected_type
 	ubyte location; /* Tells which ability to change(APPLY_XXX)*/
 	uint16_t loc2; // skill IDs extend beyond the byte-sized apply locations
 	void *context;
+	int set_zone; // Transient provenance of an affect created by named equipment.
+	int set_spell;
+	uint64_t set_owner;
 	unsigned short level;
 	unsigned long bitvector; /* Tells which bits to set (AFF_XXX)       */
 	unsigned long bitvector2; /* Tells which bits to set (AFF2_XXX)      */
@@ -1587,6 +1596,7 @@ struct txt_block
 {
 	char *text;
 	struct txt_block *next;
+	OutputLinks *links; // Optional owned output metadata; input entries leave this null.
 };
 
 struct txt_q
@@ -1694,12 +1704,13 @@ struct txt_q
 #define CON_ACCT_RESET_NEWPW 91 // account recovery: waiting for the new password
 #define CON_ACCT_RESET_NEWPW2 92 // account recovery: waiting for the confirmation
 #define CON_STAT_METHOD 93 // choose starting stat distribution before rolling
+#define CON_CREATION_SAVE 94 // waiting for a kept-character save or cancellation
 
 #define PLAYER_LOAD_MODE_NONE 0
 #define PLAYER_LOAD_MODE_ACCOUNT 1
 #define PLAYER_LOAD_MODE_ACCOUNT_DELETE 3
 
-#define TOTAL_CON 93
+#define TOTAL_CON 94
 
 enum ws_chargen_phase
 {
@@ -1759,6 +1770,7 @@ struct descriptor_data
 	::byte connected; /* mode of 'connectedness'    */
 	int wait; /* wait for how many loops    */
 	char *showstr_head; /* for paging through texts   */
+	OutputLinks *showstr_links; // Owned byte ranges into showstr_head; never wire markup.
 	char **showstr_vector; /*       -                    */
 	int showstr_count; /* number of pages to page through      */
 	int showstr_page; /* which page are we currently showing? */
@@ -1830,6 +1842,7 @@ struct descriptor_data
 	size_t ws_control_output_len;
 	size_t ws_control_output_offset;
 	int gmcp_enabled;
+	unsigned char mxp_state; // MXP_OFF/SENT_DO/SENT_WILL/ENABLED, independent of GMCP.
 	bool gmcp_initial_state_pending;
 	uint32_t gmcp_supports; // Versioned new streams; legacy packages keep their defaults.
 	uint32_t gmcp_interests;
@@ -1839,6 +1852,7 @@ struct descriptor_data
 	gmcp_combat_subject gmcp_combat_subjects[2];
 	uint64_t gmcp_combat_revision;
 	bool gmcp_combat_state_sent;
+	bool gmcp_spell_preparation_pending;
 	uint64_t gmcp_items_epoch;
 	uint64_t gmcp_items_body;
 	uint64_t gmcp_items_revision;
@@ -2721,10 +2735,11 @@ struct TimedShutdownData
 		NONE,
 		OK,
 		REBOOT,
-		COPYOVER,
+		HOTBOOT,
 		AUTOREBOOT,
-		AUTOREBOOT_COPYOVER,
-		PWIPE
+		AUTOREBOOT_HOTBOOT,
+		PWIPE,
+		COPYOVER
 	} eShutdownType;
 	char IssuedBy[50];
 	char Reason[256];

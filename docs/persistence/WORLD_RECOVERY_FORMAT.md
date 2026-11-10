@@ -150,8 +150,8 @@ from the physical tree (for example, items owned by a corpse); it must not be
 replaced with room ownership. Recovery validates the physical tree and the
 corresponding custody entries, materializes the objects, then atomically hydrates
 the runtime ledger. A hydration conflict rolls back newly created objects.
-This path does not call SQL room reconciliation, including in flatfile-primary
-or no-MySQL builds. Redis retains its room-only capture and SQL reconciliation
+This path does not call SQL room reconciliation. Redis retains its room-only
+capture and SQL reconciliation
 rules. Copyover remains an ABI-local process handoff, unlike the portable Redis
 wire format; its custody entries are not a replacement for durable persistence.
 Mob inventory encoding is unchanged. Invalid or truncated object trees or
@@ -176,7 +176,7 @@ UIDs, runtime gear fields, mortal takeability, and mixed fresh/restored
 stubs; this is not a live server restart or an end-to-end loot transaction test.
 
 `tests/async/test_copyover_custody.py` additionally compiles the complete production
-`copyover.c` in no-MySQL mode with the real runtime ownership ledger. It calls
+`copyover.c` with controlled persistence boundaries and the real runtime ownership ledger. It calls
 `copyover_save`, replaces the process with `execv`, and calls `copyover_recover`
 in the new process. It verifies a ledger-backed ground corpse with a nested
 container and generated gloves, including both physical and logical custody
@@ -184,3 +184,30 @@ topology. SQL reconciliation aborts if called. Idle worker drains and unrelated
 player/NPC/network services are fixture boundaries; no live game or production
 state is involved. The same fixture fails on the previous room-only copyover
 implementation before reaching process replacement.
+
+### Player-only copyover handoff
+
+Version 20 appends the authenticated account and ship cabin identity to each
+descriptor record. Static rooms use virtual room numbers in both modes.
+A persistent ship cabin uses the ship's database ID and layout slot, with its
+saved anchorage as fallback. A missing room falls back to the player's home or
+birthplace. Readers preserve the room encoding of supported older images.
+Use a cold restart when downgrading to a reader older than version 21.
+
+Standalone `copyover` uses magic `CPYP` and requires zero mob, object and door
+counts. Version 21 stores a Redis checkpoint after the three listener descriptors
+and before the player records. It contains the acknowledged generation sequence,
+namespace, season epoch, and authenticated manifest tag, which binds the upload
+identity and payload digest. Published sequence keys are immutable. Publication atomically
+clears floor deltas, so the matching floor cut is empty. A zero sequence denotes
+disabled world recovery. A legacy `CPYP` handoff can start only with world
+recovery disabled. A version 20 image with a Redis checkpoint is retained for
+operator review because it identifies the payload without identifying the upload.
+
+Both modes require durable player saves before publishing. The replacement
+validates the checkpoint before world loading and excludes it from fresh-world
+population and materialization. The inherited listeners must validate and boot
+must be ready before the replacement deletes the checkpoint. Redis compares the
+generation, floor cut, and writer lease atomically. Failure leaves recovery
+evidence available for inspection and cold recovery. Normal corpse, storage,
+and shop restoration remains enabled for standalone copyover.

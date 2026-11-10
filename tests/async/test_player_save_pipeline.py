@@ -118,6 +118,7 @@ struct apply_state
     std::vector<std::string> order;
     std::map<int, unsigned int> failures;
     std::map<int, player_snapshot> committed;
+    int stale_pid = 0;
     bool hold = false;
     bool holding = false;
 };
@@ -143,6 +144,8 @@ player_save_apply_result player_snapshot_repository_apply_from_pool(const player
         result.rolled_back = true;
         return result;
     }
+    if (snapshot.pid == state.stale_pid)
+        return {player_save_apply_outcome::stale_revision, snapshot.revision + 1, 0};
     state.committed[snapshot.pid] = snapshot;
     return {player_save_apply_outcome::applied, snapshot.revision, 0};
 }
@@ -168,10 +171,16 @@ struct player
 {
     char_data ch = {};
     pc_only_data pc = {};
+    descriptor_data descriptor = {};
+    acct_entry account = {};
+    char account_name[32] = "Creator";
     explicit player(int pid)
     {
         ch.only.pc = &pc;
         pc.pid = pid;
+        ch.desc = &descriptor;
+        descriptor.account = &account;
+        account.acct_name = account_name;
     }
 };
 
@@ -199,13 +208,32 @@ std::vector<std::string> take_order()
 int main()
 {
     assert(player_save_pipeline_init());
+    // A migrated durable row may still have save_revision=0 and no descriptor.
+    player legacy(45);
+    legacy.ch.desc = nullptr;
+    assert(player_revision_hydrate(45, 0));
+    assert(player_save_pipeline_request(&legacy.ch, PLAYER_COMPONENT_STATUS, 1, 3001) ==
+           player_save_pipeline_result::queued);
+    assert(persistence_writer_wait_idle(5000));
+    player_save_pipeline_pulse();
+    assert((take_order() == std::vector<std::string>{"45:1"}));
+    assert(state.committed[45].creation_account.empty());
+    player_revision_forget(45);
+
     player alice(41), bob(42), carol(44);
     alice.ch.next = &bob.ch;
     bob.ch.next = &carol.ch;
     character_list = &alice.ch;
     assert(player_revision_hydrate(41, 7));
-    assert(player_revision_hydrate(42, 0));
-    assert(player_revision_hydrate(44, 0));
+    assert(player_revision_hydrate(42, 0, true));
+    assert(player_revision_hydrate(44, 0, true));
+    player unsaved(46);
+    unsaved.ch.desc = nullptr;
+    assert(player_revision_hydrate(46, 0, true));
+    assert(player_save_pipeline_request(&unsaved.ch, PLAYER_COMPONENT_STATUS, 1, 3001) ==
+           player_save_pipeline_result::capture_failed);
+    player_revision_forget(46);
+
 
     // Nothing dirty, nothing captured.
     assert(player_save_pipeline_checkpoint_dirty(&alice.ch, 1, 3001) ==
@@ -237,7 +265,7 @@ int main()
     assert(player_save_pipeline_request(&alice.ch, PLAYER_COMPONENT_AFFECTS, 1, 3001) ==
            player_save_pipeline_result::queued);
     assert(player_save_pipeline_request(&alice.ch, PLAYER_COMPONENT_SKILLS, 1, 3001) ==
-           player_save_pipeline_result::coalesced);
+           player_save_pipeline_result::queued);
     // Equipment and inventory are one item graph.
     assert(player_save_pipeline_mark(42, PLAYER_COMPONENT_INVENTORY));
     assert(player_revision_snapshot_copy(42, &revision));
@@ -253,10 +281,12 @@ int main()
     player_save_pipeline_resume();
     assert(player_save_pipeline_mark(41, PLAYER_COMPONENT_STATUS));
 
+    // The delayed immutable capture must not consult its descriptor/account again.
+    strcpy(bob.account_name, "ReplacedAccount");
     hold_writer(false);
     assert(persistence_writer_wait_idle(5000));
     // Bob's first save was being written; everything else in capture order.
-    assert((take_order() == std::vector<std::string>{"42:1", "41:8", "44:1", "41:10", "42:2"}));
+    assert((take_order() == std::vector<std::string>{"42:1", "41:8", "44:1", "41:9", "41:10", "42:2"}));
     player_save_pipeline_pulse();
     assert(player_revision_snapshot_copy(41, &revision) && revision.written_revision == 10);
     {
@@ -264,7 +294,11 @@ int main()
         assert(state.committed[41].pending_trade.operation==trade.operation);
         assert(state.committed[41].pending_trade.payment==-80);
         assert(state.committed[42].pending_trade.operation==other_trade.operation);
+        assert(state.committed[42].creation_account == "Creator");
+        assert(state.committed[42].components == PLAYER_CHECKPOINT_COMPONENT_ALL);
+        assert(state.committed[41].creation_account.empty());
     }
+    strcpy(bob.account_name, "Creator");
     player_save_pipeline_release_trade(41);
     player_save_pipeline_release_trade(42);
 
@@ -659,6 +693,39 @@ int main()
     assert(player_revision_hydrate(201, committed_revision));
     assert(last_alert.find("ended=1") != std::string::npos);
     player_save_pipeline_reset_for_tests();
+
+    // A later status write cannot acknowledge a failed full manual checkpoint.
+    assert(player_save_pipeline_init());
+    player failed_manual(203);
+    character_list = &failed_manual.ch;
+    assert(player_revision_hydrate(203, 0));
+    state.failures[203] = 1;
+    hold_writer(true);
+    assert(player_save_pipeline_request(&failed_manual.ch, PLAYER_CHECKPOINT_COMPONENT_ALL,
+                                        RENT_CRASH, 3001) == player_save_pipeline_result::queued);
+    wait_until_held();
+    assert(player_save_pipeline_request(&failed_manual.ch, PLAYER_COMPONENT_STATUS,
+                                        RENT_CRASH, 3001) == player_save_pipeline_result::queued);
+    hold_writer(false);
+    assert(persistence_writer_wait_idle(5000));
+    player_save_pipeline_pulse();
+    assert(player_revision_snapshot_copy(203, &revision));
+    assert(revision.written_revision == 0); // Revision 2 persisted only status.
+    assert(revision.unacknowledged_components == PLAYER_CHECKPOINT_COMPONENT_ALL);
+    state.stale_pid = 203;
+    assert(player_save_pipeline_checkpoint_dirty(&failed_manual.ch, RENT_CRASH, 3001) ==
+           player_save_pipeline_result::queued);
+    assert(persistence_writer_wait_idle(5000));
+    player_save_pipeline_pulse();
+    assert(player_revision_snapshot_copy(203, &revision) && revision.written_revision == 0);
+    state.stale_pid = 0;
+    assert(player_save_pipeline_request(&failed_manual.ch, PLAYER_CHECKPOINT_COMPONENT_ALL,
+                                        RENT_CRASH, 3001) == player_save_pipeline_result::queued);
+    assert(persistence_writer_wait_idle(5000));
+    player_save_pipeline_pulse();
+    assert(player_revision_snapshot_copy(203, &revision));
+    assert(revision.written_revision == 4 && !revision.unacknowledged_components);
+    player_save_pipeline_reset_for_tests();
     character_list = nullptr;
     return 0;
 }
@@ -710,6 +777,7 @@ with tempfile.TemporaryDirectory(prefix="duris-player-save-pipeline-", dir=ROOT 
     )
     subprocess.run([str(binary)], check=True, timeout=60)
 print("[PASS] a queued save leaves its owner clean; a newer save replaces the queued one")
+print("[PASS] failed components remain unacknowledged through later partial and stale completions until repaired")
 print("[PASS] a failed write is reported and marks its owner dirty again")
 print("[PASS] ended sessions retire only after pending writes/completions; live dirt and new baselines survive")
 print("[PASS] drain waits for the writer within its bound")
@@ -739,15 +807,13 @@ print("[PASS] game-thread checkpoint and completion paths contain no external I/
 
 write_character = section(FILES, "int writeCharacter(P_char ch", "character_delete_result forget_deleted_character(")
 # Every MariaDB save, terminal ones too, is queued: no synchronous SQL is left in it.
-branch = write_character.index("player_save_pipeline_request(")
-assert "const bool queued_save = true;" in write_character[:branch]
 for legacy in ("sql_save_player", "sql_update_money", "sql_save_locker"):
     assert legacy not in write_character, legacy
 silent = section(ACTOTH, "bool do_save_silent(P_char ch", "void do_save(P_char")
 assert silent.index("player_save_pipeline_is_nonterminal_type") < silent.index("fopen(tmp_buf")
 assert silent.index("player_save_pipeline_request") < silent.index("writeCharacter(ch")
 init_char = section(NANNY, "void init_char(P_char ch)", "int approve_mode")
-assert "player_revision_hydrate(ch->only.pc->pid, 0)" in init_char
+assert "player_revision_hydrate(ch->only.pc->pid, 0, true)" in init_char
 print("[PASS] ordinary direct and manual saves branch before legacy mutation and I/O")
 
 mark = section(CHECKPOINT, "void mark_player_dirty_components(int pid", "int get_dirty_player_count(void)")

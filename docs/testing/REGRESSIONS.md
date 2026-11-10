@@ -5,8 +5,10 @@ what those tests do not cover. Every journey uses synthetic accounts, a private 
 temporary state, and never reads the checkout's `.env`. A MariaDB journey needs
 `TEST_DB_HOST`, `TEST_DB_USER` and `TEST_DB_PASSWORD` for a disposable loopback server
 (`tests/async/with_disposable_mariadb.sh CMD...` supplies one) and creates and drops its
-own schema. Flat-file journeys take a server built with
-`make -C src PERSISTENCE_BACKEND=flatfile DMS_BINARY=/absolute/path/dms_flat`.
+own schema. MariaDB is the only server persistence backend. Some test filenames
+still contain `flatfile`; those names do not select a backend. Build with
+`make -C src` and use each journey's invocation in `tests/run_db_tests.sh`
+for its current arguments and disposable database wrapper.
 
 Four of these sections note that the full-server path was never driven under sanitizers; no
 journey does that yet.
@@ -111,14 +113,11 @@ AREA-selected authored inputs and an explicitly regenerated aggregate against th
 independent 61-row golden manifest, seven profiles and four first-open container flags.
 Run `make world` first; omitting `--generated` checks authored inputs only.
 
-`python3 tests/async/test_legacy_trap_journey.py "$PWD/bin/issue368-flatfile/server/dms_new"
-flatfile` and `tests/async/with_disposable_mariadb.sh python3
+`tests/async/with_disposable_mariadb.sh python3
 tests/async/test_legacy_trap_journey.py "$PWD/bin/server/dms_new" mariadb` use the full
 generated world with ordinary corpse/shopkeeper/floor restoration. They exercise real
 commands, loaded profiles, an unrelated invalid definition, remaining/spent budgets and
-open state across save/restart. MariaDB uses a private Redis world snapshot cache; the
-flat-file journey uses existing saved-container storage for floor records because loose
-Redis snapshots require a SQL season epoch. Synthetic authorities/listeners are isolated;
+open state across save/restart. MariaDB uses a private Redis world snapshot cache. Synthetic authorities/listeners are isolated;
 the test never sources `.env`. Evidence is retained under ignored `bin/issue368-evidence/`.
 Keep `test_corpse_trap_restart_journey.py` as the separate lethal legacy-effect control.
 
@@ -284,7 +283,7 @@ item. The stopped old Redis payload is hashed and left in place while a new proc
 runs the real countdown/reset with Redis disabled. Epoch-2 re-enable must ignore
 that floor marker and old namespace, publish new presence, and pass fresh combat/
 save/reconnect/second-boot recovery. Old payload bytes and unrelated keys remain.
-This option uses the direct launcher and excludes restore/flat-file modes.
+This option uses the direct launcher and excludes restore mode.
 
 `python3 tests/async/test_shutdown_broadcast.py` executes the actual command,
 countdown, broadcast and shutdown-info writer with an isolated descriptor/event
@@ -380,7 +379,7 @@ summon refusal, dismissal cooldown, save/reconnect and second boot. Run the same
 journey with `--discard-rewards` to boot with `pwipe.preserve=false`; all grants
 must disappear and the new character's claims must refuse, including after reboot.
 The alternate report is `bin/analysis/pwipe-runtime-mariadb-discard-rewards.json`.
-This option cannot combine with the matched-restore or flat-file rejection modes.
+This option cannot combine with matched-restore mode.
 
 The native handoff matrix also invokes the actual SQL player-load repository and
 item UID allocator around the real reset. An ordinary old player payload is readable
@@ -428,7 +427,7 @@ frame/history, rolls the season and proves a retry changes no bytes. Stale-seaso
 startup refuses; actual environment configuration starts the new scope with distinct
 identities for the same subject but no fresh same-day HTTP quota. The existing
 outage harness proves next-UTC-day allowance and all interrupted-publication cases.
-Both compiled backend variants use synthetic state and local receivers only.
+The compiled fixtures use synthetic state and local receivers only.
 The shutdown source contract includes SQL-ready 55 versus fenced 58 behavior.
 
 `python3 tests/async/run_pwipe_runtime_journey.py --redis --website /absolute/companion/checkout /absolute/production/dms_new`
@@ -473,13 +472,6 @@ keeps SQL fenced. Repaired repeated cleanup preserves unrelated keys and never
 activates incomplete SQL. The command/worker path is qualified separately by the
 real runtime journey; the native harness holds those peripheral callbacks controlled.
 
-Run the real unsupported flat-file path with:
-`python3 tests/async/run_pwipe_runtime_journey.py --flatfile-rejection /absolute/path/to/flatfile/dms_new`.
-It reuses the private world/account/Overlord helpers and verifies immediate rejection,
-unchanged player snapshot and legacy files, preservation of a scheduled reboot,
-then normal save/logout/reconnect/second boot. Evidence is written under
-`bin/analysis/pwipe-runtime-flatfile.json`; no DB or checkout environment is used.
-
 The native reset journey seeds auction custody plus nested siege items with affects
 and descriptions. Actual startup population readers see those bodies before reset
 and none afterward. Missing siege child schema aborts before epoch advance, and a
@@ -519,7 +511,7 @@ member's successful attempt. Containment expiry announces that the target's
 essence can no longer be learned; its existing duration remains 25 seconds.
 
 `python3 tests/async/test_world_quest_xp_feedback.py` executes the production
-kill-experience paths and spell handler under ASan/UBSan on both persistence
+kill-experience paths and spell handler under ASan/UBSan on the MariaDB
 build variants. It enumerates every roll for representative levels, the strict
 success boundary, zero and guaranteed success, and the Charisma cap. It also
 covers per-recipient group feedback, inactive marks, existing eligibility
@@ -534,12 +526,12 @@ current rest applies once through the ordinary XP modifiers/caps. Legacy pending
 receipts retain delivery-time behavior; KILL XP remains immediate.
 
 `python3 tests/async/test_world_quest_xp_feedback.py` checks all nine captured/current
-rest combinations on both backend builds, repeated callbacks/interactions,
+rest combinations in the MariaDB build, repeated callbacks/interactions,
 recovered markers, reductions/caps, and unchanged delayed KILL XP. The player-save
 pipeline test verifies that the receipt stores the captured eligibility.
 
 `DURIS_WORLD_QUEST_JOURNEY=rested-ask python3 tests/async/run_world_quest_dual_backend.py`
-uses disposable MariaDB and flatfile servers and ordinary ASK/bartender commands.
+uses disposable MariaDB servers and ordinary ASK/bartender commands.
 Debugger fixtures grant rest before completion and expire it before delivery.
 Both strengths are tested through live publication and a SIGKILL after commit
 before publication, then a recovered claim and another acknowledged-save/restart.
@@ -564,14 +556,6 @@ loaders abort if called. Coin amounts retain their raw copper values, including
 zero and integer limits, and EXP values do not invent dynamic reward semantics.
 Large reports with paging disabled request paging; reports beyond the pager's
 capacity return an explicit error instead of disappearing behind its generic warning.
-
-`python3 tests/async/run_quest_staff_journey.py --binary
-bin/server/dms_quest_staff_flat --output bin/analysis/quest-staff-journey.json`
-boots a disposable flat-file server and drives Telnet commands as a mortal and
-then staff. It checks actual dispatch restrictions, all five help/wizhelp entries,
-multi-page dialogue, compact references versus full exchanges, and bad input.
-It uses synthetic state and a private world; no production deployment or
-database help import is performed. The normal MariaDB build is checked separately.
 
 ## Bounded builder inspection (#231)
 
@@ -648,33 +632,6 @@ neutral fed/hydrated standing/resting/sleeping rates 80/229/632, with one- and
 four-pulse callbacks. Spell damage and saving throws are stubbed; the vitality grant,
 rest command, rate and callback are actual source functions.
 
-`run_psp_regen_journey.py --binary bin/server/dms_issue57_flatfile --output
-bin/analysis/issue57-plan/journey.json` drives a fresh flat-file full-world server via
-Telnet; run `make world` first to generate the authored world in a clean checkout.
-As of 2026-10-28, the journey expects ordinary combat recovery, including fresh casting
-restarts, and asserts an active training-dummy opponent throughout its combat samples.
-The following measurements describe the earlier combat-suppression policy.
-Against production sources `0b245add9223f12bd483cd451a15d805a37733a6`,
-current POW=INT=100, no equipment/boons/rested bonus, dials 5/1/10 display 80/160/40
-and gain 33/65/17 PSP over 123 traced callbacks each (staff snapshots bound elapsed
-time at 120–126 pulses). Rest/meditate displays 1,500, fills reserves, sends one
-completion message and ends callbacks. Actual will/cast dispatch restarts PSP for
-both Psionicist and MindFlayer. Training-dummy combat blocks recovery; after staff
-tranquilize and player wake/stand, the existing periodic path recovers within 42.014
-seconds. A signed affect change from zero net recovery to 90/tick restarts via
-`balance_affects()`/`affect_total()`. All 569 player PSP callbacks have unique pulse
-identities. Setup uses staff commands on a disposable character; player data and
-runtime settings are temporary and removed afterwards. The full server is a normal
-development build, with sanitizers confined to the native harnesses.
-
-The CLI creates missing output directories before retaining the JSON result.
-`test_psp_regen_journey_output.py` executes its argument parsing and result writing
-with the full journey stubbed, checking a missing nested parent and an existing file.
-
-[#57](https://github.com/LuminariMUD/Duris/issues/57) records delivery and the
-original qualification scope. Use current source/build identities when rerunning
-the journey; old measurements do not certify a later binary.
-
 ## Combined log-review integration qualification
 
 The combined server/world/schema at `8b2681862` incorporates master `c6a95a470`
@@ -705,8 +662,8 @@ regression, database and site output. Per-database-leg output is in `bin/tests/d
 
 This run includes the corrected connection observer test from `d4fe27272` and
 the MySQL/MariaDB kingdom-interface repair from `b6a8ecb4c`. The latter also
-passes actual MySQL 8.0.46 server/pfile/migration-tool builds, the flat-file boot
-preflight, and `make security-check`; its before/after script reports **1/1
+passes actual MySQL 8.0.46 server/pfile/migration-tool builds and
+`make security-check`; its before/after script reports **1/1
 catches**. See the client-interface section below for the proof boundary.
 
 Earlier qualification at `42b7afb17` passed 736 regressions in 567.56 seconds
@@ -763,17 +720,15 @@ the statistics matrix and the MariaDB flight journey.
 PR #70's hosted MySQL 8 build exposed a MariaDB-only forward declaration in
 `kingdom.h`: its `st_mysql *` callback could not be assigned to the public
 `MYSQL *` callback used by character deletion. The header now uses the existing
-`sql_work` type, matching the implementation. Flat-file mode still excludes
-the SQL interface. No payment, deletion or reward behavior changes.
+`sql_work` type, matching the implementation. No payment, deletion or reward behavior changes.
 
 `python3 tests/async/test_compiler_warning_profile.py` compiles the actual header
-against the different public MySQL/MariaDB type declarations and a flat-file
-fixture that rejects any MySQL header inclusion. The MySQL case fails before
-the repair; all three pass afterward. Server and pfile builds also pass against
+against the different public MySQL/MariaDB type declarations. The MySQL case
+fails before the repair; both client variants pass afterward. Server and pfile builds also pass against
 the actual Ubuntu MySQL 8.0.46 headers/library, extracted under ignored
 `bin/analysis/review-final/mysql-client/` without replacing the installed MariaDB
 development package. The MariaDB server build, real guild snapshot/payment and
-character-deletion regressions, flat-file boot/shutdown preflight and
+character-deletion regressions and
 `make security-check` pass. Logs are under `bin/analysis/review-final/`.
 These checks repair the build failure; they are not a new CodeQL or Trivy scan.
 
@@ -787,7 +742,7 @@ all frag fields before propagating an exception, just as it does after capture.
 `python3 tests/async/test_account_character_delete_runtime.py` executes the actual
 capture method with a failing SQL builder. It fails before the repair at the
 retained-membership assertion and passes afterward, alongside the existing
-MariaDB and flat-file account-menu deletion cases. This allocation case does
+MariaDB account-menu deletion cases. This allocation case does
 not run a server or a real database.
 
 ## Artifact and guild rewards
@@ -1021,7 +976,7 @@ order/max-speed/aboard-owner code and the tick clamp: a non-owner's bonus is los
 an aboard owner's persists, and a non-Seadog sailor cannot order that owner's
 full maximum. Display's actor selection, innate availability and seller's 10%
 bonus are traced in production source. No sailing mechanic changes.
-`python3 tests/async/test_flatfile_help_catalog.py` and
+`python3 tests/async/test_mariadb_help_catalog.py` and
 `python3 tests/async/test_help_import_live_parser.py` pass. The disposable
 `test_information_cache_journey.py --backend mariadb --server bin/server/dms_new`
 passes corrected Seadog text through actual import/cache/player help alongside
@@ -1040,7 +995,7 @@ Padding/morph adapters and omitted staff search subcommands bound this proof;
 original-zone attribution and its catalog investigation remain open.
 
 LR-08 supplies searchable Web Spray, Quickstep and Seadog topics. The existing
-flat-file help test proves rendering; the MariaDB information journey dry-runs
+shared help-catalog test proves rendering; the MariaDB information journey dry-runs
 and imports into its disposable schema before actual player help queries and
 cache publication. It retains the existing Quick Step title and adds no import
 or redirect mechanism. Both focused checks pass. PR #74 is ready with 734 regression and 77 database
@@ -1124,7 +1079,7 @@ Issue #40 replaces fixed ordinary routes with 25 per-character discoveries and
 with their original level-51 gates, 200p/50p fares and one-way service. Discovery
 EXP uses the current gain cap times discovery count divided by 27, then the normal
 modifiers and caps. The discovery mask and EXP share the existing status checkpoint;
-migration 0038 and snapshot schema 8 preserve both backends and old supported saves.
+migration 0038 and snapshot schema 8 preserve MariaDB and old supported saves.
 
 `test_flight_network.py` executes the production catalog, BFS and command handlers
 under ASan/UBSan. It covers all paths and wrapped edges, first/repeated discovery,
@@ -1135,22 +1090,20 @@ The PR #51 review additions check sleeping/paralyzed and controlled-carrier rede
 empty-return event to have a null passenger.
 `test_world_singletons.py` retains its repeated initialization, duplicate passenger
 and item preservation, occupied recovery, empty return, and older-record checks.
-The capture/codec, flat-file repository and SQL save/load fixtures exercise the new
+The capture/codec and SQL save/load fixtures exercise the new
 field, older versions 1/3/5/7, unrelated partial saves, account siblings, rollback,
-retry and the actual pwipe reset/query. The final audit additionally reads valid
-checksummed files for all four old versions through the real flat-file reader under
-ASan/UBSan, verifying an unsigned zero discovery mask. The EXP fixture checks capped/immortal
+retry and the actual pwipe reset/query. The EXP fixture checks capped/immortal
 characters and credited amounts across level advancement.
 
 `test_flight_network_journey.py` runs the complete world with synthetic characters.
-The default is flat-file; the database gate passes `--backend mariadb --server
-bin/server/dms_new` under `with_disposable_mariadb.sh`. Each backend discovers all
+Pass `--backend mariadb --server bin/server/dms_new` under
+`with_disposable_mariadb.sh`, as the database gate does. The journey discovers all
 25 ordinary stops, checks a 39-room flight costing 19.5p, preserves an occupied
 flight and an empty returning carrier through copyover, takes both restricted
 trips, and verifies discoveries/EXP after a crash and a normal logout/login. It
 also kills the seven named dragons and checks their corpse objects. The SQL leg
 imports the maintained help sources; both clients read the same FLIGHTS guidance.
-Both backend journeys also apply and verify minor paralysis on the actual carrier,
+The journey also applies and verifies minor paralysis on the actual carrier,
 then use ordinary `give` to prove ticket ownership and wallet retention. A separate
 flight logs out immediately after landing and verifies that the empty carrier
 returns home and resumes service without a reboot or copyover to rescue it.
@@ -1191,7 +1144,7 @@ journey `run_login_stats_service.py` checks ordering, first-run directory creati
 and recovery after the first query fails. No test changes the live deployment.
 
 `test_last_command.py` links the production staff handler for argument validation,
-staff/fog/NPC access, deferred output, admission failure, and the flat-file response.
+staff/fog/NPC access, deferred output and admission failure.
 Its `--mysql` leg runs the generated SQL against disposable tables with strict
 grouping enabled: exact time boundaries, non-UTC connection settings, repeated
 logins, tied timestamps, account snapshots after transfers, missing characters,
@@ -1223,7 +1176,7 @@ reloads leave values and character caches unchanged. Startup refuses an unreadab
 malformed configuration. Keys up to 127 characters fit; longer keys are rejected whole.
 
 `python3 tests/async/test_issue263_property_reload.py` executes the real property commands
-under ASan/UBSan in both SQL and flat-file builds. It checks 127-, 128-, and 200-character
+under ASan/UBSan in the MariaDB build. It checks 127-, 128-, and 200-character
 keys; missing sources and an unopenable temporary file; partial reads; write/flush failures
 using `RLIMIT_FSIZE`; separate source/target close failures; failed rename; malformed
 properties and capacity overflow. Failures must preserve the file, active values and
@@ -1382,11 +1335,10 @@ python3 tests/async/test_maintenance_scheduler.py
 The MariaDB journey logs in on a real server, then runs the job against the same database
 without `account_login_history` and with it, with a row budget of one. The log test runs
 the real `expire_log_files()` on file trees of known ages. The hosts journey boots a
-flat-file server over stale files and closes a connection; the lookup test runs the real
+MariaDB server over stale hosts files and closes a connection; the lookup test runs the real
 lookup code under ThreadSanitizer with `getnameinfo()` held until after the close. The
 scheduler test loads state files of versions 2 and 3, which held 11 and 12 jobs. No test
-waits for the hourly slot on a running server, and the flat-file backend's address lists
-are not pruned.
+waits for the hourly slot on a running server.
 
 ## Area-authored coin piles
 
@@ -1400,15 +1352,14 @@ server's coin transaction spent stays spent. Only the pile made from a death wal
 still be vnum 3.
 
 ```sh
-python3 tests/async/test_area_coin_pickup.py   # --server /absolute/path/dms_new reuses a flat-file binary
+tests/async/with_disposable_mariadb.sh python3 tests/async/test_area_coin_pickup.py --server bin/server/dms_new
 python3 tests/async/test_take_coins.py
 python3 tests/async/test_currency_in_memory.py
-python3 tests/async/test_flatfile_item_repository.py
 python3 tests/async/test_live_item_movement_contract.py
 bash tests/async/run_experience_trophy_mysql.sh
 ```
 
-`test_area_coin_pickup.py` boots flat-file servers with the real statue and money
+`test_area_coin_pickup.py` boots MariaDB servers with the real statue and money
 prototypes under new vnums. Each fresh character searches the statue, picks the coins up
 with one of `get coins statue`, `get all.coins statue` and `take all statue`, and saves;
 the test checks a durable ten-platinum wallet, an empty statue and no credit on a second
@@ -1467,7 +1418,6 @@ display keep the nominal segments. Landed in `7ef76523e`.
 python3 tests/async/test_cast_lateness_runtime.py
 python3 tests/async/test_spell_schedule_failure_runtime.py
 python3 tests/async/test_death_field_runtime.py
-python3 tests/async/run_cast_timing_probe.py --server /absolute/path/dms_flat [--budget-usec 2000]
 ```
 
 `test_cast_lateness_runtime.py` compiles the production `schedule_spellcast()`,
@@ -1476,10 +1426,8 @@ injected lateness: casts of 1 to 20 pulses with none take their cast time in seg
 four; the item's 12-pulse example finishes in 14; lateness before the last segment is made
 up; after a stall the minimum leaves one pulse per remaining segment; and a mob's cast
 makes up its lateness as a player's does. The other two compile the helper and keep
-rejection and NPC casts as they were. The probe is the measurement on a real full-world
-server, not a test, and is not in `make test-all`: it reads each cast's segments from the
-`PLAYER EVENT TIMING` trace and prints how late it finished. Not covered: a cast under real
-lateness in a test leg.
+rejection and NPC casts as they were. Not covered: a cast under real lateness
+in a full-server test leg.
 
 ## CHAOS kit for centaurs and driders
 
@@ -1509,7 +1457,7 @@ fee leaves the wallet when the listing is submitted, and coins go into the bag a
 
 ```sh
 python3 tests/async/test_auction_ownership_publication.py
-python3 tests/async/test_flatfile_auction_coin_put_journey.py   # --server reuses a flat-file binary
+tests/async/with_disposable_mariadb.sh python3 tests/async/test_mariadb_auction_coin_put_journey.py --server bin/server/dms_new
 ```
 
 The first runs the real publisher with the real ownership runtime and codecs under
@@ -1517,8 +1465,7 @@ ASan/UBSan: rejected settlement, listing, claim, and a newer source revision kep
 journey puts food in a bag, acquires ten platinum, lists another item, puts the remaining
 coins in the bag at once, repeats the transfer, and checks the exact balance after a full
 logout and login; it saves before it reads the wallet from disk. `--expect-regression`
-only fits a server from before the persistence reset. Live play ran on the flat-file
-backend only.
+only fits a server from before the persistence reset.
 
 ## Command log: one-letter commands
 
@@ -1550,11 +1497,11 @@ that against the IPv4 setting. Before that the proxy was never trusted, and one 
 login closed every other one in progress as a stale connection from the same address.
 
 ```sh
-python3 tests/async/test_connection_limit_journey.py   # builds or reuses a flat-file server
+tests/async/with_disposable_mariadb.sh python3 tests/async/test_connection_limit_journey.py --server bin/server/dms_new
 python3 tests/async/test_websocket_protocol_contract.py
 ```
 
-The journey boots a flat-file server with the WebSocket listener on and `127.0.0.9` as
+The journey boots a MariaDB server with the WebSocket listener on and `127.0.0.9` as
 its proxy, binding client sockets to loopback aliases: nine telnet and nine TLS
 connections from one address (the ninth refused); eight connections that each entered a
 name, then a ninth, refused; a login from another address; PROXY-header connections for
@@ -1594,24 +1541,12 @@ python3 tests/async/test_copyover_failure_runtime.py
 python3 tests/async/test_copyover_save_guards.py
 python3 tests/async/test_copyover_custody.py
 python3 tests/async/test_telnet_output_runtime.py
-python3 tests/async/run_copyover_runtime_journey.py /absolute/path/dms_flat
-# Start the fixture as root; it drops the server to UID/GID 10001.
-python3 tests/async/run_copyover_runtime_journey.py /absolute/path/dms_flat --nonroot
+tests/async/with_disposable_mariadb.sh python3 tests/async/run_world_restart_journey.py bin/server/dms_new copyover
 ```
 
-The journey saves a synthetic player, promotes its offline snapshot to staff and restarts
-with the state file's parent directory missing, so the real copyover command fails. The
-same client then runs `look` and an acknowledged `save`, which proves transport and the
-save worker resumed. With the directory created, a second attempt publishes, execs the
-staged binary, recovers and removes the state file, and `look` and `save` run on the
-original socket. MCCP is decoded with zlib, and plaintext in the stream fails the test.
-It runs plain and MCCP, as the ordinary and the non-root fixture.
-
-Not covered: the complete release image (the journeys use a minimal world), and full TLS
-and WebSocket player sessions across a failed or successful copyover; the failure helper
-is tested with separate TLS and WebSocket descriptor queues. A disconnect after a
-successful copyover, once seen with a full-world Docker server and TinTin, was never
-reproduced.
+The native tests exercise failure output, save guards, custody encoding and
+transport framing with controlled boundaries. The MariaDB restart journey
+checks the real copyover path in a disposable world.
 
 ## Corpse bulk loot
 
@@ -1631,7 +1566,7 @@ python3 tests/async/test_money_carry_count.py
 python3 tests/async/test_take_coins.py
 python3 tests/async/test_get_trap_lifecycle.py
 python3 tests/async/run_corpse_haul_journey.py /absolute/path/to/mariadb/server   # in make test-db
-python3 tests/async/test_corpse_trap_restart_journey.py   # flat-file; in make test
+tests/async/with_disposable_mariadb.sh python3 tests/async/test_corpse_trap_restart_journey.py bin/server/dms_new mariadb
 python3 tests/async/test_corpse_trap_restart_journey.py /absolute/path/to/mariadb/server mariadb   # in make test-db
 ```
 
@@ -1662,7 +1597,7 @@ the actor and a same-room mortal bystander receive the room effect and return to
 account menus while a durable same-room NPC, a remote staff client and the server remain
 live, and reconnects the actor to prove the abandoned batch does not replay. It then
 restarts the server and verifies that the original corpse retains the same item UIDs and
-the trap's consumed charge on MariaDB and flat-file authority. A final direct pickup
+the trap's consumed charge on MariaDB. A final direct pickup
 proves the spent trap did not rearm. The journey uses only synthetic accounts and a
 private world; the MariaDB leg is registered in `make test-db`.
 
@@ -1700,10 +1635,7 @@ private world; the MariaDB leg is registered in `make test-db`.
 ```sh
 python3 tests/async/test_falling_skills.py
 python3 tests/async/test_falling_world_exits.py
-python3 tests/async/run_falling_skills_journey.py /absolute/path/dms_flat
 python3 tests/async/test_lethal_floor.py
-python3 tests/async/run_lethal_floor_journey.py /absolute/path/dms_flat nonlethal
-python3 tests/async/run_lethal_floor_journey.py /absolute/path/dms_flat lethal
 ```
 
 `test_falling_policy.py` pins the arithmetic, the scaled impact term at speeds 31, 43, 90
@@ -1742,8 +1674,9 @@ aggression, act flags and four coin balances, and reloading only the template lo
 The bounded `GNP1` extension carries those fields in the portable state codec, without
 pet ownership or summon timers.
 
-- File copyover version 14 appends the extension after each NPC's inventory. The fixed
-  record layout is unchanged and readers still accept versions 12 and 13.
+- File copyover added the extension in version 14. The current format
+  also retains actual item payloads and UIDs. Readers still accept versions
+  12 and 13, which predate the extension.
 - The Redis record codec accepts an optional validated extension after its affects and
   transport data; ordinary wire records stay byte-compatible.
 - Recovery applies owned strings and base attributes before affects and equipment, then
@@ -1764,8 +1697,8 @@ python3 tests/async/test_world_singletons.py
 python3 tests/async/test_copyover_custody.py
 python3 tests/async/test_redis_fault_recovery_live.py
 python3 tests/async/test_redis_floor_store_live.py
-python3 tests/async/test_generated_npc_journey.py <server> file
-python3 tests/async/test_generated_npc_journey.py <mariadb-server> redis
+tests/async/with_disposable_mariadb.sh python3 tests/async/test_generated_npc_journey.py --server bin/server/dms_new --mode file
+tests/async/with_disposable_mariadb.sh python3 tests/async/test_generated_npc_journey.py --server bin/server/dms_new --mode redis
 ```
 
 `test_generated_npc_state.py` runs the production capture and apply, the file extension
@@ -1774,12 +1707,76 @@ encoded state, string ownership, an ordinary control, legacy handling, truncatio
 oversized data and vnum mismatch. The `file` journey sets strings through real staff
 commands and runs two live file copyovers with stable IDs, counts and base stats. The
 `redis` journey uses a private Redis and a MariaDB schema: an acknowledged snapshot, a
-forced crash, a clean reboot and the kept identity. Redis needs a SQL season epoch, so a
-flat-file server cannot run it.
+forced crash, a clean reboot and the kept identity. Redis uses the MariaDB season epoch.
 
-Not covered: the full random-world generator (the journeys use controlled instances of
-1255 and 1256), and generated equipment across a file copyover, which still stores NPC
-equipment by vnum.
+### Full-world roaming NPC cap and recovery
+
+`test_issue263_property_reload.py` executes the real file and staff property
+controls and the scheduled spawner with a generator double under
+ASan/UBSan and float-cast checking. It covers missing and shipped defaults
+of 45, valid caps of 2, 60, and 0, signed-range rounding, rejected file
+reloads and wildcard sets, save/reload/revert, and the attempt boundaries.
+The mixed-population case failed before the marker exclusion and covers 69
+or 71 fixed/custom targets, dummy-like unmarked NPCs, pets, `NOWHERE`,
+unrelated prototypes, insertion of the last allowed NPC, and failed attempts.
+
+```sh
+python3 tests/async/test_issue263_property_reload.py
+python3 tests/async/test_training_dummy_contract.py
+python3 -m pytest -q tests/async/test_training_dummy_contract.py
+python3 tests/run_regression_tests.py --match training_dummy --jobs 1
+python3 tests/run_regression_tests.py --match issue263_property_reload --jobs 1
+```
+
+The contract suite runs 15 checks through direct Python and pytest. An isolated
+copy with an intentionally failing assertion failed through both entry points.
+The native generated-state test also checks gameplay and recovery selectors
+for marked and unmarked 1255s. An explicitly supplied old dummy payload can
+restore the sentinel bit and million base HP while losing its marker. The
+current writers exclude marked targets, and the payload test does not
+establish the contents of any deployed checkpoint.
+
+The full-world option uses the real scheduler, generator, staff commands,
+item custody, file copyover, and Redis recovery. It uses GDB with the
+unstripped development build on Linux. All game, SQL, and Redis state is
+disposable, and the test permits its own debugger without changing host
+settings. Generate areas in a private copy. Run the MariaDB case through the
+disposable database helper.
+
+```sh
+make -C src -j12 CC='ccache g++' PERSISTENCE_BACKEND=mariadb
+make -C areas/src -j8
+mkdir -p bin/tests
+fixture=$(mktemp -d "$PWD/bin/tests/roaming-world-XXXXXX")
+cp -a areas "$fixture/"
+mkdir -p "$fixture/bin/areas"
+ln -s "$PWD/bin/areas/tools" "$fixture/bin/areas/tools"
+(cd "$fixture/areas" && ./m_slow)
+bash tests/async/with_disposable_mariadb.sh \
+  python3 tests/async/test_generated_npc_journey.py --server bin/server/dms_new --full-world "$fixture/areas"
+bash tests/async/with_disposable_mariadb.sh \
+  python3 tests/async/test_generated_npc_journey.py --server bin/server/dms_new --mode redis --full-world "$fixture/areas"
+```
+
+The isolated runs counted 71 fixed targets in 71 distinct rooms on MariaDB.
+The natural scheduler produced an ordinary equipped roamer at cap one with
+zone prose and eligible map placement. Both file copyovers and the separate
+Redis crash and clean-restart cycles preserved the roamer's name, NPC ID,
+base state, worn slots, carried items, and item UIDs. Boot recreated all fixed
+targets once and omitted the custom one. The post-recovery gate blocked an
+additional spawn at cap one. At cap zero, it blocked generation after real
+extraction, and raising the cap to one admitted a replacement. File copyover
+was retried after its existing artifact writer guard had deferred one attempt.
+The Redis full-world run used `2ce38f5b3`. The follow-up for the Void passed
+the sanitizer pipeline regression and the MariaDB server build.
+
+The recovery pipeline regression exercises marked exclusion, worn and carried
+UIDs, floor precedence, durable ownership, and malformed slot rejection.
+The artifact population regression checks the same floor precedence during
+boot inspection. An actual disposable startup also refused cap `2147483647`
+before entering the game loop, since it rounds outside the signed integer
+range in the float store. The compiled generator tables confirmed that zone
+165 selects halflings and allows the shaman class.
 
 ## Guardian rescue all and guarding two people
 
@@ -1826,7 +1823,7 @@ journey in which a character of one of these races wears such an item.
 The journey clients strip colour escapes from what the server sends. They stripped each
 socket read on its own, so an escape that the end of a read cut in two survived: the
 generated NPC journey once failed `make test-all` on `Cha:  87[0;1;33m ( 87)` from
-`stat mob`. The shared `MudClient` in `test_flatfile_combat_journey.py`, its copy in
+`stat mob`. The shared `MudClient` in `test_mariadb_combat_journey.py`, its copy in
 `test_account_recovery_journey.py` and the copyover journey's compressed reader now hold
 back a cut-off escape until the next read completes it.
 
@@ -1861,7 +1858,7 @@ it to the last run's PID.
 
 ```sh
 tests/async/with_disposable_mariadb.sh python3 tests/async/run_launcher_stop_journey.py
-python3 tests/async/test_flatfile_launcher.py
+python3 tests/async/test_mariadb_launcher.py
 ```
 
 The journey runs the real launcher with a stand-in server on a disposable MariaDB and
@@ -1905,7 +1902,7 @@ python3 tests/async/test_log_hygiene_journey.py
 An `R` that misses its roll after an `M` that loaded the rider no longer goes on with a
 NULL mount, which crashed the zone pass.
 
-The journey boots a flat-file server with zero-chance `M`, `F` and `R` commands and a
+The journey boots a MariaDB server with zero-chance `M`, `F` and `R` commands and a
 zero-chance `R` after a loaded rider, resets a connection before the server accepts it,
 and stops the server with SIGTERM.
 
@@ -1950,23 +1947,16 @@ verifiers. No test covers an engine besides these three.
 
 ## Ownership records of items that stopped existing
 
-A save never releases an `item_current_owner` row, so a player's row for an item that was
-dropped and then extracted (or eaten, decayed, dissolved) was counted on every login,
-forever, and the table grew with play. Each boot now deletes a player's active rows whose
-item no stored payload carries, in both backends, before the writer starts: no
-character's or pet's items, no locker, corpse or saved room item, and on flat-file no
-delivery the record's player still has pending from a committed purchase or grant. A row
-whose item an older copy still carries stays, since a load skips a copy whose row names
-someone else: after a crash that follows a hand-over, the row is what keeps the giver's
-copy out (found in the change's review); and a flat-file purchase or grant committed
-after the buyer's last save is delivered by the next login only while its record names the
-buyer (finding 2). A row an auction's custody row, an `artifact_domain_state` row or a child
-row still references is kept, and a container goes after its contents. A flat-file player
-file or store the reap cannot read stops it with nothing deleted. Flat-file world recovery
-counts a player's record as an owner only while the player's next load holds the item, as
-MariaDB's does with `player_items`, so a floor copy whose record only keeps an older copy
-out is restored rather than lost. The per-login `missing_payload_rows` count and the
-per-save `unowned_object` line are traces (`DURIS_PERSISTENCE_TRACE`). Landed in `a55ccef17`.
+Each boot deletes a player's active `item_current_owner` rows whose items no stored
+payload carries, before the writer starts. The scan includes player and pet items,
+lockers, corpses and saved room items. A row whose item an older copy still carries
+stays: loads skip a copy whose row names someone else, so after a hand-over that row
+keeps the giver's copy out. Rows referenced by auction custody, artifact state or
+contained items remain; containers are removed after their contents. World recovery
+checks the saved player payload, so an ownership record that only suppresses an
+older copy does not suppress a dropped floor copy. The per-login
+`missing_payload_rows` count and per-save `unowned_object` line require
+`DURIS_PERSISTENCE_TRACE`.
 
 ```sh
 tests/async/run_player_save_claim_mysql.sh
@@ -1976,7 +1966,7 @@ python3 tests/async/test_boot_log_hygiene.py
 tests/async/with_disposable_mariadb.sh python3 tests/async/run_world_restart_journey.py /absolute/path/dms_new taken
 tests/async/with_disposable_mariadb.sh python3 tests/async/run_world_restart_journey.py /absolute/path/dms_new handover
 tests/async/with_disposable_mariadb.sh python3 tests/async/test_mysql_combat_journey.py --server /absolute/path/dms_new
-python3 tests/async/test_flatfile_combat_journey.py
+tests/async/with_disposable_mariadb.sh python3 tests/async/test_mariadb_combat_journey.py --server bin/server/dms_new
 ```
 
 The two claim harnesses hold the rules on fixture rows: a stale leaf and a stale container
@@ -1984,12 +1974,7 @@ with its stale contents go; a row with a payload row, a legacy pet's, a quaranti
 another owner's, one whose item an older copy carries (another player's payload or pet, a
 locker, a corpse, a saved room item) and (MariaDB) one an auction's or an artifact's row
 references or whose contents a payload still holds stay, and the older-copy rows go once
-the copies are gone. The flat-file harness also commits a creation grant after the
-player's last save: the reap keeps its record and the login delivers it, and once a save
-has carried it and the item is used up the next reap takes the record; the newcomer whose
-file holds a handed-over copy loads without it; an unreadable player file stops the reap;
-and world recovery counts as owned what a load holds and not a record that only keeps an
-older copy out. The `taken` scenario is the real path without the switch: get a
+the copies are gone. The `taken` scenario is the real path without the switch: get a
 zone-loaded mace, save, drop it, save, crash, boot; the mace's row and the dissolved
 starter kit's are gone, every remaining player row has a payload row, the login counts
 nothing and the saves wrote no `unowned_object` line. The `handover` scenario is finding
@@ -2005,11 +1990,7 @@ asserting room authority. The pipeline codec regression proves its payload survi
 recovery still filters a UID held by saved player/economic/terminal state, and capture
 keeps terminal/non-player/vnum conflicts closed.
 
-Not covered: a stale container in the flat-file catalog whose contents a payload still
-holds (no transfer path produces that state there; the rule is held by the MariaDB
-fixture, where the foreign key is), the flat-file reap and world recovery on a live
-server (the harness drives the repository functions), and the reap on a long-lived
-database with every owner type populated.
+Not covered: the reap on a long-lived database with every owner type populated.
 
 ## Plain HTTP on the WebSocket port
 
@@ -2096,7 +2077,7 @@ regression suite kept the systemd service in a ten-second restart loop with a va
 `bin/server/dms` beside it.
 
 ```sh
-python3 tests/async/test_flatfile_launcher.py
+python3 tests/async/test_mariadb_launcher.py
 python3 tests/async/test_production_service.py
 ```
 
@@ -2118,7 +2099,7 @@ python3 tests/async/test_world_quest_xp_feedback.py
 ```
 
 The test compiles `gain_exp()`, `display_gain()`, `quest_kill()` and `quest_full_reward()`
-from the source on both backends and checks the line for kills, turn-ins, every cap and
+from the source with the MariaDB interfaces and checks the line for kills, turn-ins, every cap and
 exit that credits nothing, and an immortal, whose staff log it reads. This focused
 test does not turn in a quest on a running server; separate world-quest journeys do.
 
@@ -2126,15 +2107,22 @@ test does not turn in a quest on a running server; separate world-quest journeys
 
 When a player's pet kills an NPC and wins the equipment roll, the "salvage a piece of
 equipment" line goes to the pet's owner. It used to go to the pet, which nobody reads, so
-the owner never learned an item was on the corpse. The drop rolls and the item still use
-the pet's own level and luck.
+the owner never learned an item was on the corpse. Both rolls now use the owner's
+current luck, level, Hardcore flag, and neutral side. Generation uses the owner as
+finder while retaining the actual killer's room for restrictions and zone rewards.
 
 ```sh
 python3 tests/async/test_random_drop_owner_message.py
+python3 tests/async/test_random_equipment_golden.py
 ```
 
-The test is a source contract on the drop block in `die()`. No test kills an NPC with a
-pet on a running server.
+The message test checks death-path wiring and message recipients. The golden harness
+executes the production modules with ASan/UBSan and real RNG/configuration. Paired
+direct/pet cases compare full generated state, messages, Alchemist resources and RNG
+sentinels across divergent luck/level, Hardcore toggles, level-gap and low-level
+boundaries, neutral wins/fallthrough, remote owners, town/guild rooms, independent
+equipment/material outcomes, stones and rejection gates. Four pet-kill fixture rows
+and their sentinels deliberately changed for #812; the other 1,476 cases are unchanged.
 
 ## Riposte after a participant is removed
 
@@ -2185,7 +2173,7 @@ shops (31310, 47061, 47070, 47097, 47116, 59081, 59097 at 1.0, 89091 and 89118 a
 asked for more, so every boot logged nine lines. Their files now ask for 0.8.
 
 ```sh
-python3 tests/async/test_flatfile_full_world_boot.py
+tests/async/with_disposable_mariadb.sh python3 tests/async/test_mariadb_full_world_boot.py --server bin/server/dms_new
 ```
 
 The full-world boot fails on any `Old buy/sell` line in its debug log.
@@ -2265,14 +2253,14 @@ one record per target dispatches, and a second bind lost the target's own C proc
 
 ```sh
 python3 tests/async/test_make_trg.py
-python3 tests/async/test_studioproc_duplicate_record.py   # builds or reuses a flat-file server
-python3 tests/async/test_flatfile_launcher.py
+tests/async/with_disposable_mariadb.sh python3 tests/async/test_studioproc_duplicate_record.py --server bin/server/dms_new
+python3 tests/async/test_mariadb_launcher.py
 python3 tests/async/test_root_test_harness.py
 ```
 
 `test_make_trg.py` compiles the tool and runs it on good, concatenated, missing and
 malformed sources and on a hand-written `world.trg`. The duplicate test boots the
-flat-file server on two records for room 22800 and reads the status log.
+MariaDB server on two records for room 22800 and reads the status log.
 
 ## The tick's work spread over its pulses
 
@@ -2379,16 +2367,13 @@ wrong: `die_follower` can extract the next NPC, a summoned follower, during the 
 
 ```sh
 python3 tests/async/test_zone_purge_lifetime.py
-python3 tests/async/run_zone_purge_journey.py /absolute/path/dms_flat
 ```
 
 The test compiles the production `zone_purge` and `die_follower` under ASan/UBSan. Its
 extraction adapter covers retained and immediately freed allocations, recursive follower
 teardown, a moved NPC, reused storage, surviving PCs and morphs, and the object-purge
 policy. Combat-reference cleanup belongs to the adapter, so the test says nothing about
-production `stop_fighting`. The journey runs 15 cycles of a mortal fighting Raoul, an
-immortal purging the opponent, the combat reference clearing, a full zone reset and
-another player command, then a save and reconnect across a restart.
+production `stop_fighting`.
 
 Not covered: the original report, an intermittent full-world crash in room 402003 after
 purging an apprentice and running `zresetfull`, was never attributed to this defect by a
@@ -2442,10 +2427,42 @@ tests/async/test_random_mob_theme_runtime.py` executes `create_random_mob()` for
 themes 4/5/6 with every template faction, checking bounded selection and the
 resulting race/faction while retaining the no-legal-class failure path.
 
-After a fresh flat-file build, run `python3 tests/async/test_gith_monk_journey.py
---binary bin/gith-monk/server/dms_new`. It creates both races as normal Monks
+After `make -C src`, run `tests/async/with_disposable_mariadb.sh python3
+tests/async/test_gith_monk_journey.py --server bin/server/dms_new`. It creates both races as normal Monks
 through real Telnet and WebSocket clients in isolated mini-world servers, then
 checks saved race/class/faction/alignment and all five equipped Monk kit items
 with stable UIDs across save/restart/relogin. It does not exercise teacher-led
 specialization or a loaded production world. Keep both help import sources in
 sync with `python3 tests/async/test_class_helpfiles_contract.py`.
+
+## Monk equipped-weight attack penalty
+
+Monk attack encumbrance uses only equipped items, with each item's effective
+weight halved and rounded down before summing. Loose inventory and linked
+riders are excluded. Preserve the `STR / 2` allowance, one attack lost per
+full 10 pounds above it, at least one remaining base attack, and warnings
+only when the penalty removes attacks. NPC and trusted-staff exemptions
+remain in place. Worn bag contents count through their effective bag weight.
+The full-weight AC and bare-hand damage penalties remain separate; their
+rules are documented in [Player classes](../reference/CLASSES.md#monk-equipment-and-weight).
+
+`python3 tests/async/test_monk_attack_weight.py` compiles the production monk
+attack branch, the real martial-arts attack count, and weight propagation under
+ASan/UBSan. It covers heavy and empty inventory with the same equipment,
+low and odd Strength, each threshold
+boundary, per-item half-weight rounding, the one-attack floor, warning
+suppression, a bag moved from worn equipment into inventory, growing bag
+contents, linked riders, negative-weight magical bags, all five occupied-hand
+slots, low-skill/level attack floors, staff/NPC exemptions, and the penalty
+applying to staff emulating mortals. Slow and PvP conversion happen after
+the penalty. A 120,900-state sweep checks that
+more equipment weight never adds attacks, more Strength never removes them,
+and warnings describe positive base-attack reductions.
+
+`python3 tests/async/test_ability_skills_2.py` checks the live martial-arts facts
+and their 79-column layout. `python3 tests/async/test_class_helpfiles_contract.py`
+checks the mirrored Monk pages; `python3 tests/async/test_mariadb_help_catalog.py`
+loads both maintained help sources through the runtime catalog. Also run
+`python3 scripts/format_help_topics.py`, `python3 tests/async/test_help_layout.py`,
+and `make -C src` after changing these rules. Source-help verification does not
+publish a database-backed catalog; publication follows the help-system procedure.

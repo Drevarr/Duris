@@ -45,6 +45,7 @@
 #include <sys/stat.h>
 #include <time.h>
 #include "account/account.h"
+#include "account/kept_character_recovery.h"
 #include "account/account_recovery.h"
 #include "world/achievements.h"
 #include "guild/assocs.h"
@@ -54,15 +55,14 @@
 #include "economy/crafting.h"
 #include <array>
 #include <map>
+#include <mutex>
 #include "item/item_movement_transaction.h"
 #include "item/item_ownership_runtime.h"
-#include "economy/shop_trade_transaction.h"
 #include "economy/auction_transaction.h"
 #include "economy/collector_service.h"
 #include "economy/collector_transaction.h"
 #include "economy/boon_reward_transaction.h"
 #include "core/files.h"
-#include "flatfile/flatfile_identity_adapter.h"
 #include "net/gmcp.h"
 #include "guild/guildhall.h"
 #include "world/hardcore_config.h"
@@ -253,17 +253,6 @@ void update_ingame_racewar(int racewar)
 
 int getNewPCidNumb(void)
 {
-#ifdef __NO_MYSQL__
-	int32_t allocated = -1;
-	std::string error;
-	if (!flatfile_player_identity_allocate(&allocated, &error))
-	{
-		logit(LOG_FILE, "could not allocate flat-file player id");
-		return -1;
-	}
-	highestPCidNumb = allocated;
-	return allocated;
-#else
 	// Every character's pid is in memory (sql_player_names_load()). init_char() records
 	// the new one there at once, so the next allocation is past it.
 	const int highest = sql_highest_player_pid();
@@ -274,24 +263,11 @@ int getNewPCidNumb(void)
 	}
 	highestPCidNumb = highest + 1;
 	return highestPCidNumb;
-#endif
 }
 
 void setNewPCidNumbfromFile(void)
 {
-#ifdef __NO_MYSQL__
-	int32_t highest = 0;
-	std::string error;
-	if (!flatfile_player_identity_highest(&highest, &error))
-	{
-		logit(LOG_FILE, "could not load flat-file player id allocator");
-		highestPCidNumb = 0;
-		return;
-	}
-	highestPCidNumb = highest;
-#else
 	highestPCidNumb = sql_highest_player_pid();
-#endif
 
 	logit(LOG_STATUS, "highest PC number is %ld", highestPCidNumb);
 }
@@ -872,9 +848,10 @@ bool chaos_kit_equipment_ready(P_char ch, P_char report_to)
 	return ready;
 }
 
-static void load_chaos_new_character_kit(P_char ch)
+static void load_chaos_new_character_kit(P_char ch, bool starter = false)
 {
-	if (!ch || IS_NPC(ch) || ch->carrying || item_movement_transaction_player_busy(ch))
+	if (!ch || IS_NPC(ch) || (!starter && ch->carrying) ||
+	    item_movement_transaction_player_busy(ch))
 		return;
 	const int class_id = flag2idx(ch->player.m_class);
 	if (class_id < 1 || class_id > CLASS_COUNT)
@@ -892,7 +869,7 @@ static void load_chaos_new_character_kit(P_char ch)
 	}
 
 	if (!item_creation_grant_submit_batch_to_player_before_entry(ch, kit.roots.data(),
-								     kit.count, ch))
+								     kit.count, ch, starter))
 	{
 		statuslog(56, "&+RALERT&n: CHAOS starter kit grant could not be queued");
 		send_to_char(
@@ -901,22 +878,6 @@ static void load_chaos_new_character_kit(P_char ch)
 		return;
 	}
 	kit.count = 0; // The coordinator now owns every root, including bag contents.
-}
-
-void schedule_chaos_new_character_kit_before_entry(P_char ch)
-{
-	if (!ch || !chaos_mud_enabled())
-		return;
-	mark_chaos_starter_reward_intents(ch);
-	if (!writeCharacter(ch, 2, NOWHERE))
-	{
-		statuslog(56, "&+RALERT&n: new-player baseline save failed; CHAOS kit withheld");
-		send_to_char(
-			"Your CHAOS equipment kit could not be prepared safely; please contact staff.\r\n",
-			ch);
-		return;
-	}
-	load_chaos_new_character_kit(ch);
 }
 
 void restore_chaos_character_kit(P_char staff, const char *name)
@@ -1158,7 +1119,8 @@ static P_obj materialize_legacy_newbie_item(P_char ch, const prepared_newbie_ite
 /** Reserve a PC kit now and prepare it in bounded slices on later game pulses. */
 void load_obj_to_newbies(P_char ch)
 {
-	if (!ch || item_movement_transaction_player_busy(ch) || (ch->carrying && IS_PC(ch)))
+	if (!ch || item_movement_transaction_player_busy(ch) ||
+	    (ch->carrying && IS_PC(ch) && !IS_SET(ch->specials.act3, PLR3_STARTER_KIT_PENDING)))
 		return;
 	if (IS_NPC(ch))
 	{
@@ -1190,7 +1152,8 @@ void load_obj_to_newbies(P_char ch)
 				    return item_creation_prepare_result::failed;
 			    return ++index == plan.size() ? item_creation_prepare_result::ready :
 							    item_creation_prepare_result::more;
-		    }))
+		    },
+		    IS_SET(ch->specials.act3, PLR3_STARTER_KIT_PENDING)))
 		send_to_char("Your starter kit is being prepared...\r\n", ch);
 	else
 		send_to_char(
@@ -1505,10 +1468,9 @@ void schedule_pc_events(P_char ch)
 	add_event(event_autosave, 1200, ch, 0, 0, 0, 0, 0);
 	// Keep watching through the level unlock and temporary race/innate changes.
 	start_hatred_check(ch);
-	if (GET_CHAR_SKILL(ch, SKILL_SMITE_EVIL))
-		add_event(event_smite_evil,
-			  get_property("skill.timer.secs.smiteEvil", 5) * WAIT_SEC, ch, 0, 0, 0, 0,
-			  0);
+	extern int smite_evil_interval();
+	if (GET_CHAR_SKILL(ch, SKILL_SMITE_EVIL) && !get_scheduled(ch, event_smite_evil))
+		add_event(event_smite_evil, smite_evil_interval(), ch, 0, 0, 0, 0, 0);
 	if (GET_RACE(ch) == RACE_HALFLING)
 		add_event(event_halfling_check, 1, ch, 0, 0, 0, 0, 0);
 
@@ -1687,7 +1649,7 @@ void enter_game(P_desc d)
 			else
 				send_to_char("\r\nYou rejoin the land of the living...\r\n", ch);
 		}
-		else if (d->rtype == 0)
+		else if (d->rtype == 0 || d->rtype == RENT_QUIT)
 		{
 			// The consistent worker snapshot already materialized SQL inventory.
 		}
@@ -1773,8 +1735,7 @@ void enter_game(P_desc d)
 
 	send_to_char(WELC_MESSG, ch);
 	ch->desc = d;
-	ch->next = character_list;
-	character_list = ch;
+	character_list_add(ch);
 
 	// Need to walk through ch->affects, and drop AFFTYPE_OFFLINE timers.
 	for (afp1 = ch->affected; afp1; afp1 = afp2)
@@ -1934,34 +1895,15 @@ void enter_game(P_desc d)
 
 	if (!GET_LEVEL(ch))
 	{
-		/* Finish all level-one initialization before writing the authority baseline,
-		 * but defer do_start's legacy item grant until that baseline is durable. */
-		do_start_deferred_newbie_kit(ch, 0);
-		/* Creation grants are durable item-transfer commands.  Establish the new
-		 * player's authority before the first grant is submitted; otherwise a
-		 * clean flat-file install rejects every starter item because the target
-		 * player does not exist yet. */
-		if (writeCharacter(ch, 1, NOWHERE))
-		{
-			/* Chaos equipment is queued before CON_PLAYING, after the accepted
-			 * rules baseline; only the legacy non-Chaos kit starts here. */
-			if (!chaos_mud_enabled())
-				load_obj_to_newbies(ch);
-		}
+		// Level one is the durable initialization boundary. The kit waits for
+		// the final post-entry snapshot acknowledgment before submitting.
+		SET_BIT(ch->specials.act3, PLR3_STARTER_KIT_PENDING);
+		if (chaos_mud_enabled())
+			SET_BIT(ch->specials.act3, PLR3_CHAOS_STARTER_KIT);
 		else
-		{
-			statuslog(
-				56,
-				"&+RALERT&n: new-player baseline save failed; starter kit withheld");
-			persistence_alert(AVATAR, "player", "redacted", "none", "none",
-					  "baseline_save_failed", NULL);
-			send_to_char(
-				"Your starter kit could not be granted safely; please contact staff.\r\n",
-				ch);
-		}
+			REMOVE_BIT(ch->specials.act3, PLR3_CHAOS_STARTER_KIT);
+		do_start_deferred_newbie_kit(ch, 0);
 	}
-	else if (IS_SET(ch->specials.act2, PLR2_NEWBIEEQ) && !ch->carrying)
-		load_obj_to_newbies(ch);
 
 	// hack to handle improperly set highest_level
 	if (ch->only.pc->highest_level > MAXLVL)
@@ -2097,7 +2039,6 @@ void enter_game(P_desc d)
 	divine_boon_delivery_player_ready(ch);
 	locker_identify_replay(ch);
 	item_movement_transaction_player_ready(ch);
-	shop_trade_transaction_player_ready(ch);
 	auction_transaction_player_ready(ch);
 	collector_transaction_player_ready(ch);
 	collector_service_player_ready(ch, true);
@@ -2108,14 +2049,26 @@ void enter_game(P_desc d)
 		persistence_alert(AVATAR, "player", "redacted", "none", "none", "save_failed",
 				  NULL);
 	}
-#ifndef __NO_MYSQL__
 	else if (!sql_save_player_core(ch))
 	{
 		statuslog(56, "&+RALERT&n: post-entry player core save failed");
 		persistence_alert(AVATAR, "player", "redacted", "none", "none", "sql_save_failed",
 				  NULL);
 	}
-#endif
+	if (IS_SET(ch->specials.act3, PLR3_STARTER_KIT_PENDING))
+	{
+		if (!item_creation_grant_resume_starter(ch))
+		{
+			if (IS_SET(ch->specials.act3, PLR3_CHAOS_STARTER_KIT))
+				load_chaos_new_character_kit(ch, true);
+			else
+				load_obj_to_newbies(ch);
+		}
+	}
+	else if (IS_SET(ch->specials.act2, PLR2_NEWBIEEQ) && !ch->carrying)
+		// Explicit legacy restoration is separate from the one-time first kit.
+		load_obj_to_newbies(ch);
+
 	sql_connectIP(ch);
 	sql_world_quest_history_load(ch);
 	epic_bonus_hydrate(ch);
@@ -2142,7 +2095,13 @@ void enter_game(P_desc d)
 		REMOVE_BIT(ch->specials.act, PLR_ANONYMOUS);
 	}
 
-	affect_from_char(ch, TAG_SKILL_TIMER);
+	// Offline timers have already been advanced above and must survive login.
+	for (affected_type *timer = ch->affected, *next; timer; timer = next)
+	{
+		next = timer->next;
+		if (timer->type == TAG_SKILL_TIMER && !(timer->flags & AFFTYPE_OFFLINE))
+			affect_remove(ch, timer);
+	}
 
 	memset(&af1, 0, sizeof(af1));
 	af1.type = TAG_SKILL_TIMER;
@@ -2350,7 +2309,7 @@ int is_invited(char *name)
 	return (pfile_exists("Players/Invited", name));
 }
 
-void create_denied_file(const char *dir, char *name)
+void create_denied_file(const char *dir, const char *name)
 {
 	char buf[256], *buff;
 	char Gbuf1[MAX_STRING_LENGTH];
@@ -2371,12 +2330,12 @@ void create_denied_file(const char *dir, char *name)
 	}
 }
 
-void approve_name(char *name)
+void approve_name(const char *name)
 {
 	create_denied_file("Players/Accepted", name);
 }
 
-void deny_name(char *name)
+void deny_name(const char *name)
 {
 	create_denied_file(BADNAME_DIR, name);
 }
@@ -3112,9 +3071,13 @@ void select_class(P_desc d, char *arg)
 		if (creation_class_align(GET_RACE(d->character),
 					 flag2idx(d->character->player.m_class)) != 3)
 			SEND_TO_Q("&+rE)vil&n\r\n", d);
-		SEND_TO_Q(
-			"Alignment only affects your character's alignment and not the chosen racewar side.\n",
-			d);
+		if (OLD_RACE_NEUTRAL(GET_RACE(d->character)))
+			SEND_TO_Q(
+				"Your alignment determines your racewar side.\r\n"
+				"Evil joins the evil side. Good and Neutral join the good side.\r\n",
+				d);
+		else
+			SEND_TO_Q("Your race determines your racewar side.\r\n", d);
 		SEND_TO_Q("\r\nYour selection: ", d);
 		return;
 		break;
@@ -3535,6 +3498,8 @@ bool creation_hometown_available(int race, int racewar, int hometown)
 		return racewar == RACEWAR_GOOD && avail_hometowns[hometown][race] == 1;
 	if (hometown == HOME_WUTVR || hometown == HOME_PLANE_OF_CHAOS)
 		return racewar == RACEWAR_EVIL && avail_hometowns[hometown][race] == 1;
+	if (race == RACE_TIEFLING && racewar == RACEWAR_EVIL)
+		return hometown == HOME_ARACHDRATHOS;
 	return avail_hometowns[hometown][race] == 1;
 }
 
@@ -3572,7 +3537,11 @@ int find_hometown(int race, bool force, int racewar)
 	}
 	for (i = 0; i <= LAST_HOME; i++)
 	{
-		if (creation_hometown_available(race, force ? RACEWAR_NONE : racewar, i))
+		// A default hometown skips the optional tutorial starts.
+		if (force && (i == HOME_NEWBIE || i == HOME_PLANE_OF_LIFE || i == HOME_WUTVR ||
+			      i == HOME_PLANE_OF_CHAOS))
+			continue;
+		if (creation_hometown_available(race, racewar, i))
 		{
 			if (home == 0)
 				home = i;
@@ -3598,21 +3567,9 @@ void find_starting_location(P_char ch, int hometown)
 	int guild_num;
 	char Gbuf1[MAX_STRING_LENGTH];
 
-	// I think this is kind've hacky, but it will work!
-	// -- Eikel
-	if (GET_RACE(ch) == RACE_TIEFLING && hometown != HOME_WUTVR &&
-	    hometown != HOME_PLANE_OF_CHAOS)
-	{
-		if (GET_ALIGNMENT(ch) < 0)
-		{
-			GET_HOME(ch) = guild_locations[HOME_ARACHDRATHOS][0];
-			return;
-		}
-	}
-
 	if (hometown == 0)
 	{
-		hometown = find_hometown(GET_RACE(ch), true);
+		hometown = find_hometown(GET_RACE(ch), true, GET_RACEWAR(ch));
 		if (hometown == HOME_CHOICE)
 			hometown = 0;
 	}
@@ -3908,16 +3865,10 @@ void init_char(P_char ch)
 	    !item_ownership_runtime_hydrate_owner(
 		    { item_owner_type::player, static_cast<uint64_t>(ch->only.pc->pid), 0 }, 0))
 		logit(LOG_FILE, "could not initialize new player item ownership state");
-	if (ch->only.pc->pid > 0 && !player_revision_hydrate(ch->only.pc->pid, 0))
+	if (ch->only.pc->pid > 0 && !player_revision_hydrate(ch->only.pc->pid, 0, true))
 		logit(LOG_FILE, "could not initialize new player revision state");
 	// The name is taken from now on.
 	sql_player_names_set(ch->only.pc->pid, GET_NAME(ch));
-#ifdef __NO_MYSQL__
-	/* The flat-file first save establishes the player's domains, which the save then
-	 * reads back, so it waits for the write. On MariaDB the first save is queued like
-	 * any other: the writer inserts the player_data row and its opening baselines. */
-	SET_BIT(ch->runtime_flags, CHAR_RFLAG_NO_DB_BASELINE);
-#endif
 	ch->only.pc->screen_length = DEFAULT_SCREEN_LENGTH;
 	ch->only.pc->wiz_invis = 0;
 	ch->only.pc->highest_level = 1;
@@ -4093,6 +4044,377 @@ void wimps_in_approve_queue(void)
  */
 /*=========================================================================*/
 
+namespace
+{
+enum class kept_save_kind
+{
+	initial,
+	approval,
+	legacy_policy
+};
+
+struct kept_save
+{
+	uint64_t request;
+	uint64_t runtime;
+	player_revision_t revision;
+	std::string name;
+	std::string account;
+	kept_save_kind kind;
+	struct acct_chars projection
+	{
+	};
+	bool ready = false;
+	player_save_completion completion{};
+};
+std::map<int, kept_save> kept_saves;
+// The login worker reads membership; payload fields remain game-thread owned.
+std::mutex kept_saves_mutex;
+
+void return_kept_character_to_menu(P_desc d)
+{
+	release_preentry_character(d);
+	if (d->websocket)
+	{
+		STATE(d) = CON_ACCT_SELECT_CHAR;
+		ws_send_auth_success(d, d->account->acct_name);
+	}
+	else
+	{
+		STATE(d) = CON_DISPLAY_ACCT_MENU;
+		display_account_menu(d, nullptr);
+	}
+}
+
+void decide_creation_approval(P_char ch)
+{
+	SET_BIT(ch->specials.act3, PLR3_KEPT_CHARACTER);
+	if (approve_mode && !IS_TRUSTED(ch) && !pfile_exists("Players/Accepted", GET_NAME(ch)))
+		SET_BIT(ch->specials.act3, PLR3_APPROVAL_PENDING);
+	else
+		REMOVE_BIT(ch->specials.act3, PLR3_APPROVAL_PENDING);
+}
+
+void kept_save_refused(P_desc d, kept_save_kind kind)
+{
+	if (kind == kept_save_kind::initial)
+		return_kept_character_to_menu(d);
+	else if (kind == kept_save_kind::approval)
+	{
+		SET_BIT(d->character->specials.act3, PLR3_APPROVAL_PENDING);
+		STATE(d) = CON_ACCEPTWAIT;
+	}
+	else
+		STATE(d) = CON_FLUSH;
+}
+
+bool save_kept_character(P_desc d, kept_save_kind kind)
+{
+	P_char ch = d->character;
+	const int pid = GET_PID(ch);
+	uint64_t request = 0;
+	if (kept_saves.count(pid))
+		return false;
+	try
+	{
+		if (kept_saves.size() >= PLAYER_SAVE_PIPELINE_MAX_SNAPSHOTS)
+		{
+			if (kind == kept_save_kind::initial)
+				sql_player_names_forget(pid);
+			SEND_TO_Q("Character saving is busy. Please try again later.\r\n", d);
+			kept_save_refused(d, kind);
+			return false;
+		}
+		request = wait_for_writer(d);
+		{
+			std::lock_guard<std::mutex> lock(kept_saves_mutex);
+			kept_saves.emplace(pid, kept_save{ request, ch->runtime_id, 0, GET_NAME(ch),
+							   d->account->acct_name, kind });
+		}
+		kept_saves.at(pid).projection = account_kept_character_projection(ch);
+		STATE(d) = CON_CREATION_SAVE;
+		if (d->websocket)
+			ws_send_system(d, "info", "Saving your character. Please wait.");
+		else
+			SEND_TO_Q("\r\nSaving your character. Please wait.\r\n", d);
+		const auto queued = player_save_pipeline_request(
+			ch, PLAYER_CHECKPOINT_COMPONENT_ALL, RENT_QUIT, NOWHERE);
+		if (queued == player_save_pipeline_result::queued ||
+		    queued == player_save_pipeline_result::coalesced)
+		{
+			player_revision_snapshot revision{};
+			player_revision_snapshot_copy(pid, &revision);
+			kept_saves.at(pid).revision = revision.acknowledged_revision;
+			return true;
+		}
+		{
+			std::lock_guard<std::mutex> lock(kept_saves_mutex);
+			kept_saves.erase(pid);
+		}
+	}
+	catch (const std::bad_alloc &)
+	{
+		{
+			std::lock_guard<std::mutex> lock(kept_saves_mutex);
+			kept_saves.erase(pid);
+		}
+	}
+	if (request)
+		writer_replied(request);
+	if (kind == kept_save_kind::initial)
+		sql_player_names_forget(pid);
+	SEND_TO_Q("Your character could not be saved. Please try again later.\r\n", d);
+	kept_save_refused(d, kind);
+	return false;
+}
+}
+
+bool account_creation_pending(int pid)
+{
+	{
+		std::lock_guard<std::mutex> lock(kept_saves_mutex);
+		if (kept_saves.count(pid))
+			return true;
+	}
+	return kept_character_recovery_pending(pid);
+}
+
+bool account_creation_owner_pending(const char *name)
+{
+	std::lock_guard<std::mutex> lock(kept_saves_mutex);
+	for (const auto &[pid, saved] : kept_saves)
+	{
+		(void)pid;
+		if (saved.kind == kept_save_kind::initial && name &&
+		    !strcasecmp(saved.account.c_str(), name))
+			return true;
+	}
+	return kept_character_recovery_owner_pending(name);
+}
+
+void account_creation_saved(const player_save_completion &completion)
+{
+	const auto found = kept_saves.find(completion.pid);
+	if (found == kept_saves.end() || completion.revision < found->second.revision)
+		return;
+	found->second.completion = completion;
+	found->second.ready = true;
+}
+
+void account_creation_pulse()
+{
+	for (auto found = kept_saves.begin(); found != kept_saves.end();)
+	{
+		const int pid = found->first;
+		if (!found->second.ready || player_save_worker_pid_pending(pid))
+		{
+			++found;
+			continue;
+		}
+		const kept_save saved = found->second;
+		const bool committed =
+			saved.completion.outcome == player_save_apply_outcome::applied ||
+			saved.completion.outcome == player_save_apply_outcome::already_applied;
+		const bool unresolved = !committed && saved.kind == kept_save_kind::initial &&
+					!saved.completion.creation_not_committed;
+		if (unresolved)
+		{
+			found->second.ready = false;
+			++found;
+		}
+		else
+		{
+			std::lock_guard<std::mutex> lock(kept_saves_mutex);
+			found = kept_saves.erase(found);
+		}
+		P_desc d = writer_replied(saved.request);
+		if (d && (!d->character || d->character->runtime_id != saved.runtime ||
+			  GET_PID(d->character) != pid || !d->account ||
+			  strcasecmp(d->account->acct_name, saved.account.c_str()) ||
+			  !GET_NAME(d->character) ||
+			  strcasecmp(GET_NAME(d->character), saved.name.c_str()) ||
+			  STATE(d) != CON_CREATION_SAVE))
+			d = nullptr;
+		if (unresolved)
+		{
+			statuslog(56, "Character creation unresolved pid=%d; name remains reserved",
+				  pid);
+			if (d)
+			{
+				SEND_TO_Q(
+					"The character save could not be confirmed. Please contact staff before retrying.\r\n",
+					d);
+				STATE(d) = CON_FLUSH;
+			}
+			continue;
+		}
+		if (!committed)
+		{
+			if (saved.kind == kept_save_kind::initial)
+				sql_player_names_forget(pid);
+			if (d)
+			{
+				SEND_TO_Q(
+					"Your character could not be saved. Please try again later.\r\n",
+					d);
+				kept_save_refused(d, saved.kind);
+			}
+			if (!d || saved.kind == kept_save_kind::initial)
+				player_save_pipeline_end_session(pid);
+			continue;
+		}
+		if (saved.kind == kept_save_kind::initial)
+			for (P_desc cached = descriptor_list; cached; cached = cached->next)
+				if (cached->account && cached->account->acct_name &&
+				    !strcasecmp(cached->account->acct_name,
+						saved.account.c_str()) &&
+				    !account_publish_kept_character(
+					    cached->account, saved.projection, saved.name.c_str()))
+					statuslog(
+						56,
+						"Kept-character account cache requires reload pid=%d",
+						pid);
+		if (saved.kind == kept_save_kind::approval)
+			approve_name(saved.name.c_str());
+		if (!d)
+		{
+			player_save_pipeline_end_session(pid);
+			continue;
+		}
+		if (saved.kind == kept_save_kind::initial &&
+		    !publish_initial_character_baseline(d->character))
+		{
+			SEND_TO_Q(
+				"Your character was saved, but could not be prepared for entry. Please reconnect.\r\n",
+				d);
+			STATE(d) = CON_FLUSH;
+			continue;
+		}
+		if (saved.kind == kept_save_kind::approval)
+		{
+			SEND_TO_Q("Your character has been approved.\r\n", d);
+			return_kept_character_to_menu(d);
+			continue;
+		}
+		continue_kept_character(d, saved.kind == kept_save_kind::initial);
+	}
+}
+
+bool keep_new_character(P_desc d)
+{
+	decide_creation_approval(d->character);
+	return save_kept_character(d, kept_save_kind::initial);
+}
+
+void continue_kept_character(P_desc d, bool created)
+{
+	P_char ch = d->character;
+	if (!IS_SET(ch->specials.act3, PLR3_KEPT_CHARACTER))
+	{
+		// Supported older snapshots have no approval decision. Apply the legacy
+		// policy once and persist it before exposing a continuation.
+		decide_creation_approval(ch);
+		(void)save_kept_character(d, kept_save_kind::legacy_policy);
+		return;
+	}
+	if (IS_SET(ch->specials.act3, PLR3_APPROVAL_PENDING))
+	{
+		STATE(d) = CON_ACCEPTWAIT;
+		SEND_TO_Q(
+			"Your character is saved and is waiting for staff approval. You may reconnect later.\r\n",
+			d);
+		newby_announce(d);
+		if (d->websocket)
+		{
+			ws_send_system(
+				d, "waiting_for_approval",
+				"Your character is saved and is waiting for staff approval. You may reconnect later.");
+			if (created)
+				ws_finish_kept_character(d, true);
+		}
+		return;
+	}
+	if (created)
+	{
+		if (d->websocket)
+			ws_finish_kept_character(d, true);
+		else
+			SEND_TO_Q(
+				"Your character is saved. Select it from your account when you are ready to play.\r\n",
+				d);
+		return_kept_character_to_menu(d);
+		return;
+	}
+	if (d->websocket)
+		ws_finish_kept_character(d, false);
+	else
+	{
+		STATE(d) = CON_RMOTD;
+		SEND_TO_Q(motd.c_str(), d);
+		SEND_TO_Q("\r\n*** PRESS RETURN:\r\n", d);
+	}
+}
+
+bool approve_kept_character(P_desc d)
+{
+	if (!d || !d->character || STATE(d) != CON_ACCEPTWAIT || GET_LEVEL(d->character) ||
+	    !IS_SET(d->character->specials.act3, PLR3_APPROVAL_PENDING))
+		return false;
+	REMOVE_BIT(d->character->specials.act3, PLR3_APPROVAL_PENDING);
+	return save_kept_character(d, kept_save_kind::approval);
+}
+
+bool decline_kept_character(P_desc d, const char *reason)
+{
+	if (!d || !d->character || STATE(d) != CON_ACCEPTWAIT || GET_LEVEL(d->character) ||
+	    !IS_SET(d->character->specials.act3, PLR3_APPROVAL_PENDING) ||
+	    player_save_pipeline_load_held(GET_PID(d->character)) ||
+	    item_movement_transaction_player_busy(d->character))
+		return false;
+	const int pid = GET_PID(d->character);
+	const uint64_t runtime = d->character->runtime_id;
+	const std::string name = GET_NAME(d->character);
+	const std::string explanation = reason ? reason : "";
+	const uint64_t request = wait_for_writer(d);
+	STATE(d) = CON_CREATION_SAVE;
+	SEND_TO_Q("Staff are declining your application. Saving the cancellation...\r\n", d);
+	delete_character(
+		d->character, true,
+		[pid, runtime, name, explanation, request](character_delete_result result)
+		{
+			if (result == character_delete_result::deleted)
+				deny_name(name.c_str());
+			P_desc reader = writer_replied(request);
+			if (!reader || !reader->character ||
+			    reader->character->runtime_id != runtime ||
+			    GET_PID(reader->character) != pid)
+				return;
+			if (result != character_delete_result::deleted)
+			{
+				SEND_TO_Q(
+					"The cancellation could not be confirmed. Please contact staff.\r\n",
+					reader);
+				STATE(reader) = result == character_delete_result::refused ?
+							CON_ACCEPTWAIT :
+							CON_FLUSH;
+				return;
+			}
+			SEND_TO_Q("Your character application was declined.\r\n", reader);
+			if (!explanation.empty())
+			{
+				SEND_TO_Q(explanation.c_str(), reader);
+				SEND_TO_Q("\r\n", reader);
+			}
+			release_preentry_character(reader);
+			STATE(reader) = CON_DISPLAY_ACCT_MENU;
+			if (reader->websocket)
+				ws_send_auth_success(reader, reader->account->acct_name);
+			else
+				display_account_menu(reader, nullptr);
+		});
+	return true;
+}
+
 void nanny(P_desc d, char *arg)
 {
 	if (STATE(d) == CON_FLUSH)
@@ -4142,11 +4464,9 @@ void nanny(P_desc d, char *arg)
 			        break;
 			        */
 
-#ifdef REQUIRE_EMAIL_VERIFICATION
 	case CON_CONFIRM_ACCT:
 		confirm_account(d, arg);
 		break;
-#endif
 
 	case CON_VERIFY_NEW_ACCT_NAME:
 		verify_account_name(d, arg);
@@ -4390,50 +4710,7 @@ void nanny(P_desc d, char *arg)
 			logit(LOG_NEW, "%s [%s] new player.", GET_NAME(d->character), d->host);
 			statuslog(d->character->player.level, "%s [%s] new player.",
 				  GET_NAME(d->character), d->host);
-			add_char_to_account(d);
-			SEND_TO_Q(motd.c_str(), d);
-			/*
-			 * The character is complete.  There is no rules-agreement
-			 * gate: the rules stay available through the `rules`
-			 * command and `help rules`, and a new character now goes
-			 * straight to the approval decision, which is what the
-			 * WebSocket creation path has always done.
-			 */
-			if (pfile_exists("Players/Accepted", GET_NAME(d->character)))
-			{
-				SEND_TO_Q(
-					"This name has been accepted before, and it is accepted once more.\r\n\r\n"
-					"*** PRESS RETURN:\r\n",
-					d);
-				STATE(d) = CON_RMOTD;
-				statuslog(d->character->player.level,
-					  "%s auto-accepted due to having been accepted before.",
-					  GET_NAME(d->character));
-				schedule_chaos_new_character_kit_before_entry(d->character);
-			}
-			else if (!IS_TRUSTED(d->character) && approve_mode)
-			{
-				/* Do not pregrant Chaos equipment before approval. If approval mode
-				 * is re-enabled, schedule it from the approval-success transition. */
-				SEND_TO_Q(
-					"Now you have to wait for your character to be approved by a god.\r\nProcess should not take long.\r\nIf no god is on to approve you, you will &+WNOT&N be auto-approved.\r\n",
-					d);
-				STATE(d) = CON_ACCEPTWAIT;
-				d->character->only.pc->pc_timer[PC_TIMER_HEAVEN] =
-					time(NULL) -
-					d->character->only.pc->pc_timer[PC_TIMER_HEAVEN];
-				newby_announce(d);
-			}
-			else
-			{
-				// Approval mode is OFF - proceed directly
-				SEND_TO_Q("\r\n*** PRESS RETURN:\r\n", d);
-				if (chaos_mud_enabled())
-					schedule_chaos_new_character_kit_before_entry(d->character);
-				else
-					writeCharacter(d->character, 2, NOWHERE);
-				STATE(d) = CON_RMOTD;
-			}
+			(void)keep_new_character(d);
 		}
 		break;
 
@@ -4441,6 +4718,10 @@ void nanny(P_desc d, char *arg)
 		SEND_TO_Q(
 			"You cannot do anything during this period. If the time you have waited is\r\ntoo long (by your point of view), you can come back later on.\r\n",
 			d);
+		break;
+
+	case CON_CREATION_SAVE:
+		SEND_TO_Q("Your character is still being saved.\r\n", d);
 		break;
 
 	case CON_PLAYER_LOAD:
@@ -4460,7 +4741,10 @@ void nanny(P_desc d, char *arg)
 		if (d->character)
 		{
 			account_racewar_admission admission = {};
-			if (!account_commit_character_admission(d, d->character, false, &admission))
+			const auto *membership = find_char_in_list(d->account->acct_character_list,
+								   GET_NAME(d->character));
+			if (!account_commit_character_admission(
+				    d, d->character, membership && membership->blocked, &admission))
 			{
 				char buf[512];
 				account_format_racewar_denial(&admission, buf, sizeof(buf));
@@ -4475,6 +4759,13 @@ void nanny(P_desc d, char *arg)
 			echo_on(d);
 			STATE(d) = CON_PLAYING;
 			enter_game(d);
+			P_char entered = d->character;
+			const int projection_room = entered->in_room >= 0 && entered->in_room <=
+										     top_of_world ?
+							    world[entered->in_room].number :
+							    entered->specials.was_in_room;
+			if (!sync_account_character_projection(entered, projection_room, TRUE))
+				statuslog(56, "Kept-character entry projection could not be saved");
 			d->prompt_mode = !item_creation_grant_blocks_commands(d->character);
 		}
 		break;

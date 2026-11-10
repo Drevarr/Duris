@@ -8,6 +8,7 @@
 #include "core/prototypes.h"
 #include "core/json_utils.h"
 #include "net/gmcp.h"
+#include "net/chat_presentation.h"
 #include "net/websocket.h"
 #include "ships/ships.h"
 #include "world/map.h"
@@ -32,6 +33,10 @@ bool ac_can_see_obj(P_char, P_obj, int)
 bool has_innate(P_char, int)
 {
 	return false;
+}
+int ophidian_invisible_level()
+{
+	return 45;
 }
 char *item_condition(P_obj)
 {
@@ -90,6 +95,7 @@ char *PERS(P_char ch, P_char, int, bool)
 	return ch->player.name;
 }
 void update_groupies(P_char, bool) {}
+void gmcp_comm_channel_body(char_data *, const char *, const char *, const char *, const char *) {}
 char *json_build_char_affects(struct char_data *)
 {
 	return nullptr;
@@ -158,6 +164,15 @@ std::string strip_ansi(const char *text)
 }
 int websocket_send_json(struct descriptor_data *, const char *, const char *)
 {
+	return 0;
+}
+
+int64_t spell_preparation_estimate(P_char ch, bool &active)
+{
+	// This target exercises unauthenticated descriptors only.
+	if (ch)
+		std::abort();
+	active = false;
 	return 0;
 }
 

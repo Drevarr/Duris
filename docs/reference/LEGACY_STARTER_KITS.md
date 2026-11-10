@@ -51,10 +51,12 @@ to characters who already have equipment.
 
 ## Transient gear and ownership
 
-`ITEM_TRANSIENT` controls dissolution after dropping. `ITEM_NORENT` remains a
-request not to retain an unowned runtime item, but it cannot silently override an
-active durable-custody row: authoritative items are serialized until an explicit
-destruction transition retires that custody. Eligible transient gear, including
+`ITEM_TRANSIENT` controls dissolution after dropping. `ITEM_NORENT` items come off a
+character who rents, camps or goes link-dead
+([DATABASE.md](DATABASE.md)). On other saves the flag only stops an unowned runtime
+item being retained; it cannot silently override an active durable-custody row, so
+authoritative items are serialized until an explicit destruction transition retires
+that custody. Eligible transient gear, including
 flags inherited from prototypes, must acquire active player custody through
 `obj_to_char()` before publication. Containers and quivers are exempt from the
 standard kit's added transient flag, as are missiles. Those exemptions do not
@@ -116,7 +118,7 @@ Focused tests are automatically discovered by the normal regression runner:
   admission/placement for every race ID, both classes, three alignments and both
   Chaos profiles under ASan/UBSan; checks family, quantity and wear slots.
 - `test_starter_arrow_journey.py`: fresh Ranger/Rogue grants and actual
-  fire/event/gather commands through Telnet on a disposable minimal flat-file
+  fire/event/gather commands through Telnet on a disposable minimal MariaDB
   server, with saved UID, condition, quiver count and weight checks, plus
   save/restart/relogin. Includes both Chaos profiles and normal Human kits. The fixture
   explicitly enables historical races/classes; it is not a live roster claim.

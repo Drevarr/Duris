@@ -1,22 +1,22 @@
 #!/usr/bin/env python3
 """Real Telnet account/character creation, correction, confirmation and relog.
 
-Each scenario boots an isolated flat-file server with synthetic accounts. No
-production account, database, or listener is used. The existing recovery fixture
+Each scenario boots an isolated server on a disposable MariaDB schema with
+synthetic accounts. No production account, database, or listener is used. The existing recovery fixture
 provides the real socket client and server lifecycle, not mocked nanny handlers.
 """
 
+import argparse
 from pathlib import Path
 import re
 import subprocess
-import tempfile
 import time
 
 from test_account_recovery_journey import (
     ACCOUNT, OLD_PASSWORD, EMAIL, IsolatedServer, MudClient,
-    build_flatfile_server, create_account, enter_account_name, require,
+    create_account, enter_account_name, require,
 )
-from test_flatfile_combat_journey import make_overlord
+from test_mariadb_combat_journey import make_overlord
 
 PASSWORD_PROMPT = "Please enter your password:  "
 CONFIRM_PASSWORD = "Please re-enter the same password to confirm:  "
@@ -30,6 +30,13 @@ STAFF = "Ostrand"
 def reply(client, answer, prompt):
     client.send(answer)
     return client.expect(prompt, timeout=5)
+
+
+def play_saved_character(client, name="Taverek"):
+    """Select a committed level-0 character; leave its MOTD Return pending."""
+    reply(client, "1", name)
+    reply(client, name, "(Y/N)")
+    return reply(client, "y", "PRESS RETURN")
 
 
 def require_prompt_framed(client, prompt, timeout=3):
@@ -196,6 +203,11 @@ def reboot(server):
         server.process.args, cwd=server.run_root, env=server.environment,
         text=True, stdout=server.output, stderr=subprocess.STDOUT,
     )
+    deadline = time.monotonic() + 120
+    while "Entering game loop." not in server.server_output():
+        require(server.process.poll() is None and time.monotonic() < deadline,
+                "isolated restart did not boot:\n" + server.server_output()[-4000:])
+        time.sleep(0.05)
 
 
 def invitation_rejection(client, server, *, invited=False):
@@ -207,13 +219,14 @@ def invitation_rejection(client, server, *, invited=False):
     reply(client, "y", "meet these criteria?")
     reply(client, "y", RACE_MENU)
     finish_character_choices(client)
-    reply(client, "y", "PRESS RETURN")
+    reply(client, "y", MENU)
+    play_saved_character(client, STAFF)
     reply(client, "", "Your starter kit is ready")
     client.expect("Pos: standing >")
-    reply(client, "save", f"Save complete for {STAFF}.")
+    reply(client, "save", f"Saving {STAFF}.")
     # A mortal must camp to quit, so the server stops with the character in game.
     server.shutdown()
-    make_overlord(server.state_root, STAFF)
+    make_overlord(server.sql, STAFF)
     reboot(server)
     client = MudClient(server.plain_port)
     try:
@@ -262,14 +275,17 @@ def sexless_chaos_menu(client, server):
         reply(client, "z", RACE_MENU)
 
 
-def finish_character_choices(client, *, exercise_retries=False, choose_hardcore=False, method=""):
+def finish_character_choices(client, *, exercise_retries=False, choose_hardcore=False, method="", chaos=False):
     reply(client, "h", "Male or Female")
     if exercise_retries:
         reply(client, "?", "Please select either F")
-    reply(client, "m", "H (for Hardcore), N (for Normal)")
-    if exercise_retries:
-        reply(client, "?", "H (for Hardcore), N (for Normal)")
-    reply(client, "h" if choose_hardcore else "n", "Class Selection")
+    if chaos:
+        reply(client, "m", "Class Selection")
+    else:
+        reply(client, "m", "H (for Hardcore), N (for Normal)")
+        if exercise_retries:
+            reply(client, "?", "H (for Hardcore), N (for Normal)")
+        reply(client, "h" if choose_hardcore else "n", "Class Selection")
     client.expect(RACE_MENU)
     if exercise_retries:
         reply(client, "?", "Class Selection")
@@ -277,8 +293,9 @@ def finish_character_choices(client, *, exercise_retries=False, choose_hardcore=
         reply(client, "4", "This is not an allowed class for your race!")
         client.expect("Class Selection")
         client.expect(RACE_MENU)
-    reply(client, "w", "Alignment only affects")
-    client.expect(RACE_MENU)
+    reply(client, "w", "Alignment Selection")
+    prompt = client.expect(RACE_MENU)
+    require("Your race determines your racewar side." in prompt, prompt)
     if exercise_retries:
         reply(client, "?", "Please choose an alignment: ")
     reply(client, "g", RACE_MENU)
@@ -332,10 +349,11 @@ def finish_character_choices(client, *, exercise_retries=False, choose_hardcore=
 def advanced_creation(client, server):
     reach_race(client)
     finish_character_choices(client, method="a", exercise_retries=True)
-    reply(client, "y", "PRESS RETURN")
+    reply(client, "y", MENU)
+    play_saved_character(client)
     reply(client, "", "Your starter kit is ready")
     client.expect("Pos: standing >")
-    reply(client, "save", "Save complete for Taverek.")
+    reply(client, "save", "Saving Taverek.")
 
 
 def method_home_routes(client, server, *, alignment):
@@ -345,8 +363,10 @@ def method_home_routes(client, server, *, alignment):
     reply(client, "n", "Class Selection")
     client.expect(RACE_MENU)
     if alignment:
-        reply(client, "w", "Alignment only affects")
-        client.expect(RACE_MENU)
+        reply(client, "w", "Alignment Selection")
+        prompt = client.expect(RACE_MENU)
+        require("Your alignment determines your racewar side." in prompt, prompt)
+        require("Evil joins the evil side. Good and Neutral join the good side." in prompt, prompt)
         menu = reply(client, "e", RACE_MENU)
     else:
         menu = reply(client, "w", RACE_MENU)
@@ -397,7 +417,8 @@ def normal_after_hardcore(client, server):
     reply(client, "z", "Male or Female")
     reply(client, "z", RACE_MENU)
     finish_character_choices(client)
-    reply(client, "y", "PRESS RETURN")
+    reply(client, "y", MENU)
+    play_saved_character(client)
     reply(client, "", "Your starter kit is ready")
     client.expect("Pos: standing >")
     score = reply(client, "score", "Pos: standing >")
@@ -407,7 +428,7 @@ def normal_after_hardcore(client, server):
     require(re.search(r"Web Info\s*:\s*ON\b", toggles),
             "new character did not default to webinfo ON")
     reply(client, "toggle webinfo off", "Pos: standing >")
-    reply(client, "save", "Save complete for Taverek.")
+    reply(client, "save", "Saving Taverek.")
     # A resident linkdead character reconnects immediately by design. Restart
     # the server to exercise disk reload and the saved-character confirmation.
     server.shutdown()
@@ -479,7 +500,6 @@ def run_journeys(binary):
 
 
 if __name__ == "__main__":
-    build_root = Path(__file__).resolve().parents[2] / "bin/tests"
-    build_root.mkdir(parents=True, exist_ok=True)
-    with tempfile.TemporaryDirectory(prefix="creation-prompts-build-", dir=build_root) as build_tmp:
-        run_journeys(build_flatfile_server(Path(build_tmp)))
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--server", type=Path, required=True)
+    run_journeys(parser.parse_args().server.resolve())

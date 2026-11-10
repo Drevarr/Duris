@@ -104,6 +104,9 @@ int STAT_INDEX(int) { return 100; }
 int GET_CHAR_SKILL_P(P_char, int) { return 0; }
 bool notch_skill(P_char, int, float) { return false; }
 int number(int low, int) { return low; }
+#include "abilities/abilities.h"
+static int no_dice(int, int) { return 0; }
+const Rolls live_rolls = { no_dice, number };
 int BOUNDED(int low, int value, int high) { return std::max(low,std::min(value,high)); }
 char *FirstWord(char *word) { return word; }
 int exitnumb_to_cmd(int dir) { return dir+1; }
@@ -112,7 +115,13 @@ room_affect *get_spell_from_room(P_room, int) { return nullptr; }
 char *one_argument(const char *, char *out) { *out=0; return out; }
 void bfs_clear_marks() {}
 void make_ice(P_char) {}
-int leave_by_exit(P_char, int) { return !wall; }
+int leave_by_exit(P_char ch, int direction) {
+    if(wall) return false;
+    P_char rider=nullptr;
+    const int room_to=EXIT(ch,direction)->to_room;
+    __MOUNTED_NARROW_GATE__
+    return true;
+}
 bool grease_check(P_char) { return grease; }
 bool special(P_char ch, int, char *) {
     ++specials;
@@ -135,10 +144,19 @@ void update_pos(P_char) {}
 '''
 
 move = source('actmove.c').read_text()
+leave = extract_function('actmove.c', 'int leave_by_exit(')
+mounted_gate = leave[leave.index('\tif (IS_RIDING(ch) && IS_ROOM(room_to, ROOM_SINGLE_FILE))'):
+                     leave.index('\n\tif (IS_ROOM(ch->in_room, ROOM_SINGLE_FILE)')]
+prelude = prelude.replace('__MOUNTED_NARROW_GATE__', mounted_gate)
 structure = re.search(r'struct water_crossing_data\n\{.*?\n};',move,re.S)[0]
 functions = [
+    ('magic/spells.c', 'int blood_to_stone_move_cost('),
+    ('sillusionist.c', 'int delirium_wander_roll('),
+    ('sillusionist.c', 'int sound_suppression_noise_limit('),
     ('utility.c', 'bool has_water_form_travel('),
     ('utility.c', 'int move_cost('),
+    ('actmove.c', 'int crippled_move_cost('),
+    ('actmove.c', 'static bool walking_door_allows('),
     ('actmove.c', 'static bool water_crossing_valid('),
     ('actmove.c', 'static bool completing_water_crossing('),
     ('actmove.c', 'static int can_enter_room_internal('),
@@ -196,6 +214,7 @@ int main() {
         GET_VITALITY(&ch)=100; lag=movements=specials=mode=trap_mode=0;
         trap=wall=grease=linked_mount=linked_rider=false; ch.lobj=nullptr;
         rooms[1].current_speed=0;
+        rooms[1].room_flags=0; rooms[1].dir_option[DIR_SOUTH]=nullptr;
         exits[0].to_room=1; exits[0].exit_info=0;
         exits[1].to_room=0; exits[1].exit_info=0;
     };
@@ -287,6 +306,48 @@ int main() {
     auto *freed=new char_data(ch); character_list=freed; mode=2;
     assert(!do_simple_move(freed,0,0)); character_list=&ch; mode=0;
     assert(pool.objs_used==0 && ne_event_counter==0);
+
+    // Closed-door permission belongs to every riding participant, including charge approaches.
+    int door_cases=0;
+    for(int companion_kind : {0,1,2}) {
+        for(unsigned flags : {0U,unsigned(EX_CLOSED),unsigned(EX_CLOSED|EX_LOCKED),
+                               unsigned(EX_CLOSED|EX_PICKPROOF),unsigned(EX_CLOSED|EX_LOCKED|EX_PICKPROOF)}) {
+            for(unsigned mask=0;mask<(companion_kind?4U:2U);++mask) {
+                reset(); ch.affected=nullptr; ch.player.level=56;
+                rooms[0].sector_type=rooms[1].sector_type=SECT_FIELD;
+                exits[0].exit_info=flags;
+                SET_POS(&ch,STAT_NORMAL+POS_STANDING);
+                for(P_char companion : {&mount,&rider}) {
+                    companion->player.level=56;
+                    SET_POS(companion,STAT_NORMAL+POS_STANDING);
+                    companion->specials.affected_by2=(mask&2)?AFF2_PASSDOOR:0;
+                    GET_VITALITY(companion)=100;
+                }
+                ch.specials.affected_by2=(mask&1)?AFF2_PASSDOOR:0;
+                linked_mount=companion_kind==1; linked_rider=companion_kind==2;
+                const bool allowed=!(flags&EX_CLOSED) ||
+                    ((mask&1) && (!companion_kind || (mask&2)) &&
+                     (flags & (EX_LOCKED|EX_PICKPROOF))!=(EX_LOCKED|EX_PICKPROOF));
+                const bool moved=do_simple_move(&ch,DIR_NORTH,0);
+                assert(moved==allowed && ch.in_room==(allowed?1:0));
+                ++door_cases;
+            }
+        }
+    }
+    printf("Walking doors: %d permission cases, including mounts and riders, passed.\n",door_cases);
+    // The real movement admission blocks a riding group before either placement pass.
+    for(int companion_kind : {0,1,2}) {
+        reset(); output.clear(); ch.affected=nullptr; ch.player.level=56;
+        rooms[0].sector_type=rooms[1].sector_type=SECT_FIELD;
+        rooms[1].room_flags=ROOM_SINGLE_FILE;
+        rooms[1].dir_option[DIR_SOUTH]=&exits[1];
+        linked_mount=companion_kind==1; linked_rider=companion_kind==2;
+        const bool moved=do_simple_move(&ch,DIR_NORTH,0);
+        assert(moved==(companion_kind==0));
+        assert(ch.in_room==(companion_kind==0?1:0) && movements==(companion_kind==0?1:0));
+        if(companion_kind) assert(output.find("mount")!=std::string::npos);
+    }
+    puts("Single-file admission: foot entry allowed; mounted rider and ridden mount refused before placement.");
     puts("Water shoreline: native command/scheduler, timed directions, interruption, exact costs and isolated entry exception passed.");
 }
 '''

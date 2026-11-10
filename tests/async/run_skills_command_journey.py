@@ -8,7 +8,7 @@ import subprocess
 import tempfile
 import time
 
-import test_flatfile_combat_journey as journey
+import test_mariadb_combat_journey as journey
 from test_flight_network_journey import authority, command
 
 ROOT = journey.ROOT
@@ -69,12 +69,10 @@ def run(binary, backend):
                     journey.create_character(client, account=account, character=name,
                                              email=name.lower() + "@example.invalid")
                     client.send("save")
-                    client.expect("Save complete for " + name + ".", timeout=30)
+                    client.expect("Saving " + name + ".", timeout=30)
                 stop()
                 if sql:
                     sql("UPDATE player_data SET level=62,highest_level=62 WHERE name='" + GOD + "'")
-                else:
-                    journey.make_overlord(Path(env["FLATFILE_STATE_DIR"]), GOD)
                 process = boot()
                 god = login(GOD, GOD_ACCOUNT)
                 player = login(PLAYER, ACCOUNT)
@@ -120,6 +118,22 @@ def run(binary, backend):
                 assert "Swordsman" in info and "Swashbuckler" in info and "Unavailable" in info
                 assert "Your unlock level: 1  Your cap: 100" in info
                 assert "Current rating:" in info and "Learned:" in info and "Taught:" in info
+                assert info.index("Your progress") < info.index("Mechanics") < info.index("Helpfile details")
+                assert "with your strength and no shield" in info, info
+                assert "Your lag on a miss: 8 seconds, or 12 seconds if you fall prone" in info, info
+                assert "Your lag if the target is 2 or more sizes bigger or smaller: 2 seconds" in info, info
+                assert "Your lag if the target evades: 2 seconds" in info, info
+                assert "Target's lag: 8 seconds\n" in info.replace("\r\n", "\n"), info
+                assert "Mechanics" not in command(player, "skills info swim")
+                innate = command(player, "innate info reflection")
+                assert "reflection : INNATE INFO" in innate and "Type: Active" in innate, innate
+                assert "Not available to your race, class or specialization." in innate, innate
+                assert "Uses: 1 before it rests" in innate and "Your lag: 4 seconds" in innate, innate
+                assert "Provide a known innate name" in command(player, "innate info nosuchinnate")
+                # The converted bash still plays through its real handler.
+                command(god, "load mob 11")
+                bashed = command(god, "bash raoul")
+                assert "to the ground" in bashed, bashed
                 assert "Epic skill" in command(player, "skills info anatomy")
                 assert "Instrument" in command(player, "skills info drums")
                 assert "Bard song" in command(player, "skills info song of heroism")
@@ -156,7 +170,7 @@ def run(binary, backend):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--backend", choices=("mariadb", "flatfile"), default="flatfile")
+    parser.add_argument("--backend", choices=("mariadb",), default="mariadb")
     parser.add_argument("--server", type=Path, required=True)
     args = parser.parse_args()
     run(args.server.resolve(), args.backend)

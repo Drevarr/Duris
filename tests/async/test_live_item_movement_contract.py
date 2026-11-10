@@ -7,18 +7,7 @@ import unittest
 
 ROOT = Path(__file__).resolve().parents[2]
 class LiveItemMovementContractTests(unittest.TestCase):
-    def test_runtime_hydrates_authoritative_rows_not_relative_events(self):
-        sql = (SRC / "sql.c").read_text()
-        owner_check = sql[sql.index("static bool sql_persistence_owner_row_matches"):]
-        owner_check = owner_check[:owner_check.index("bool sql_hydrate_item_owner_revisions")]
-        header = (SRC / "sql.h").read_text()
-        select = header[header.index("#define SQL_ITEM_OWNER_COLUMNS"):]
-        select = select[:select.index("bool sql_persistence_item_owner_fields_match")]
-        self.assertIn("SQL_ITEM_OWNER_SELECT", owner_check)
-        self.assertIn("FROM item_current_owner", select)
-        self.assertIn("item_owner_revision", select)
-        self.assertNotIn("persistence_item_events", owner_check + select)
-        self.assertIn("item_ownership_runtime_hydrate", owner_check)
+    # SQL row validation/hydration executes in test_item_ownership_runtime.py.
 
     def test_pending_adapter_retains_scalars_and_publishes_after_commit(self):
         movement = (SRC / "item_movement_transaction.c").read_text()
@@ -98,23 +87,6 @@ class LiveItemMovementContractTests(unittest.TestCase):
         self.assertIn("const bool same_owner", repository)
         self.assertIn("SET root_item_uid=?", repository)
         self.assertIn("target_container", movement)
-
-    def test_flat_room_grants_are_composite(self):
-        repository = (SRC / "flatfile_item_repository.c").read_text()
-        world = (SRC / "flatfile_world_item_repository.c").read_text()
-        artifact = (SRC / "flatfile_artifact_repository.c").read_text()
-        self.assertIn("flatfile_world_item_prepare_room_transfer", world)
-        self.assertIn("bool flatfile_artifact_room_transfer_allowed", artifact)
-        supported = repository[repository.index("bool generic_transfer_supported") :]
-        supported = supported[:supported.index("\n}\n")]
-        self.assertIn("room_transfer(payload)", supported)
-        apply = repository[repository.index(
-            "critical_apply_result flatfile_item_repository_apply") :]
-        allowed = apply.index("flatfile_artifact_room_transfer_allowed(payload)")
-        prepare = apply.index("flatfile_world_item_prepare_room_transfer", allowed)
-        image = apply.index("room.after_image", prepare)
-        commit = apply.index("flatfile_authority_transaction_commit", image)
-        self.assertLess(image, commit)
 
     def test_unpublished_commit_is_retained_not_erased(self):
         publish = extract_function("item_movement_transaction.c", "void publish(")

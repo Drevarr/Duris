@@ -13,7 +13,7 @@ import sys
 import tempfile
 import time
 
-import test_flatfile_combat_journey as journey
+import test_mariadb_combat_journey as journey
 from test_flight_network_journey import authority, command
 from run_world_quest_dual_backend import setup_run_root
 
@@ -104,7 +104,7 @@ def run(binary):
 
             def save(client, name=PLAYER):
                 client.send('save')
-                client.expect('Save complete for ' + name + '.', timeout=60)
+                client.expect('Saving ' + name + '.', timeout=60)
 
             def task_rows(name=PLAYER):
                 return sql(f"SELECT type,modifier FROM player_affects WHERE pid=(SELECT pid FROM player_data "

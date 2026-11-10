@@ -6,7 +6,7 @@ import tempfile
 from _paths import ROOT, HARNESS_STUBS, extract_function, source
 
 text = source('random.mob.c').read_text()
-prefixes = text[text.index('const char *prefix_name_theme'):text.index('#define MAX_ZONES_RANDOM_DATA')]
+prefixes = text[text.index('const char *prefix_name_theme'):text.index('// This historical spawn pool')]
 harness = r'''
 #include "core/prototypes.h"
 #include "core/utils.h"
@@ -47,7 +47,7 @@ void MonkSetSpecialDie(P_char) {}
 char *str_dup(const char *text) { return strdup(text); }
 std::string strip_ansi(const char *text) { return text; }
 int get_name(char *, int, uint64_t) { return false; }
-P_obj create_random_eq(P_char, int, int, int, int) { assert(false); return nullptr; }
+P_obj create_random_eq(P_char, int, int, int, int, int) { assert(false); return nullptr; }
 bool obj_to_char(P_obj, P_char) { assert(false); return true; }
 void do_wear(P_char, char *, int) { assert(false); }
 int find_mob_map_room(P_char) { assert(false); return 0; }

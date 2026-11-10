@@ -295,7 +295,7 @@ static void staff_area() {
         device_scene s(ITEM_STAFF);
         auto ally=new char_data{}; ally->runtime_id=allocate_character_runtime_id();
         ally->only.pc=s.actor->only.pc; ally->in_room=0; SET_POS(ally,STAT_NORMAL+POS_STANDING);
-        ally->next=character_list; character_list=ally;
+        character_list_add(ally);
         ally->next_in_room=world[0].people; world[0].people=ally;
         std::remove_pointer_t<decltype(s.actor->group)> group{}; s.actor->group=ally->group=&group;
         s.use(); advance(); assert(calls.size()==1 && calls[0].target==s.target->runtime_id);
@@ -305,7 +305,7 @@ static void staff_area() {
         discard_character(s.target); chosen_char=nullptr;
         auto newcomer=new char_data{}; newcomer->runtime_id=allocate_character_runtime_id();
         newcomer->only.pc=s.actor->only.pc; newcomer->in_room=0; SET_POS(newcomer,STAT_NORMAL+POS_STANDING);
-        newcomer->next=character_list; character_list=newcomer;
+        character_list_add(newcomer);
         newcomer->next_in_room=world[0].people; world[0].people=newcomer;
         advance(); assert(calls.size()==1 && calls[0].target==newcomer->runtime_id);
     }
@@ -353,9 +353,9 @@ int main() {
 with tempfile.TemporaryDirectory(prefix="duris-device-actions-") as directory:
     source = Path(directory) / "harness.cpp"; binary = Path(directory) / "harness"
     source.write_text(platform + fixture + HARNESS.replace("// INSERT_COMMANDS", commands))
-    subprocess.run(["g++", "-std=c++20", "-O1", "-g", "-D__NO_MYSQL__", "-ffunction-sections", "-fdata-sections",
+    subprocess.run(["g++", "-std=c++20", "-O1", "-g", "-ffunction-sections", "-fdata-sections",
                     "-fsanitize=address,undefined", "-fno-omit-frame-pointer", "-pthread", "-no-pie",
-                    "-I" + str(ROOT / "src"), str(source), str(ROOT / "src/persistence/latency_trace.c"),
+                    "-I" + str(ROOT / "src"), "-I/usr/include/mysql", str(source), str(ROOT / "src/persistence/latency_trace.c"),
                     "-Wl,--gc-sections", str(HARNESS_STUBS), "-o", str(binary)], check=True)
     environment = dict(os.environ, ASAN_OPTIONS="detect_leaks=1:halt_on_error=1",
                        UBSAN_OPTIONS="halt_on_error=1:print_stacktrace=1", DURIS_NEVENT_ANALYTICS="0",

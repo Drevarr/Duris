@@ -38,16 +38,24 @@ platform = literal(ROOT / "tests/async/test_nevent_scheduler_runtime.py", "HARNE
 platform = platform.split("struct record_payload\n", 1)[0]
 platform = platform.replace("DEFINE_LABEL_CALLBACK(event_item_action_active)", "")
 platform = platform.replace("test_world[1]", "test_world[2]").replace("top_of_world = 0", "top_of_world = 1")
+platform = platform.replace("int GET_CLASS(P_char ch, uint cls) { return (ch->player.m_class & cls) != 0; }",
+                            function(ROOT / "src/core/utility.c", "int GET_CLASS(P_char ch, uint m_class)"))
 fixture = literal(ROOT / "tests/async/test_item_actions_runtime.py", "HARNESS")
 fixture = fixture.replace("int main() {", "void foundation_regression_main() {")
 fixture = fixture.replace("// INSERT_PRODUCTION_ABORT",
                           function(ROOT / "src/net/sparser.c", "void do_abort(P_char ch,"))
 callbacks = "\n".join([
+    function(ROOT / "src/combat/fight.c", "static attack_continuation capture_monk_glove_proc("),
+    function(ROOT / "src/combat/fight.c", "static void dispatch_monk_glove_proc("),
+    function(ROOT / "src/combat/fight.c", "bool monk_superhit(P_char ch, P_char victim, int *damAccumulator)\n"),
     function(ROOT / "src/combat/training_dummy.c", "bool training_dummy_is(P_char ch)"),
     function(ROOT / "src/world/handler.c", "bool isname(const char *str, const char *namelist)"),
     function(ROOT / "src/cmd/interp.c", "bool special(P_char ch, int cmd, char *arg)"),
+    function(ROOT / "src/net/comm.c", "void act_trio("),
+    function(ROOT / "src/specs/specs.object.c", "P_char melee_proc_target("),
     function(ROOT / "src/specs/specs.underworld.c", "void resolve_avernus_drain("),
     function(ROOT / "src/specs/specs.underworld.c", "int avernus("),
+    function(ROOT / "src/combat/fight.c", "static void cast_packed_weapon_spell("),
     function(ROOT / "src/combat/fight.c", "bool weapon_proc("),
     function(ROOT / "src/item/random_equipment.c", "int random_eq_proc("),
     function(ROOT / "src/cmd/actoff.c", "bool is_in_safe("),
@@ -60,6 +68,7 @@ callbacks = "\n".join([
 
 DOUBLES = r'''
 #include "item/random_equipment.h"
+#include "combat/attack_continuation.c"
 #include "item/weapon_actions.c"
 #include "item/native_artifact_actions.h"
 #include "world/buildings.h"
@@ -81,6 +90,23 @@ static std::vector<effect_call> effects;
 static bool can_fight = true, storage_ready = true;
 static int stone_calls = 0, hum_calls = 0, debit_calls = 0, mutation = 0;
 static int affected_spell = 0;
+static int base_result = DAM_NONEDEAD, base_mutation = 0, native_calls = 0;
+static P_obj proc_source;
+bool SanityCheck(P_char, const char *) { return true; }
+bool can_hit_target(P_char, P_char) { return true; }
+int on_front_line(P_char) { return true; }
+int MonkDamage(P_char) { return 10; }
+int melee_damage(P_char actor, P_char target, double, uint, damage_messages *, int *) {
+    if (base_mutation == 1) remove_source(proc_source, actor);
+    if (base_mutation == 2) depart(target);
+    if (base_mutation == 3) actor->equipment[WEAR_HANDS] = nullptr;
+    return base_result;
+}
+int glove_native(P_obj obj, P_char actor, int cmd, char *arg) {
+    assert(cmd == CMD_MELEE_HIT && melee_proc_target(obj, actor, cmd, arg));
+    ++native_calls;
+    return FALSE; // Callback status must not change hit success.
+}
 static P_char protected_player = nullptr;
 static zone_data test_zones[1]{};
 zone_data *zone_table = test_zones;
@@ -131,6 +157,9 @@ void spell_endpoint(int id, int power, int type, P_char target) {
     if (mutation == 1) depart(target);
     if (mutation == 2) remove_character(target);
     if (mutation == 3) SET_POS(target, STAT_DEAD);
+    if (mutation == 4) remove_source(proc_source, proc_source->loc.wearing);
+    if (mutation == 5) remove_character(character_list);
+    if (mutation == 6) ++target->specials.z_cord;
 }
 void spell_cyclone(int power, P_char, char *, int type, P_char target, P_obj) {
     spell_endpoint(SPELL_CYCLONE, power, type, target);
@@ -301,6 +330,107 @@ static void cancellation_and_payment() {
     }
 }
 
+static void monk_gloves() {
+    // Exercise the actual capture/terminal dispatch and actual PvP superhit.
+    for (bool enabled : {false, true}) {
+        for (int change = 0; change < 7; ++change) {
+            weapon_scene s("weapons", enabled); s.packed();
+            s.actor->player.m_class = CLASS_MONK;
+            s.actor->equipment[WIELD] = nullptr;
+            s.actor->equipment[WEAR_HANDS] = s.source;
+            s.source->type = ITEM_ARMOR; s.source->wear_flags = ITEM_WEAR_HANDS;
+            s.source->extra2_flags = ITEM2_MONK_PROC; proc_source = s.source;
+            choices = {0};
+            const auto opportunity = capture_monk_glove_proc(s.actor, s.target, nullptr);
+            dispatch_monk_glove_proc(opportunity);
+            if (enabled) {
+                assert(effects.empty() && item_actions_pending() == 1);
+                choices = {0}; dispatch_monk_glove_proc(opportunity);
+                assert(effects.empty() && item_actions_pending() == 1);
+                switch (change) {
+                case 1: s.actor->player.m_class = CLASS_WARRIOR; break;
+                case 2: s.source->extra2_flags = 0; break;
+                case 3: s.actor->equipment[WEAR_HANDS] = nullptr;
+                        s.actor->equipment[WEAR_HANDS_2] = s.source; break;
+                case 4: remove_source(s.source, s.actor); break;
+                case 5: depart(s.target); break;
+                case 6: {
+                    auto *weapon = new obj_data{}; weapon->obj_uid = 101;
+                    weapon->loc_p = LOC_WORN; weapon->loc.wearing = s.actor;
+                    weapon->next = object_list; object_list = weapon;
+                    s.actor->equipment[WIELD] = weapon; break;
+                }
+                }
+                advance();
+                assert(effects.size() == (change == 0 || change == 6 ? 3 : 0));
+            } else assert(effects.size() == 3);
+        }
+    }
+    for (int admission = 0; admission < 9; ++admission) {
+        weapon_scene s("weapons", false); s.packed();
+        s.actor->player.m_class = CLASS_MONK;
+        s.actor->equipment[WIELD] = nullptr; s.actor->equipment[WEAR_HANDS] = s.source;
+        s.source->type = ITEM_WORN; s.source->wear_flags = ITEM_WEAR_HANDS;
+        s.source->extra2_flags = ITEM2_MONK_PROC;
+        switch (admission) {
+        case 1: s.actor->player.m_class = CLASS_WARRIOR; break;
+        case 2: s.actor->specials.act = ACT_ISNPC; break;
+        case 3: s.source->extra2_flags = 0; break;
+        case 4: s.actor->equipment[WEAR_HANDS] = nullptr; break;
+        case 5: s.source->type = ITEM_LIGHT; break;
+        case 6: s.source->wear_flags = ITEM_WEAR_BODY; break;
+        case 7: s.actor->player.m_class = CLASS_WARRIOR;
+                s.actor->player.secondary_class = CLASS_MONK; break;
+        case 8: s.actor->equipment[WEAR_HANDS_2] = s.source; break;
+        }
+        choices = {0};
+        dispatch_monk_glove_proc(capture_monk_glove_proc(s.actor, s.target, nullptr));
+        assert(effects.size() == (admission == 0 || admission >= 7 ? 3 : 0));
+        effects.clear();
+        dispatch_monk_glove_proc(capture_monk_glove_proc(s.actor, s.target, s.source));
+        assert(effects.empty());
+    }
+    for (int spec = 0; spec <= 4; ++spec) for (int change = 0; change < 5; ++change) {
+        weapon_scene s("weapons", false);
+        s.actor->player.m_class = CLASS_MONK;
+        s.actor->equipment[WIELD] = nullptr; s.actor->equipment[WEAR_HANDS] = s.source;
+        s.source->type = ITEM_ARMOR; s.source->wear_flags = ITEM_WEAR_HANDS;
+        s.source->extra2_flags = ITEM2_MONK_PROC;
+        s.actor->player.spec = spec < 4 ? spec : 0;
+        if (spec == 4) {
+            s.actor->player.m_class = CLASS_WARRIOR;
+            s.actor->player.secondary_class = CLASS_MONK;
+        }
+        obj_index[0].func.obj = glove_native; native_calls = 0; proc_source = s.source;
+        base_mutation = change < 4 ? change : 0;
+        base_result = change == 4 ? DAM_VICTDEAD : DAM_NONEDEAD;
+        assert(monk_superhit(s.actor, s.target, nullptr));
+        assert(native_calls == (change == 0 ? 1 : 0));
+    }
+    base_mutation = 0; base_result = DAM_NONEDEAD;
+    for (int packed : {-1, 1000, 1000000000, 999, 3000001}) {
+        weapon_scene s("weapons", false); s.packed();
+        s.source->type = ITEM_ARMOR; s.source->wear_flags = ITEM_WEAR_HANDS;
+        s.source->extra2_flags = ITEM2_MONK_PROC; s.source->value[5] = packed;
+        assert(!weapon_proc(s.source, s.actor, s.target) && rolls.empty());
+    }
+    for (int bad = 0; bad < 2; ++bad) {
+        weapon_scene s("weapons", false); s.packed();
+        s.source->type = ITEM_ARMOR; s.source->wear_flags = ITEM_WEAR_HANDS;
+        s.source->extra2_flags = ITEM2_MONK_PROC; s.source->value[6 + bad] = 0;
+        obj_index[0].func.obj = glove_native; native_calls = 0;
+        assert(!weapon_proc(s.source, s.actor, s.target) && native_calls == 0 && rolls.empty());
+    }
+    for (bool enabled : {false, true}) for (int change = 1; change <= 6; ++change) {
+        weapon_scene s("weapons", enabled); s.packed(); mutation = change;
+        proc_source = s.source;
+        assert(s.hit()); if (enabled) advance();
+        // Scheduled magic keeps existing weapon-action reach rules; immediate
+        // bundles additionally enforce the captured melee height between spells.
+        assert(effects.size() == (enabled && change == 6 ? 3 : 1));
+    }
+}
+
 static void packed_parity() {
     for (bool enabled : {false, true}) {
         weapon_scene s("weapons", enabled); s.packed();
@@ -416,6 +546,30 @@ static int carried_rub(P_obj source, P_char, int command, char *argument) {
     if (command != CMD_RUB || !isname(argument, source->name)) return false;
     ++carried_rubs;
     return true;
+}
+
+// A proc that extracts its own object, as huntsman_ward and generic_drow_eq do.
+static int self_extract(P_obj source, P_char ch, int, char *) {
+    ch->carrying = source->next_content;
+    delete source;
+    return false;
+}
+
+static void self_extracting_dispatch() {
+    wind_scene s;
+    P_index saved = obj_index;
+    index_data index[3]{};
+    index[0] = obj_index[0]; index[1].func.obj = self_extract; index[2].func.obj = carried_rub;
+    obj_index = index;
+    obj_data carried{}; carried.R_num = 2;
+    carried.name = const_cast<char *>("amethyst orb");
+    auto *doomed = new obj_data{}; doomed->R_num = 1; doomed->next_content = &carried;
+    s.actor->carrying = doomed; carried_rubs = 0;
+    char argument[] = "amethyst";
+    // The next object is read before the proc frees the current one.
+    assert(special(s.actor, CMD_RUB, argument) && carried_rubs == 1);
+    s.actor->carrying = nullptr;
+    obj_index = saved;
 }
 
 static void wind_rub_dispatch() {
@@ -536,15 +690,16 @@ static void wind_artifact_cases() {
 int main() {
     nevent_bind_game_thread(); ne_dead_event_pool = &test_pool;
     fake_clock_ns = 1000000000ULL; ne_events();
-    avernus_parity(); cancellation_and_payment(); packed_parity(); random_parity(); suppression_measurement();
-    wind_artifact_cases(); wind_rub_dispatch();
+    monk_gloves(); avernus_parity(); cancellation_and_payment(); packed_parity(); random_parity(); suppression_measurement();
+    wind_artifact_cases(); wind_rub_dispatch(); self_extracting_dispatch();
     std::puts("Weapon actions: real selection callbacks, parity, payment, targets, cancellation and timing passed");
     std::puts("Wind artifacts: sphere melee/whirlwind policy and cooldown, NPC auto-wield and player escape passed");
     std::puts("Wind rub dispatch: real command routing and name matching preserve other carried-item procs");
 }
 '''
 
-with tempfile.TemporaryDirectory(prefix="duris-weapon-actions-") as directory:
+(ROOT / "bin/tests").mkdir(parents=True, exist_ok=True)
+with tempfile.TemporaryDirectory(prefix="weapon-actions-", dir=ROOT / "bin/tests") as directory:
     source = Path(directory) / "harness.cpp"
     binary = Path(directory) / "harness"
     doubles = DOUBLES.replace("messages", "captured_messages").replace("damage_captured_messages", "damage_messages")

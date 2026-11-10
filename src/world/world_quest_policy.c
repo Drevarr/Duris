@@ -43,11 +43,9 @@ extern int top_of_mobt;
 extern int top_of_objt;
 extern int top_of_zone_table;
 extern int top_of_world;
-extern int number_of_quests;
 extern int number_of_shops;
 extern shop_data *shop_index;
 extern P_char character_list;
-extern struct quest_data quest_index[];
 
 extern int get_map_room(int zone_id);
 
@@ -142,6 +140,9 @@ void build_geography()
 				continue;
 			const int to = edge->to_room;
 			const int from_zone = world[room].zone, to_zone = world[to].zone;
+			// Heavens' staff shortcuts do not define geographic attachments.
+			if (zone_table[from_zone].number == 0 || zone_table[to_zone].number == 0)
+				continue;
 			if (!IS_MAP_ROOM(room) && IS_MAP_ROOM(to))
 				quest_geography[from_zone].entrances.push_back(to);
 			else if (IS_MAP_ROOM(room) && !IS_MAP_ROOM(to))
@@ -397,41 +398,10 @@ bool source_eligible_reward(P_obj obj)
 	    IS_SET(obj->bitvector4, AFF4_DETECT_ILLUSION))
 		return false;
 	if (IS_NOSHOW(obj) || GET_OBJ_WEIGHT(obj) > 99 || IS_ARTIFACT(obj) ||
-	    isname("_noquest_", obj->name) || IS_OBJ_STAT2(obj, ITEM2_QUESTITEM))
+	    isname("_noquest_", obj->name) || IS_OBJ_STAT2(obj, ITEM2_QUESTITEM) ||
+	    IS_OBJ_STAT2(obj, ITEM2_CRUMBLELOOT))
 		return false;
 	return true;
-}
-
-struct reward_withholding
-{
-	size_t quest_items = 0;
-	size_t top_value = 0;
-	int percent = 20;
-};
-
-// Every item a hand-built quest pays out or asks players to hand in. Bartender rewards
-// never include these, whether or not a builder flagged them ITEM2_QUESTITEM.
-std::unordered_set<int> collect_quest_item_vnums()
-{
-	std::unordered_set<int> vnums;
-	for (int quest = 0; quest < number_of_quests; ++quest)
-	{
-		for (const quest_complete_data *complete = quest_index[quest].quest_complete;
-		     complete; complete = complete->next)
-		{
-			for (const goal_data *goal = complete->receive; goal; goal = goal->next)
-			{
-				if (goal->goal_type == QUEST_GOAL_ITEM)
-					vnums.insert(goal->number);
-			}
-			for (const goal_data *goal = complete->give; goal; goal = goal->next)
-			{
-				if (goal->goal_type == QUEST_GOAL_ITEM)
-					vnums.insert(goal->number);
-			}
-		}
-	}
-	return vnums;
 }
 
 void build_intervals()
@@ -560,9 +530,8 @@ const quest_routine_source *routine_source(P_char mob)
 	return &source->second;
 }
 
-void load_reward_profiles(reward_withholding &withheld)
+void load_reward_profiles()
 {
-	const std::unordered_set<int> quest_items = collect_quest_item_vnums();
 	for (int rnum = 0; rnum <= top_of_objt; ++rnum)
 	{
 		const int zone = zone_for_vnum(obj_index[rnum].virtual_number);
@@ -574,46 +543,15 @@ void load_reward_profiles(reward_withholding &withheld)
 			continue;
 		if (!source_eligible_reward(probe.value))
 			continue;
-		if (quest_items.count(obj_index[rnum].virtual_number))
-		{
-			++withheld.quest_items;
-			continue;
-		}
 		quest_reward_profile profile;
 		profile.vnum = obj_index[rnum].virtual_number;
 		profile.ivalue = itemvalue(probe.value);
 		quest_zones[zone].rewards.push_back(profile);
+		quest_zones[zone].reward_vnums.push_back(profile.vnum);
 	}
 
-	// A zone's most valuable items are earned in the zone, not bought from a bartender.
-	// They are withheld before the per-level lists and zone scores are built, so both
-	// describe only what a quest can actually pay.
-	const double configured = get_property("world.quest.reward.top.withheld.percent", 20.000);
-	if (!std::isfinite(configured))
-		logit(LOG_STATUS, "Invalid world.quest.reward.top.withheld.percent; using 20%%");
-	withheld.percent = world_quest_reward_withheld_percent(configured);
 	for (quest_zone_profile &zone : quest_zones)
 	{
-		std::vector<int> values;
-		values.reserve(zone.rewards.size());
-		for (const quest_reward_profile &reward : zone.rewards)
-			values.push_back(reward.ivalue);
-		const int ceiling = world_quest_reward_value_ceiling(values, withheld.percent);
-
-		std::vector<quest_reward_profile> offered;
-		offered.reserve(zone.rewards.size());
-		for (const quest_reward_profile &reward : zone.rewards)
-		{
-			if (reward.ivalue >= ceiling)
-			{
-				++withheld.top_value;
-				continue;
-			}
-			offered.push_back(reward);
-			zone.reward_vnums.push_back(reward.vnum);
-		}
-		zone.rewards.swap(offered);
-
 		for (const quest_reward_profile &reward : zone.rewards)
 		{
 			for (int level = 1; level < TOTALLVLS; ++level)
@@ -742,6 +680,21 @@ struct quest_target_request
 		if (rejected[reason]++ == 0)
 			examples[reason] = example;
 		return false;
+	}
+
+	std::string rejections() const
+	{
+		std::string summary;
+		for (size_t index = 0; index < quest_rejection_count; ++index)
+			if (rejected[index])
+			{
+				char entry[128];
+				snprintf(entry, sizeof(entry), "%s%s=%zu(example=%d)",
+					 summary.empty() ? "" : ",", quest_rejection_names[index],
+					 rejected[index], examples[index]);
+				summary += entry;
+			}
+		return summary;
 	}
 
 	quest_target_request(P_char ch, int origin, int accepted_level, int accepted_target = 0)
@@ -905,62 +858,18 @@ struct quest_target_request
 				return true;
 			if (object->R_num > top_of_objt)
 				return reject(reason, -1);
+			// Portable gear is player-controlled: it can be bagged or dropped, and
+			// it can change after assignment. It never makes a target unusable.
+			if (CAN_WEAR(object, ITEM_TAKE))
+				return true;
 			const auto proc = obj_index[object->R_num].func.obj;
-			// Audited ASK-safe identities only. Command guards run before combat
-			// payloads, RNG or effects; CMD_ASK is below the legacy cmd/1000 range.
-			// Complex/data-dependent procedures remain unproven, even if a
-			// particular invocation happens to return false.
-			if (!proc || proc == board || proc == artifact_hide ||
-			    proc == ring_of_regeneration || proc == tracks ||
-			    proc == blood_stains || proc == set_proc ||
-			    // Explicit combat-event guards.
-			    proc == barovia_undead_necklace || proc == bloodfeast ||
-			    proc == dagger_of_wind || proc == deflect_ioun || proc == dwarfslayer ||
-			    proc == elvenkind_cloak || proc == encrusted_eq_proc ||
-			    proc == generic_parry_proc || proc == generic_riposte_proc ||
-			    proc == generic_shield_block_proc || proc == githyanki ||
-			    proc == imprison_armor || proc == khaziddea_blade ||
-			    proc == kvasir_dagger || proc == leather_vest || proc == lich_spine ||
-			    proc == lightning_armor || proc == lightning_sword ||
-			    proc == mace_dragondeath || proc == mace_of_sea ||
-			    proc == madman_shield || proc == mob_vecna_procs || proc == neg_orb ||
-			    proc == orb_of_destruction || proc == orb_of_the_sea ||
-			    proc == righteous_blade || proc == serpent_blade ||
-			    proc == sevenoaks_longsword || proc == sword_whirlwinds ||
-			    proc == tendrils || proc == torment || proc == transparent_blade ||
-			    proc == unholy_avenger_bloodlust || proc == vecna_boneaxe ||
-			    proc == vecna_death_mask || proc == vecna_dispel ||
-			    proc == vecna_minifist || proc == vecna_pestilence ||
-			    proc == xmas_cap ||
-			    // Legacy damage-command guards.
-			    proc == alch_rod || proc == brainripper || proc == confusionsword ||
-			    proc == critical_attack_proc || proc == demo_scimitar ||
-			    proc == dispator || proc == doom_blade_Proc || proc == faith ||
-			    proc == flaming_axe_of_azer || proc == fun_dagger ||
-			    proc == giantbane || proc == githpc_special_weap || proc == hammer ||
-			    proc == hammer_titans || proc == head_guard_sword ||
-			    proc == ljs_sword || proc == lucky_weapon || proc == mankiller ||
-			    proc == mindbreaker || proc == mistweave || proc == mrinlor_whip ||
-			    proc == nightbringer || proc == nightcrawler_dagger ||
-			    proc == ogre_warlords_sword || proc == ogrebane ||
-			    proc == rax_red_dagger || proc == rod_of_magic ||
-			    proc == shimmering_longsword || proc == sinister_tactics_staff ||
-			    proc == stormbringer || proc == sword_named_magik ||
-			    proc == tiamat_stinger || proc == undead_trident ||
-			    proc == vareena_statue || proc == woundhealer_scimitar ||
-			    proc == wuss_sword || proc == zarthos_vampire_slayer ||
-			    // Periodic-only guards (including direct master-set bindings).
-			    proc == aboleth_pendant || proc == alch_bag ||
-			    proc == artifact_biofeedback || proc == artifact_shadow_shield ||
-			    proc == artifact_stone || proc == blind_boots || proc == blindbadge ||
-			    proc == dragon_skull_helm || proc == dranum_mask ||
-			    proc == earthquake_gauntlet || proc == forest_corpse ||
-			    proc == fumblegaunts || proc == fw_ruby_monocle ||
-			    proc == guild_badge || proc == khildarak_warhammer ||
-			    proc == living_necroplasm || proc == ljs_armor || proc == master_set ||
-			    proc == mir_fire || proc == mox_totem || proc == priest_rudder ||
-			    proc == revenant_helm || proc == thanksgiving_wings ||
-			    proc == thrusted_eq_proc || proc == tripboots)
+			// Fixed objects, including the random/crafted item blanks, pass only
+			// with audited ASK-safe identities. Other procedures remain unproven,
+			// even if a particular invocation happens to return false.
+			if (!proc || proc == board || proc == artifact_hide || proc == tracks ||
+			    proc == blood_stains || proc == mir_fire || proc == mob_vecna_procs ||
+			    proc == vareena_statue || proc == set_proc ||
+			    proc == thrusted_eq_proc || proc == encrusted_eq_proc)
 				return true;
 			return reject(reason, obj_index[object->R_num].virtual_number);
 		};
@@ -1114,6 +1023,8 @@ world_quest_target_check world_quest_policy_check_target(P_char ch, int origin_v
 	{
 		result.status = value;
 		result.work = request.work.work;
+		if (value != status::valid)
+			result.rejections = request.rejections();
 		return result;
 	};
 	if (request.work.exhausted)
@@ -1151,12 +1062,18 @@ world_quest_target_check world_quest_policy_check_target(P_char ch, int origin_v
 						    8 * (request.population.at(mob->in_room) + 1)))
 						return finish(status::unproven);
 					if (!ac_can_see_from(ch, mob, mob->in_room))
+					{
+						request.reject(rejected_visibility, GET_VNUM(mob));
 						interaction = status::blocked;
+					}
 					else if (type == FIND_AND_ASK &&
 						 aggressive_to_at(mob, ch, mob->in_room))
+					{
 						// Aggression can depend on memory, faction or random
 						// player protection. It cannot alone authorize a reroll.
+						request.reject(rejected_aggression, GET_VNUM(mob));
 						interaction = status::unproven;
+					}
 				}
 				candidates.push_back({ mob, interaction });
 			}
@@ -1248,8 +1165,7 @@ bool world_quest_policy_bootstrap()
 				continue;
 			quest_zones[zone].map_room = get_map_room(zone);
 		}
-		reward_withholding withheld;
-		load_reward_profiles(withheld);
+		load_reward_profiles();
 		load_zone_scores();
 		load_routine_sources();
 		quest_catalog_ready = true;
@@ -1267,18 +1183,14 @@ bool world_quest_policy_bootstrap()
 		}
 		logit(LOG_STATUS,
 		      "World quest catalog ready: zones=%d mobile_profiles=%zu reward_profiles=%zu "
-		      "mapless_zones=%d elapsed_ms=%lld withheld_quest_items=%zu "
-		      "withheld_top_value=%zu withheld_percent=%d",
+		      "mapless_zones=%d elapsed_ms=%lld",
 		      top_of_zone_table + 1, mob_profiles, reward_profiles, mapless_zones,
-		      static_cast<long long>(elapsed.count()), withheld.quest_items,
-		      withheld.top_value, withheld.percent);
+		      static_cast<long long>(elapsed.count()));
 		fprintf(stderr,
 			"World quest catalog ready: zones=%d mobile_profiles=%zu reward_profiles=%zu "
-			"mapless_zones=%d elapsed_ms=%lld withheld_quest_items=%zu "
-			"withheld_top_value=%zu withheld_percent=%d\n",
+			"mapless_zones=%d elapsed_ms=%lld\n",
 			top_of_zone_table + 1, mob_profiles, reward_profiles, mapless_zones,
-			static_cast<long long>(elapsed.count()), withheld.quest_items,
-			withheld.top_value, withheld.percent);
+			static_cast<long long>(elapsed.count()));
 	}
 	catch (const std::exception &error)
 	{
@@ -1373,20 +1285,7 @@ quest_creation_failure world_quest_policy_select_target(P_char ch, int origin_vn
 	{
 		if (ch && IS_PC(ch) && ch->only.pc->quest_replacement_due)
 		{
-			std::string rejections;
-			if (request)
-				for (size_t index = 0; index < quest_rejection_count; ++index)
-					if (request->rejected[index])
-					{
-						char entry[128];
-						snprintf(entry, sizeof(entry),
-							 "%s%s=%zu(example=%d)",
-							 rejections.empty() ? "" : ",",
-							 quest_rejection_names[index],
-							 request->rejected[index],
-							 request->examples[index]);
-						rejections += entry;
-					}
+			const std::string rejections = request ? request->rejections() : "";
 			const auto region = request ? quest_region_for_room(request->origin_room) :
 						      world_quest_region{};
 			logit(LOG_STATUS,

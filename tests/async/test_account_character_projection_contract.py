@@ -13,7 +13,6 @@ sql = (SRC / "sql.c").read_text(encoding="utf-8", errors="replace")
 sql_player = (SRC / "sql_player.c").read_text(
     encoding="utf-8", errors="replace"
 )
-mysql_sql_player = sql_player[sql_player.index("\n#else\n") :]
 
 
 def body(text, signature):
@@ -49,7 +48,7 @@ checks.append(
     )
 )
 
-load = body(mysql_sql_player, "bool sql_load_account(const char *name,")
+load = body(sql_player, "bool sql_load_account(const char *name,")
 checks.append(
     (
         "every MariaDB account load repairs its durable projection before reading it",
@@ -62,13 +61,12 @@ read = body(account, "void account_read(P_desc d, const char *name, account_read
 checks.append(
     (
         "a loaded account nobody waits for any more is released",
-        contains(read, "free_account(loaded);")
-        and contains(read, "flatfile_account_state_release(loaded);"),
+        contains(read, "free_account(loaded);"),
     )
 )
 
 repair = body(
-    mysql_sql_player,
+    sql_player,
     "unsigned int sql_repair_account_character_projection(MYSQL *connection,",
 )
 checks.append(
@@ -103,23 +101,14 @@ checks.append(
 )
 
 add_character = body(account, "void add_char_to_account(P_desc d)")
-flatfile_add_character = add_character[
-    add_character.index("#ifdef __NO_MYSQL__") : add_character.index("#else")
-]
-mariadb_add_character = add_character[
-    add_character.index("#else") : add_character.index("#endif")
-]
+publication = body(account, "bool account_publish_kept_character(")
 checks.append(
     (
-        "a new character remains in the live account until its first player save",
-        contains(add_character, "d->account->acct_character_list = c;")
-        and not contains(mariadb_add_character, "write_account("),
-    )
-)
-checks.append(
-    (
-        "flatfile accounts persist a new character before its first player save",
-        contains(flatfile_add_character, "write_account(d->account)"),
+        "a new character enters the account cache only after its first save lands",
+        add_character.index("!revision.written_revision")
+        < add_character.index("account_publish_kept_character(")
+        and not contains(add_character, "write_account(")
+        and not contains(publication, "write_account("),
     )
 )
 

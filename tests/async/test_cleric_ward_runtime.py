@@ -28,6 +28,7 @@ assert "void remove_incoming_healing_aura(P_char victim)" in paladins
 
 PRELUDE = r'''
 #include "core/prototypes.h"
+#include "abilities/abilities.h"
 #include "core/utils.h"
 #include "magic/spells.h"
 #include "classes/paladins.h"
@@ -36,6 +37,7 @@ PRELUDE = r'''
 #include "world/events.h"
 #include "telemetry/telemetry_runtime.h"
 #include "net/comm.h"
+#include "abilities/abilities.h"
 #include <cassert>
 #include <cmath>
 #include <cstdio>
@@ -88,6 +90,7 @@ void affect_from_char(P_char ch, int type) {
     }
 }
 int number(int low, int) { return low; }
+const Rolls live_rolls = { dice, number };
 void gmcp_char_vitals(P_char) {}
 void update_achievements(P_char, P_char, int amount, int) { healing_done = amount; }
 int gain_exp(P_char, P_char, int amount, int) { healing_xp = amount; return 0; }
@@ -102,14 +105,25 @@ nevent_schedule_result add_event(event_func, int, P_char, P_char, P_obj, int,
 PRODUCTION = "\n".join(extract_function(file, signature) for file, signature in (
     ("paladins.c", "bool has_aura("),
     ("paladins.c", "int aura_mod("),
+    ("fight.c", "int plague_heal_block_percent("),
+    ("fight.c", "float aura_healing_mod("),
+    ("fight.c", "float enhancement_healing_mod("),
     ("fight.c", "int vamp("),
     ("fight.c", "void heal("),
     ("magic.c", "void spell_cure_blind("),
+    ("ethermancer.c", "static int ethereal_recharge_healing("),
+    ("ethermancer.c", "static int ethereal_recharge_air_cap("),
     ("ethermancer.c", "void spell_ethereal_recharge("),
+    ("ethermancer.c", "static int greater_ethereal_recharge_healing("),
     ("ethermancer.c", "void spell_greater_ethereal_recharge("),
     ("magic.c", "bool can_relocate_to("),
+    ("magic.c", "static int dimension_door_lag("),
+    ("magic.c", "static int dimension_door_distance("),
     ("magic.c", "void spell_dimension_door("),
+    ("magic.c", "static int relocate_lag("),
     ("magic.c", "void spell_relocate("),
+    ("magic.c", "static int group_heal_base("),
+    ("magic.c", "static int group_heal_amount("),
     ("magic.c", "void spell_group_heal("),
     ("magic.c", "void event_natures_touch("),
 ))
@@ -246,7 +260,8 @@ int main() {
     affected_type mantle{}; mantle.type = SPELL_BMANTLE; mantle.modifier = 10000;
     form.next = &mantle; dice_total = 50; air.points.hit = 0;
     spell_ethereal_recharge(56, &air, nullptr, 0, &air, nullptr);
-    assert(air.points.hit == 37); form.next = nullptr; dice_total = 300;
+    // 50 becomes 37 from the mantle's healing penalty, then vamp blocks 56% of that.
+    assert(air.points.hit == 17); form.next = nullptr; dice_total = 300;
     char_data pet{}; pet.specials.act = ACT_ISNPC;
     SET_POS(&pet, STAT_NORMAL + POS_STANDING); pet.points.max_hit = 1000;
     pet_fixture = &pet; owner_fixture = &air;

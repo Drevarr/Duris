@@ -62,7 +62,7 @@ enum class persistence_job_kind : uint8_t
 	shopkeeper,
 	// Statements or a read the game thread queued (sql_async.c); each is its own owner.
 	sql,
-	// Complete flat-file artifact/soul captures, on the same ordered writer.
+	// Complete artifact/soul captures, on the same ordered writer.
 	artifact,
 	// Persist a Divine Boon opportunity before exposing its world bonus.
 	divine_boon,
@@ -90,6 +90,9 @@ struct player_save_apply_result
 	// Identifier only, never SQL or values. Empty when the backend cannot name a field.
 	std::array<char, 64> failed_field = {};
 	bool rolled_back = false;
+	// The initial PID had no usable player baseline and this attempt published none.
+	// A rollback of a retry alone does not establish that fact.
+	bool creation_not_committed = false;
 };
 
 struct player_save_completion
@@ -107,6 +110,7 @@ struct player_save_completion
 	uint64_t completed_at_usec;
 	std::array<char, 64> failed_field = {};
 	bool rolled_back = false;
+	bool creation_not_committed = false;
 };
 
 enum class player_save_submit_result : uint8_t

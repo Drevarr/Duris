@@ -62,7 +62,7 @@ int snogres_lich_shout(P_char ch, P_char tch, int cmd, char * /*arg*/)
 
 #define FLESH_GOLEM_HELPER_LIMIT 6
 
-int snogres_flesh_golem(P_char ch, P_char pl, int cmd, char * /*arg*/)
+int snogres_flesh_golem(P_char ch, P_char /*pl*/, int cmd, char * /*arg*/)
 {
 	P_char i;
 	P_char golem, lich = NULL;
@@ -104,7 +104,8 @@ int snogres_flesh_golem(P_char ch, P_char pl, int cmd, char * /*arg*/)
 		{
 			if (number(1, 100) < 50)
 			{
-				golem = read_mobile(87734, VIRTUAL);
+				// 87743 is the short-lived helper golem counted above.
+				golem = read_mobile(87743, VIRTUAL);
 				if (!golem)
 				{
 					logit(LOG_EXIT,
@@ -115,7 +116,8 @@ int snogres_flesh_golem(P_char ch, P_char pl, int cmd, char * /*arg*/)
 				    "&+rThe piece of flesh suddenly sprouts four arms and two legs, and begins shambling towards &-L&+RYOU&+R!&n&n\r\n",
 				    FALSE, ch, 0, golem, TO_ROOM);
 				char_to_room(golem, ch->in_room, 0);
-				MobStartFight(golem, pl);
+				if (GET_OPPONENT(ch))
+					MobStartFight(golem, GET_OPPONENT(ch));
 				add_event(event_snogres_golem_helper, number(100, 500), golem, NULL,
 					  NULL, 0, NULL, 0);
 				return TRUE;
@@ -146,7 +148,7 @@ int snogres_flesh_golem(P_char ch, P_char pl, int cmd, char * /*arg*/)
 			logit(LOG_EXIT, "assert: error in snogres_flesh_golem() proc");
 			return FALSE;
 		}
-		char_to_room(golem, 87798, 0);
+		char_to_room(golem, real_room(87798), 0);
 		if (lich)
 			add_follower(golem, lich);
 		act("$n &+rbubbles and boils as it enters from the west, its wounds healing quickly.&n",
@@ -201,8 +203,6 @@ void event_hellfire(P_char ch, P_char /*victim*/, P_obj /*obj*/, void *data)
 
 int hellfire_axe(P_obj obj, P_char ch, int cmd, char *arg)
 {
-	P_char vict = NULL;
-	int dam = cmd / 1000;
 	struct damage_messages messages = {
 		"&+mYour &+Maxe &N&+mvibrates as it strikes $N&N&+m, causing a &+rsevere &+Rgash &N&+mand great &+Rblood &N&+rloss.&n",
 		"&+mA wicked cut from $n&N&+m's &+Maxe &n&+mcauses you to &+Rbleed &N&+rprofusely.&n",
@@ -213,28 +213,19 @@ int hellfire_axe(P_obj obj, P_char ch, int cmd, char *arg)
 		0
 	};
 
-	if (cmd == CMD_SET_PERIODIC)
-	{
-		return FALSE;
-	}
-	if (!obj || !IS_ALIVE(ch))
-	{
-		return FALSE;
-	}
-
+	P_char vict = melee_proc_target(obj, ch, cmd, arg);
 	// 1/50 chance.
-	if (cmd == CMD_MELEE_HIT && !number(0, 49))
+	if (vict && !number(0, 49))
 	{
-		vict = legacy_proc_arg<P_char>(arg);
-
-		if (obj->loc.wearing->equipment[WIELD] != obj || !dam || !IS_ALIVE(vict) ||
-		    !IS_HUMANOID(vict))
+		if (obj->loc.wearing->equipment[WIELD] != obj || !IS_HUMANOID(vict))
 		{
 			return FALSE;
 		}
 
 		// This will nerf it for pleveling - Jexni
-		melee_damage(ch, vict, (GET_LEVEL(ch) * number(3, 5)), 0, &messages);
+		if (melee_damage(ch, vict, (GET_LEVEL(ch) * number(3, 5)), 0, &messages) !=
+		    DAM_NONEDEAD)
+			return TRUE;
 		int numb = number(2, 6);
 		add_event(event_hellfire, PULSE_VIOLENCE, vict, 0, 0, 0, &numb, sizeof(numb));
 		return TRUE;
@@ -248,13 +239,11 @@ int berserker_toss(P_char ch, P_char vict, int cmd, char * /*arg*/)
 	P_obj obj;
 	int numbPCs = 0, luckyPC = 0, currPC = 0;
 
-	/*
-	 * check for periodic event calls
-	 */
+	// It tosses on its periodic tick while fighting, like the flesh golem.
 	if (cmd == CMD_SET_PERIODIC)
-		return FALSE;
+		return TRUE;
 
-	if (cmd)
+	if (cmd != CMD_PERIODIC)
 		return FALSE;
 
 	if (!IS_FIGHTING(ch))
@@ -299,6 +288,7 @@ int berserker_toss(P_char ch, P_char vict, int cmd, char * /*arg*/)
 	}
 
 	luckyPC = number(0, numbPCs - 1);
+	currPC = 0;
 
 	for (tch = world[ch->in_room].people; tch; tch = tch->next_in_room)
 	{
@@ -319,13 +309,13 @@ int berserker_toss(P_char ch, P_char vict, int cmd, char * /*arg*/)
 
 	if (!number(0, 2))
 	{
-		act("&+rFilled with &+RRAGE&n $n &+rhammers his fist into &+R$N&n&+r, sending $m flying!&n",
-		    FALSE, ch, 0, vict, TO_NOTVICT);
-		act("&+rFilled with &+RRAGE&n $n &+rhammers his fist into &+RYOU&n&+r, sending you &+RFLYING&N&+r!&n",
-		    FALSE, ch, 0, vict, TO_VICT);
-		act("&+rFilled with &+RRAGE&n&+r, you hammer your fist into &+R$N&n&+r sending $m flying!&n",
-		    FALSE, ch, 0, vict, TO_CHAR);
-		damage(ch, vict, (70 + number(0, 150)), TYPE_UNDEFINED);
+		act_trio(
+			"&+rFilled with &+RRAGE&n&+r, you hammer your fist into &+R$N&n&+r sending $m flying!&n",
+			"&+rFilled with &+RRAGE&n $n &+rhammers his fist into &+RYOU&n&+r, sending you &+RFLYING&N&+r!&n",
+			"&+rFilled with &+RRAGE&n $n &+rhammers his fist into &+R$N&n&+r, sending $m flying!&n",
+			FALSE, ch, 0, vict);
+		if (damage(ch, vict, (70 + number(0, 150)), TYPE_UNDEFINED))
+			return FALSE;
 
 		int i = 0;
 		do
@@ -348,7 +338,8 @@ int berserker_toss(P_char ch, P_char vict, int cmd, char * /*arg*/)
 		    FALSE, vict, 0, victtwo, TO_CHAR);
 		act("&+R$n&n&+r's path through the air sends $m &+Rcareening violently &N&+rinto &+R$N&n&+r!&n",
 		    FALSE, vict, 0, victtwo, TO_NOTVICTROOM);
-		damage(victtwo, vict, (GET_WEIGHT(victtwo) / 2), TYPE_UNDEFINED);
+		if (damage(victtwo, vict, (GET_WEIGHT(victtwo) / 2), TYPE_UNDEFINED))
+			return FALSE;
 		Stun(vict, ch, 2 * PULSE_VIOLENCE, TRUE);
 		Stun(victtwo, ch, 2 * PULSE_VIOLENCE, TRUE);
 		stop_fighting(victtwo);
@@ -379,24 +370,12 @@ int remo_burn(P_char vict, P_char ch, int cmd, char * /*arg*/)
 
 int illithid_whip(P_obj obj, P_char ch, int cmd, char *arg)
 {
-	P_char vict = NULL;
-	int dam = cmd / 1000;
-
-	if (cmd == CMD_SET_PERIODIC)
-	{
-		return FALSE;
-	}
-	if (!OBJ_WORN(obj) || !IS_ALIVE(ch))
-	{
-		return FALSE;
-	}
+	P_char vict = melee_proc_target(obj, ch, cmd, arg);
 	// 1/30 chance.
-	if ((cmd == CMD_MELEE_HIT) && !number(0, 29))
+	if (vict && !number(0, 29))
 	{
-		vict = legacy_proc_arg<P_char>(arg);
-
-		if (obj->loc.wearing->equipment[WIELD] != obj || !dam || !IS_ALIVE(vict) ||
-		    !IS_HUMANOID(vict) || GET_POS(vict) < POS_STANDING)
+		if (obj->loc.wearing->equipment[WIELD] != obj || !IS_HUMANOID(vict) ||
+		    GET_POS(vict) < POS_STANDING)
 		{
 			return FALSE;
 		}
@@ -404,7 +383,7 @@ int illithid_whip(P_obj obj, P_char ch, int cmd, char *arg)
 		act("&+mYour $p &+mwraps about $N&+m's legs, tripping $M up!\n&N", FALSE, ch, obj,
 		    vict, TO_CHAR);
 		act("&+m$n&+m's $p &+mwraps about $N&+m's legs, tripping $M up!\n&N", FALSE, ch,
-		    obj, vict, TO_ROOM);
+		    obj, vict, TO_NOTVICT);
 		act("&+m$n&+m's $p wraps about your legs, tripping you up!\n&N", FALSE, ch, obj,
 		    vict, TO_VICT);
 		Stun(vict, ch, PULSE_VIOLENCE * 1, TRUE);

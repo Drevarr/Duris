@@ -22,7 +22,7 @@ import tempfile
 import time
 import uuid
 
-import test_flatfile_combat_journey as journey
+import test_mariadb_combat_journey as journey
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -315,7 +315,7 @@ def run(server):
             client = journey.MudClient(plain)
             journey.create_character(client)
             client.send('save')
-            client.expect('Save complete for ' + journey.CHARACTER + '.', timeout=30)
+            client.expect('Saving ' + journey.CHARACTER + '.', timeout=30)
             # `save` leaves a command lag; let it pass so quit runs when it is sent.
             client.send('look')
             client.expect('Obvious exits', timeout=20)
@@ -367,6 +367,10 @@ def run(server):
                     ).stdout.strip() != '1':
                 assert time.monotonic() < deadline, 'newchar was not written'
                 time.sleep(0.2)
+            ownership = sql("SELECT pd.account_name,ac.account_name FROM player_data pd "
+                            "JOIN account_characters ac ON ac.pid=pd.pid AND ac.deleted_at IS NULL "
+                            "WHERE pd.name='Vexmora'").split()
+            assert ownership == [journey.ACCOUNT, journey.ACCOUNT], ownership
             sql("UPDATE player_data SET last_room=22800 WHERE name='Vexmora'")
             sql("INSERT INTO player_pets (owner_pid, mob_vnum, room_vnum, saved_at) "
                 "SELECT pid, 11, 22800, NOW() FROM player_data WHERE name='Vexmora'")

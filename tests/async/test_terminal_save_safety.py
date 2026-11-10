@@ -35,10 +35,6 @@ deferred_locker = lockers[lockers.index("static void event_deferredTerminalSave(
 deferred_locker = deferred_locker[:deferred_locker.index("\n}\n")]
 
 checks = {
-    # A MariaDB terminal save is queued like any other; the caller disposes of the
-    # character, so writeCharacter() extracts nothing there.
-    "terminal saves are queued": "const bool queued_save = true;" in files
-                                 and "persistence_should_extract_terminal_inventory" not in files,
     # Logging out never waits (persistence reset step 7): quit, rent, camp, death,
     # idle rent, link loss and heaven queue the save and the character leaves.
     "quit, rent and camp queue": "persistence_save_character_terminal(ch, RENT_INN);" in actoth
@@ -71,10 +67,7 @@ checks = {
     "missing locker character vetoes leave": "return false;" in locker_missing_character,
 }
 
-terminal_helper = actoth[
-    actoth.index("bool persistence_save_character_terminal"):
-    actoth.index("bool persistence_save_all_characters_terminal")
-]
+terminal_helper = extract_function("actoth.c", "bool persistence_save_character_terminal(")
 checks["terminal helper queues and returns"] = (
     "player_save_pipeline_request(ch, PLAYER_CHECKPOINT_COMPONENT_ALL, type, room)" in terminal_helper
     and "player_save_pipeline_terminal" not in terminal_helper
@@ -90,22 +83,6 @@ checks["copyover drains the writer after queuing every save"] = (
 checks["legacy player save retired"] = (
     "persistence_write_character_flat_fallback" not in files
     and "if (!sql_save_player(ch, type, room))" not in files
-)
-
-flat_terminal_start = files.index("#ifdef __NO_MYSQL__\n\tif (!is_locker_char &&",
-                                  files.index("int writeCharacter"))
-flat_terminal = files[
-    flat_terminal_start:files.index("#endif", flat_terminal_start)
-]
-# Only a new player's first save waits, because its domains are read right after.
-checks["flat terminal saves queue except the first baseline"] = all(
-    token in flat_terminal
-    for token in (
-        "if (establishing_baseline)",
-        "player_save_pipeline_terminal",
-        "player_save_pipeline_request(",
-        "return 0;",
-    )
 )
 
 # Ghost extraction shares one fail-closed terminal-save helper across the named

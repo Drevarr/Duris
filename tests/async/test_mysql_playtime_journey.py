@@ -17,7 +17,7 @@ import tempfile
 import time
 import uuid
 
-import test_flatfile_combat_journey as journey
+import test_mariadb_combat_journey as journey
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -118,7 +118,7 @@ def run(server):
                     # interval between two saves starts when the first was sent.
                     sent[label] = time.monotonic()
                     client.send("save")
-                    client.expect("Save complete for " + journey.CHARACTER + ".", timeout=30)
+                    client.expect("Saving " + journey.CHARACTER + ".", timeout=30)
                     value = persisted()
                     rows.append({"phase": label, "played_seconds": value, "monotonic": time.monotonic()})
                     return value
@@ -222,7 +222,7 @@ def run(server):
                     process = boot()
                     client = journey.reconnect_character(plain)
                     before_copyover = save("pre-copyover")
-                    client.send("shutdown copyover")
+                    client.send("shutdown hotboot")
                     client.expect("*** Copyover complete! ***", timeout=60)
                     assert process.poll() is None
                     after_copyover = save("post-copyover")

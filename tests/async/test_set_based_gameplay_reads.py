@@ -159,9 +159,9 @@ with tempfile.TemporaryDirectory(prefix="duris-gameplay-reads-") as temp_dir:
     subprocess.run(
         [
             "g++", "-std=c++20", "-Wall", "-Wextra", "-Wpedantic",
-            "-D__NO_MYSQL__", "-Isrc", str(source),
+            "-Isrc", "-I/usr/include/mysql", str(source),
             rel("gameplay_read_state.c"), rel("epic_task_catalog.c"),
-            "-o", str(binary),
+            "-ffunction-sections", "-fdata-sections", "-Wl,--gc-sections", "-o", str(binary),
         ],
         cwd=ROOT,
         check=True,
@@ -242,7 +242,7 @@ void epic_free_level(P_char) { assert(false); }
 int get_property(const char *, int fallback) { return fallback; }
 void clear_title(P_char) {}
 int getNewPCidNumb() { return 42; }
-bool player_revision_hydrate(int, player_revision_t) { return true; }
+bool player_revision_hydrate(int, player_revision_t, bool) { return true; }
 void sql_player_names_set(int, const char *) {}
 void find_starting_location(P_char, int) {}
 void NewbySkillSet(P_char, bool) {}
@@ -440,13 +440,13 @@ source.write_text(ASSIGNMENT_HARNESS.replace("// PRODUCTION_FUNCTIONS", assignme
 subprocess.run([
     "g++", "-std=c++20", "-Wall", "-Wextra", "-Werror", "-Wno-unused-parameter",
     "-g", "-O1", "-fsanitize=address,undefined", "-ffunction-sections", "-fdata-sections",
-    "-D__NO_MYSQL__", "-Isrc", str(source),
+    "-Isrc", "-I/usr/include/mysql", str(source),
     rel("gameplay_read_state.c"), rel("epic_task_catalog.c"),
     rel("player_snapshot_capture.c"), rel("player_snapshot_codec.c"),
     rel("pet_restore_state.c"), rel("pet_restore_runtime.c"),
     rel("item_ownership_runtime.c"), rel("item_transfer_command.c"),
     rel("critical_command.c"), str(HARNESS_STUBS),
-    "-Wl,--gc-sections", "-lcrypto", "-o", str(binary),
+    "-Wl,--gc-sections", "-lmysqlclient", "-lcrypto", "-o", str(binary),
 ], cwd=ROOT, check=True)
 subprocess.run([str(binary)], check=True, timeout=30)
 

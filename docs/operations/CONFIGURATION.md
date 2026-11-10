@@ -19,6 +19,28 @@ connection details. The server checks metadata before reading: `.env` must be
 a regular file owned by the effective server user and must grant no permission
 beyond owner read/write (`0600`).
 
+## Scheduled roaming NPCs
+
+Set `random.mapmob.populationCap=45.000` in `lib/duris.properties`. Both the
+shipped setting and the missing-key fallback are 45. Add the shipped entry to
+retained configurations before using the staff `show` or `set` command on it.
+
+Use a nonnegative whole number within signed integer range after storage.
+The properties store uses floats, so large inputs can round and the largest
+accepted stored value is 2147483520. Invalid input is rejected and a failed
+reload keeps the active settings. Zero stops scheduled attempts. Lowering the
+cap stops attempts while the current population meets or exceeds it. Existing
+NPCs remain in the world, and the next scheduled tick reads the active value.
+
+The global cap counts unmarked prototype-1255 NPCs, including off-map and
+owned instances. It excludes fixed and custom training dummies by their
+instance marker. Staff `randobj mob`,
+themed prototype 1256, and zone resets are separate creation paths. Each
+scheduled tick can attempt at most one spawn, roughly every 120 seconds.
+
+See the [runtime commands](RUNBOOK.md#scheduled-roaming-npcs) for changing the
+cap while the game is running.
+
 ## Output profiles
 
 `DURIS_OUTPUT_PROFILES_FILE` optionally names an absolute path to a versioned JSON
@@ -43,15 +65,14 @@ this source performs no database access, and reads only the reviewed property
 catalog at bootstrap. `TELEMETRY_ENABLED` must be an accepted true value
 (`TRUE`, `1`, `YES`, or `ON`) before any telemetry worker starts. Unset, false,
 malformed, or out-of-range values fail closed to the default-disabled snapshot.
-Both MariaDB and client-free (`__NO_MYSQL__`) gameplay builds use the PostHog
-worker. The legacy `sql` telemetry backend is rejected. Production export stays
+The MariaDB gameplay server uses the PostHog worker. The legacy `sql` telemetry backend is rejected. Production export stays
 disabled until separately authorized; initialize the protected quota journal
 using [OUTAGE_STORAGE.md](../telemetry/OUTAGE_STORAGE.md) before opting in.
 
 | Variable | Default when opted in | Accepted values / range | Meaning |
 | --- | --- | --- | --- |
 | `TELEMETRY_ENABLED` | disabled | `TRUE`/`1`/`YES`/`ON`; false equivalents disable | Explicitly opt into the PostHog telemetry worker. |
-| `TELEMETRY_BACKEND` | `posthog` | `posthog`, `flatfile_disabled`, `disabled`, `off` | PostHog delivery or the deliberate disabled backend. |
+| `TELEMETRY_BACKEND` | `posthog` | `posthog`, `flatfile_disabled`, `disabled`, `off` | PostHog delivery or the deliberate disabled backend; `flatfile_disabled` is a telemetry enum name, not a gameplay persistence mode. |
 | `TELEMETRY_PROPERTY_CATALOG_FILE` | required for enabled telemetry | owner-readable reviewed catalog path | Full effective-property digest to stable property-version mapping; missing or invalid input disables telemetry only. |
 | `POSTHOG_HOST` | required | `https://us.i.posthog.com` (optional trailing slash) | Fixed regional capture host. |
 | `POSTHOG_API_KEY` | required | project capture token beginning `phc_` | Never use a personal API key. |
@@ -129,17 +150,16 @@ can continue using the same runtime.
 
 ## Persistence
 
-`PERSISTENCE_MODE` selects one whole-server authority. It defaults to
-`mariadb-primary`. The accepted values are `mariadb-primary`,
-`mariadb-primary-flatfile-fallback`, and `flatfile-primary`. A MariaDB client build accepts
-`mariadb-primary`; a client-free flat build accepts `flatfile-primary`. The legacy mixed
-fallback token is recognized for a clear diagnostic but fails closed because mixed
-per-operation authority transfer is not supported.
+`PERSISTENCE_MODE` defaults to `mariadb-primary`, the only accepted value: MariaDB is
+the only persistence backend. Any other value stops the launcher and the server with a
+clear error. `FLATFILE_STATE_DIR` and `FLATFILE_BACKUP_DIR` are no longer read and can
+be removed from `.env`. This applies to local, minimal-world, test and production
+servers. Database connection failure never falls back to files. Local journals,
+receipts and recovery images still supplement MariaDB and must be backed up.
 
 | Variable | Requirement | Meaning |
 | --- | --- | --- |
-| `PERSISTENCE_MODE` | Optional; defaults to `mariadb-primary` | Select the complete persistence authority; mixed per-write failover is not supported. |
-| `FLATFILE_STATE_DIR` | Required by `flatfile-primary` | Absolute server-user-owned directory with mode `0700` or stricter. |
+| `PERSISTENCE_MODE` | Optional; defaults to `mariadb-primary` | Must be `mariadb-primary` when set. |
 | BACKUP_POLICY_FILE | Required for pre-cycle and scheduled backups | Absolute owner-only approved JSON policy; see [BACKUPS.md](BACKUPS.md). |
 | `PREBOOT_BACKUP` | Optional; off unless `1` | Have `cycle_mud.sh` take a backup before every boot, and refuse the boot when it fails. Off by default: the backup timer takes the backups. |
 | `ENVIRONMENT` | Required: `local` or `production` | Runtime trust role. |
@@ -152,7 +172,7 @@ per-operation authority transfer is not supported.
 | `DB_SOCKET` | Optional, local role only | Protected local Unix socket used instead of remote transport. |
 | `DB_TLS` | Required as `TRUE` for non-loopback hosts | Enforce encrypted database transport. |
 | `DB_SSL_CA` | Required for non-loopback hosts | Regular CA file used to verify the database server certificate. |
-| `CRITICAL_COMMAND_JOURNAL_DIR` | Required outside mini mode | Absolute server-user-owned `0700` directory for the locker identification receipts. It is named for the critical-command journal it held before the persistence reset; nothing is journaled any more. |
+| `CRITICAL_COMMAND_JOURNAL_DIR` | Required outside mini mode | Absolute server-user-owned `0700` directory for locker identification receipts, combat outcome evidence, and durable first-kit operation bindings. Preserve it with the authority backups. |
 | `MAINTENANCE_STATE_FILE` | Optional; `runtime/maintenance-scheduler.state` | Durable scheduler cursor/completion state. The server makes a missing parent directory with mode `0700`; an existing one must be server-user controlled. A write that fails is logged once per streak in `logs/log/status`. Keep it outside `bin/`, which `make clean-all` removes. Pwipe checks ancestor search access; relocate a parent nested below a cleared store before reset. |
 | `COPYOVER_STATE_FILE` | Optional; `copyover.dat` | State file a copyover writes and the new image reads; `.tmp.*` staging files share its writable directory. Docker sets `/var/lib/duris/copyover.dat`. Pwipe preflight requires canonical non-symlink paths; guarded cleanup archives its live publication, `.recovering` and `.consuming` barriers in `Players/Backup/pwipe-copyover.*` before activation. A parent nested below a cleared store is refused for retryability; direct store-root and external parents are supported. |
 
@@ -182,17 +202,7 @@ rollback and do not run two schedulers against the same authority.
 `scripts/cycle_mud.sh --check-config` validates the selected mode without starting the
 server. Add `--production` to require `ENVIRONMENT=production` and the production-port
 runtime role; the production systemd unit always supplies that flag. `--production`
-cannot be combined with `--dev` or `--minimal`. In `flatfile-primary`, the launcher
-does not require database settings, run migrations or schema checks, invoke MySQL
-shutdown logging, or select a database backup because Redis happens to be enabled. It
-snapshots the selected `FLATFILE_STATE_DIR` before boot and refuses to start if that
-snapshot fails. Build the client-free binary with
-`make -C src PERSISTENCE_BACKEND=flatfile` for this mode.
-
-Flat-file IP connection history is stored in the owner-only metadata authority so the
-existing one-hour racewar-side rule and staff/player information paths remain functional
-without a database. Treat the state root and its backups as private player data. Boot
-closes sessions left active by an interrupted prior run and refuses corrupt IP history.
+cannot be combined with `--dev` or `--minimal`.
 
 `DB_NAME` selects the requested database and `DB_ALLOWED_TARGETS` authorizes the
 resolved target. The listen port is an additional guard, not the primary selector.
@@ -389,8 +399,16 @@ process, or logging I/O for floor drops, pickups, or snapshot preflight.
 World capture is an explicitly fuzzy crash-recovery snapshot with a hard five-minute
 capture deadline. The game thread gives it at most 2 ms every second pulse, and a capture of
 the full world takes about 20 seconds; an expired capture is discarded and retried later
-rather than published. NPC inventory/equipment and
-carried gold are excluded from recovery. Before any recovery entity is created, every
+rather than published. The snapshot carries item trees for ordinary, unowned
+prototype-1255 roamers, including worn slots and item UIDs. Each roamer can
+contribute up to 512 items, including nested items. Marked training dummies
+are recreated at boot. Other NPCs follow the existing zone item rehydration
+policy. NPC currency is excluded. A later floor delta takes precedence over
+a roamer's captured tree, and current durable custody takes precedence over
+the snapshot. Readers accept existing generations that lack roamer items.
+Use a binary with roamer-item support to restore a generation that contains them.
+
+Before any recovery entity is created, every
 floor-item UID is looked up in SQL: an item captured with the room's custody must still
 have it, or nothing is restored, and an item captured without custody that an owner holds
 by then is left out with its tree. An owner holds an item when an ownership record names
@@ -591,9 +609,8 @@ allowed origins must be configured, and the local reverse proxy must terminate
 TLS before forwarding to this plaintext listener. The server refuses to create
 the production listener when those controls are absent.
 The health response reports only process and selected-persistence readiness.
-MariaDB mode reads in-memory pool state, and flat-file mode reports ready only
-after its private authority passes startup validation; neither path performs a
-blocking backing-store query. Plain telnet defaults to `7777` and TLS telnet to
+It reads in-memory pool state and performs no blocking backing-store query. Plain
+telnet defaults to `7777` and TLS telnet to
 `7778`; a custom plain-telnet port uses the following port for TLS unless
 `DURIS_TLS_PORT` provides an independent port. Configure a real `duris.crt` and
 `duris.key` in the repository root for networked TLS. The operator key must be
@@ -652,6 +669,33 @@ typing `?` at the telnet password prompt, or through the WebSocket `request_rese
 from one bounded worker thread. The feature is off unless `MAIL_ENABLED=TRUE`; while it is
 off the password prompt is unchanged and `?` answers one not-available line.
 
+With mail enabled, new accounts receive an inbox-ownership challenge on both clients.
+They can log in while verification is pending, but no recovery address is stored until
+the code is redeemed. If mail is unavailable, registration still works and leaves the
+recovery address blank. Existing accounts keep their current address until a replacement
+is verified. To add a missing address, replace an outdated one, or confirm the same inbox,
+use telnet account-menu option **5**, or the browser account **Email** tab. An address
+confirmation typed during registration only checks spelling; ownership requires the
+separate code delivered by email. No confirmation code is displayed by the server.
+
+WebSocket `change_email` takes `{ "newEmail": "player@example.com" }` and replies with
+`account/email_verification_requested` when queued; `confirm_email` takes `{ "code": "..." }`
+and replies with `account/email_changed` only after durable storage. Both require a
+player session authenticated by password. A reset code cannot verify an address, and an
+email-verification code cannot reset a password. These two purposes have separate
+10-minute account cooldowns and share the per-address request budget and bounded store.
+Verification codes use the same 15-minute expiry and five-guess limit as reset codes.
+Delivery failure removes the pending token and allows an immediate retry subject to the
+per-address budget. A definite storage failure preserves the code for retry; meanwhile
+the old recovery address stays unchanged. Changing credentials invalidates older codes.
+
+The browser login panel exposes **Forgot password?**, using the existing reset commands.
+The website login links there because both logins use the same MUD account credentials.
+If mail is disabled, email changes report that verification is unavailable; existing
+accounts can still log in. Accounts created while mail was disabled retain the legacy
+address on file; verify or replace it through the same account-menu path after activation.
+See [player instructions and staff fallback](ACCOUNT_EMAIL.md).
+
 Recovery resets the password; it never retrieves or emails the old password. A successful
 reset requires a saved email address that the player can access. The success reply, code
 consumption and disconnection of other sessions happen only after the password is stored.
@@ -665,7 +709,7 @@ disconnected requester does not cancel an already submitted write.
 
 | Variable | Requirement | Meaning |
 | --- | --- | --- |
-| `MAIL_ENABLED` | Optional; `TRUE` or `FALSE` (case-insensitive), default `FALSE` | Enable switch. Unset, empty, or `FALSE` disables password reset by email; any other value is rejected. |
+| `MAIL_ENABLED` | Optional; `TRUE` or `FALSE` (case-insensitive), default `FALSE` | Enable switch for recovery and inbox verification. Unset, empty, or `FALSE` disables them; any other value is rejected. |
 | `MAIL_HOST` | Required when `MAIL_ENABLED=TRUE` | SMTP relay host name or address, 1-253 bytes, accepted by libcurl's URL parser as a bare host (no `/`, `@`, `?`, `#`, or whitespace). Loopback means `localhost`, `127.0.0.1`, or `::1`. |
 | `MAIL_PORT` | Optional; `1`-`65535`, default `587` | SMTP TCP port. `465` selects implicit TLS (`smtps://`); every other port uses `smtp://` with STARTTLS when `MAIL_TLS` is `TRUE`. |
 | `MAIL_TLS` | Optional; `TRUE` or `FALSE` (case-insensitive), default `TRUE` | `TRUE` requires TLS for the whole session (a relay that refuses STARTTLS fails the send; there is no opportunistic mode). `FALSE` is accepted only for a loopback `MAIL_HOST` with no credentials. |

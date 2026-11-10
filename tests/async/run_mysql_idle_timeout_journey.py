@@ -17,7 +17,7 @@ import tempfile
 import time
 import uuid
 
-import test_flatfile_combat_journey as journey
+import test_mariadb_combat_journey as journey
 
 ROOT = Path(__file__).resolve().parents[2]
 IDLE_TIMEOUT = 3
@@ -80,7 +80,7 @@ def run(server):
 
             def save():
                 client.send('save')
-                client.expect('Save complete for ' + journey.CHARACTER + '.', timeout=30)
+                client.expect('Saving ' + journey.CHARACTER + '.', timeout=30)
 
             def saved_items():
                 return int(sql("SELECT COUNT(*) FROM player_items items JOIN player_data player "

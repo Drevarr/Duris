@@ -26,14 +26,11 @@ production port 7777; the default remains 4000.
 `cycle_mud.sh`:
 
 - Anchors itself to the repository root; loads `.env` if present.
-- Requires `ENVIRONMENT` in every mode. Database-backed modes also require `DB_HOST`,
-  `DB_USER`, `DB_PASSWD`, `DB_NAME`, and `DB_ALLOWED_TARGETS`; `flatfile-primary`
-  instead requires an absolute `FLATFILE_STATE_DIR`. It has no source-code credential
-  fallback.
-- Runs schema verification and MySQL shutdown logging only for a database-backed
-  mode. Automatic migration application additionally requires `ENVIRONMENT=local`;
-  production verifies the schema and does not migrate at boot. A `flatfile-primary`
-  launch does not invoke those database tools, even when Redis is enabled.
+- Requires `ENVIRONMENT`, `DB_HOST`, `DB_USER`, `DB_PASSWD`, `DB_NAME`, and
+  `DB_ALLOWED_TARGETS`. It has no source-code credential fallback.
+- Runs schema verification and MySQL shutdown logging. Automatic migration application
+  additionally requires `ENVIRONMENT=local`; production verifies the schema and does not
+  migrate at boot.
 - Raises core dump limits (`ulimit -c unlimited`).
 - Rebuilds area tools and regenerates `areas/world.*` when the `make_*`
   helpers are missing.
@@ -225,7 +222,7 @@ socket. DurisWeb's companion [PR #118](https://github.com/LuminariMUD/DurisWeb/p
 fixes the previous generic-dialog replacement. Verify the actual deployed client
 with `run_pwipe_launch_browser_journey.py` against a disposable gate before relying
 on its opening-time display. The socket journey
-`run_pwipe_launch_gate_journey.py` covers both maintained admission backends;
+`run_pwipe_launch_gate_journey.py` covers MariaDB admission;
 `run_pwipe_runtime_journey.py` includes the armed launcher-cleanup/new-season case.
 
 Before opening, verify approved entry, public refusal and restart persistence on
@@ -263,13 +260,6 @@ means SQL/Redis/reward processing is incomplete; a non-NULL value means those st
 finished and filesystem cleanup remains. The launcher keeps status `resetting`
 through cleanup, then atomically activates that exact epoch and records the final
 completion time. Only then does it print `Wiped!`.
-
-`shutdown pwipe` is unsupported in `flatfile-primary` and refuses immediately,
-before scheduling a countdown or cancelling an existing reboot. The real client-free
-server journey proves unchanged player snapshot/legacy files and continued save,
-logout, reconnect and another boot. A MariaDB client binary refuses flatfile-primary
-at startup; hybrid fallback mode is also rejected by existing configuration. This
-is rejection qualification, not a successful flat-file wipe.
 
 Account rewards follow `lib/account_rewards.cfg`: preserving grants does not
 preserve old inventory or summon-to-body links. Eligible new characters on the
@@ -450,8 +440,12 @@ Fresh UID leases and isolated old physical recovery inputs prevent those histori
 from constructing or rewarding an old item. Legacy quest-trophy history has no
 enabled current gameplay caller; critical-test counters have no normal asset reader.
 
-The former `CRITICAL_COMMAND_JOURNAL_DIR` now holds only
-`locker-identification/<pid>.receipt` service receipts. Their filenames and encoded
+The former `CRITICAL_COMMAND_JOURNAL_DIR` holds locker-identification service
+receipts, combat-outcome evidence and `starter-kits/<pid>.kit` operation bindings.
+Preserve starter bindings with the authority snapshot; never remove one to force
+an automatic replacement kit. A backup refuses new or changed kit records during
+capture so completed grants cannot be paired with stale pending evidence.
+`locker-identification/<pid>.receipt` service receipts retain their own rules. Their filenames and encoded
 payment identities bind PID/account/side. Preserve prepared/paid/failed/delivered
 receipts: a recreated character gets a higher PID and cannot load/charge its old
 receipt, even on the same account. This is receipt identity, not a new season field.
@@ -460,8 +454,7 @@ filename and proves fresh identification works without altering retained bytes.
 
 Normal MariaDB account admission calls `sql_load_account` / `sql_save_account`;
 player admission selects the SQL load repository in `player_load_pipeline.c`.
-The client-free build selects its explicit flat-file provider and
-`FLATFILE_STATE_DIR/identities/accounts`; mixed fallback mode is refused. Legacy
+Legacy
 `lib/players`, `lib/accounts`, fallback and quarantine entries remain policy/
 historical inventory labels, not automatic current SQL fallback inputs. Explicit
 pfile inspection/import commands use `SAVE_DIR` (`Players`) or artifact import
@@ -470,10 +463,7 @@ paths; do not use old-season import sources to repopulate a fresh season.
 Keep `Accounts/email.db` when optional email verification is enabled, site bans in
 `lib/misc/ban_sites`, and invitation/accepted/declined-name policy under `Players`.
 These account/admission controls survive; byte-exact synthetic canaries cover the
-actual paths during cleanup. In a client-free installation the whole
-`FLATFILE_STATE_DIR` namespace remains authoritative and untouched: pwipe refuses
-before countdown/mutation. This does not claim flat-file wipe support. Specific
-protected flat-file domain/journal entries remain independently inventoried.
+actual paths during cleanup.
 
 MUD mail is character-name scoped, independent of current SQL PID/account identity.
 Normal boot reads `Accounts/mail`, or `Players/mail` when the preferred path is
@@ -564,7 +554,7 @@ must leave their live paths before a new season activates. The guarded filesyste
 step archives the publication, claim and either `.consuming` barrier directory
 under a private `Players/Backup/pwipe-copyover.*` directory, with the configured
 source path recorded. A consumption barrier may be empty or contain only its native
-`image`. Existing images must be readable regular files with native `COPY` magic;
+`image`. Existing images must be readable regular files with native `COPY` or `CPYP` magic;
 symlinks, unknown types/content, inaccessible parents and unsafe backup paths fail
 preflight before destructive SQL. Canonical absolute or data-root-relative custom
 paths with existing parent directories are supported, including a separate state
@@ -715,7 +705,7 @@ reviewed property catalog and protected outage directory unchanged.
    separately before claiming the entire external cutover.
 
 `test_telemetry_runtime_integration.py --posthog` rehearses the worker/CLI/HTTPS
-sequence in a private directory for both compiled backend variants. It checks
+sequence in a private directory with controlled repository boundaries. It checks
 active-owner refusal, complete drain/reap, archived bytes, idempotence, stale and
 new environment bindings, distinct same-subject identities and zero new HTTP on
 that day. The outage fault harness separately proves next-day allocation and
@@ -732,7 +722,7 @@ credentials:
 ./scripts/cycle_mud.sh --check-config
 
 # Inspect names only. Do not print or copy secret values.
-sed -n 's/^\(ENVIRONMENT\|PERSISTENCE_MODE\|FLATFILE_STATE_DIR\|DB_HOST\|DB_PORT\|DB_NAME\|DB_ALLOWED_TARGETS\)=.*/\1=<set>/p' .env
+sed -n 's/^\(ENVIRONMENT\|PERSISTENCE_MODE\|DB_HOST\|DB_PORT\|DB_NAME\|DB_ALLOWED_TARGETS\)=.*/\1=<set>/p' .env
 
 # Source-only contract checks; these do not connect to a configured database.
 python3 tests/async/test_runtime_connection_trust.py
@@ -819,13 +809,6 @@ player data.
 | `logs/log/cmd.debug` | The last 500 player commands, written when the server exits or crashes; a say, tell or other conversation command keeps only its command word |
 | `logs/log/wizlog` | Immortal commands |
 | `logs/duris-console.log` | stdout/stderr of the supervised process |
-
-In `flatfile-primary`, events sent through the database-backed audit logger remain
-available in the ordinary files above: staff events use `logs/player-log/wizcmds`,
-experience events use `logs/log/exp`, and player, quest, connection, and session events
-use `logs/player-log/player`. Each entry retains its kind, player ID and name, IP, zone,
-room, and message. Control characters are flattened so one event cannot forge another
-log line.
 
 Account password recovery by email writes to two of those files. At boot `logs/log/status`
 carries the disposition: `Account recovery enabled (smtp port=<port> tls=<0|1>).` when
@@ -946,7 +929,9 @@ the exact bounded top ten describe that window, not process lifetime. Check
 with debug profiling off. They distinguish playing, nanny, pager, editor, SSL,
 and descriptor maintenance. `unattributed_sweep_us` covers work outside the
 explicit scopes, including gates and dequeue. Playing labels use canonical
-command names or `unknown`; arguments and nanny/editor input are excluded.
+command names or `unknown`; arguments and nanny/editor input are excluded,
+except that `get` and `take` also report sanitized `args` and `bulk_items`, the
+number of items a `get all` selected.
 Reports retain at most eight slow operations and throttle output to one report
 per four pulses, carrying suppression counts and the worst suppressed operation
 into the next due report. A small event bucket does not explain a large command
@@ -976,8 +961,7 @@ callback timing, completion/abort, and queued input. Each segment of a cast is d
 the tick the one before it was due plus its own length, so a callback that ran late
 shortens the next segment: a cast finishes at its cast time plus the lateness of its
 last segment, or later only by the one-pulse minimum a segment keeps.
-`tests/async/run_cast_timing_probe.py` measures this on a full-world flat-file server,
-with `--budget-usec` to load the event pass. Aggregate scheduler samples alone do not
+Aggregate scheduler samples alone do not
 establish a particular player's delay or justify changing NPC cadence, priority
 ordering, or budgets.
 
@@ -1178,14 +1162,12 @@ already expired old deadline produces one zero-score tied result at activation,
 then a new full round; it does not create a chain of historical contests.
 
 SQL pwipe initializes 31/31 and zero scores from the persisted reset start, with
-deadline plus 72 hours. Same-epoch retries retain that cutoff. Flat-file pwipe
-remains unsupported: a new season needs a selected fresh authority root and an
-explicit fresh floor of 31, preserving the old root.
+deadline plus 72 hours. Same-epoch retries retain that cutoff.
 
 Apply `0057_shared_frag_cap` before activation. After activation, rollback must
-retain the new snapshot/read path or use a forward fix. Old flat-file binaries
-ignore race state; old SQL maintenance updates only projections. Neither safely
-runs an activated race. Never clear scores or reduce caps as a rollback shortcut.
+retain the new snapshot/read path or use a forward fix. Old SQL maintenance updates
+only projections and cannot safely run an activated race. Never clear scores or
+reduce caps as a rollback shortcut.
 Production migration/reset/deployment requires owner authorization. Implementation
 and scoped qualification are recorded in [#508](https://github.com/LuminariMUD/Duris/issues/508).
 
@@ -1248,7 +1230,7 @@ These are investigated and understood; they are not signs of a failed boot.
 | Script | Purpose |
 |--------|---------|
 | `scripts/backup_pfiles.sh` | Publish verified full generations under the approved policy; also gates each cycle iteration. |
-| `scripts/restore_flatfile_backup.sh` | Qualify a flat-file generation in a fresh isolated candidate with current erasure evidence. |
+| `scripts/restore_flatfile_backup.sh` | Qualify a backup generation in a fresh isolated candidate with current erasure evidence. |
 | `scripts/delete_corpses.sh` | Retired safety stub; exits nonzero without reading or changing MySQL or Redis. |
 | `scripts/clear-redis.sh` | With the game stopped, use the scoped maintenance ACL identity to delete only the configured `REDIS_NAMESPACE`, legacy `mud:*`, and retired `ship:snapshot:*` keys from an explicitly confirmed, local, allow-listed Redis target; unrelated keys are preserved. |
 | `scripts/import_help_to_prod.sh` | Import help sources to MySQL; use `--dry-run` first and treat `--clean` as destructive. |
@@ -1284,14 +1266,15 @@ backup identity, restore it under an explicitly non-production name on a loopbac
 host, and set `ENVIRONMENT`, `DB_HOST`, `DB_NAME`, and `DB_ALLOWED_TARGETS` so the
 clone is the only permitted target. Keep the original backup untouched.
 
-Before converting locker authority to flat files, run the read-only, aggregate-only
+For a read-only, aggregate-only audit of imported account lockers, run
 `migrations/check_flatfile_account_locker_conversion.sh --expect-count <known-count>`
 against that clone. It proves each `account.<account>.<side>.locker` row maps to an
 authoritative account and valid racewar side, and checks owner fields, chests, item
 custody identifiers, duplicate active UIDs, and access references. Quarantined or
 otherwise inactive legacy payload rows are outside this authority conversion and remain
 subject to their separate recovery workflow. Any nonzero mismatch or unexpected total
-blocks the cutover; the checker never emits account or locker names.
+blocks a repair; the checker never emits account or locker names. Its retained
+filename does not provide or authorize a flat-file persistence conversion.
 
 The legacy runner is mutation-capable and has no dry-run mode. `--help` is safe, and an
 unknown argument is rejected before configuration is loaded. A normal no-argument run
@@ -1617,14 +1600,79 @@ availability, random equipment). Property/config changes take effect on
 restart without recompilation; check the owning subsystem docs before
 editing.
 
-One property is a live balance switch worth knowing about:
-`artifact.wars.modifier` scales the race-war penalty applied by
-`event_artifact_wars` -- each of a violating player's artifacts loses
-`modifier x punish_level` of its remaining life, clamped to the whole of it.
-The code default is `0.0` (forced drop only), but `lib/duris.properties` ships
-`artifact.wars.modifier=0.500`, so a server using that file halves the
-offender's artifact timers on a first-level violation. Set it to `0` to disable
-the timer penalty.
+`artifact.wars.modifier=0.000` is the shipped setting and matches the code
+default: artifact hoarding causes forced drops without timer loss or damage.
+A player may hold one major artifact, one unique and one ioun. Holding two or
+more of any one type triggers the periodic `event_artifact_wars_sql` check,
+which drops every artifact the player wears or carries, including other types.
+Even a brief ownership overlap can be caught; the sweep interval is not a
+personal grace period. The scope of which artifacts drop is unchanged by this
+timer-policy fix ([issue #861](https://github.com/LuminariMUD/Duris/issues/861)).
+
+Keep this modifier at zero for the intended drop-only rule. A positive override
+still cuts every artifact timer on the violating holder by
+`modifier x punish_level` of its remaining life, clamped to the whole of it;
+the level is the sum of the excess counts above one per type. For example,
+`0.500` halves each timer when the holder has two artifacts of one type.
+Existing installations must also apply the zero setting to their deployed
+properties and reload or restart; changing the repository does not change a
+running server's in-memory setting.
+
+### Scheduled roaming NPCs
+
+The global scheduled roaming NPC cap defaults to 45. A cap of zero disables
+scheduled attempts. Lowering the cap stops attempts while the population is
+at or above the new limit. See the [setting and scope](CONFIGURATION.md#scheduled-roaming-npcs).
+
+```text
+properties show random.mapmob.populationCap
+properties set random.mapmob.populationCap 45
+properties diff
+properties save
+properties revert
+properties reload
+```
+
+`set` updates memory for the next scheduled attempt, and `diff` shows unsaved
+changes. `save` writes them to disk, `revert` restores the last loaded or saved
+baseline, and `reload` reads the file and replaces unsaved values. An invalid
+cap rejects a matching set command or file reload before applying changes. If
+an older file lacks the key, add the shipped entry and reload before using
+`show` or `set` on it.
+
+#### Diagnose a full cap or a suspected legacy target
+
+1. Identify the running executable through the service PID. Match its hash
+   or build ID against the deployed artifact and record the source revision.
+   Check that revision for the instance-marker exclusion in
+   `spawn_random_mapmob()`. Record the active cap with `properties show`
+   and compare it with the service's `lib/duris.properties`. The missing-key
+   fallback is 45 on builds with the setting.
+2. Use a symbol-matched, read-only diagnostic with the service owner's
+   coordination. A debugger attach briefly stops the game. Walk the live
+   `character_list`, selecting NPCs whose `mob_index[R_num].virtual_number`
+   is 1255. Count each group using `only.npc->training_dummy`, and record
+   each candidate's runtime ID, NPC ID, room vnum, base HP, and act flags.
+   Only the unmarked group counts. Also record the latest boot's recovery
+   mode, checkpoint or generation, and the checkpoint's writer revision
+   where available. The population probe in the [generated NPC
+   journey](../../tests/async/test_generated_npc_journey.py) shows the field
+   traversal. Its test actions are for disposable processes.
+3. Current file and Redis writers omit marked targets. Boot recreates one
+   fixed target per selected room. Custom targets disappear on recovery.
+   Older writers could save a target without its marker, and recovery cannot
+   reconstruct the marker. If that is suspected, inspect a private copy of
+   the checkpoint in an isolated instance. Correlate the record, writer
+   history, and live NPC identity. Prototype, room, name, HP, and sentinel
+   state are supporting observations. They cannot establish provenance alone.
+4. With owner authorization and positive identification, go to the
+   candidate's room and use `stat mob <keyword>` to confirm the instance
+   number and vnum. Use targeted `purge <keyword>` only when it resolves to
+   that same individual in the room. Recount by marker after extraction
+   and verify that only the identified unmarked instance left, fixed
+   targets remain, and the next eligible scheduler tick can replenish a
+   slot below the cap. With uncertain identity, preserve the checkpoint
+   and record the unresolved case.
 
 ## Development vs production checklist
 

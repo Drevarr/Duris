@@ -30,9 +30,11 @@ struct player_revision_entry
 	player_revision_t acknowledged_revision = 0;
 	player_revision_t written_revision = 0;
 	player_component_mask_t unacknowledged_components = 0;
+	player_component_mask_t failed_components = 0;
 	std::array<player_revision_t, CHECKPOINT_COMPONENT_COUNT> component_revisions = {};
 	bool overflowed = false;
 	bool session_ended = false;
+	bool initial_creation = false;
 };
 
 std::unordered_map<int, player_revision_entry> revision_states;
@@ -60,7 +62,7 @@ void clear_acknowledged_components(player_revision_entry &state, player_revision
 }
 } // namespace
 
-bool player_revision_hydrate(int pid, player_revision_t durable_revision)
+bool player_revision_hydrate(int pid, player_revision_t durable_revision, bool initial_creation)
 {
 	if (pid <= 0)
 		return false;
@@ -75,8 +77,10 @@ bool player_revision_hydrate(int pid, player_revision_t durable_revision)
 		state->current_revision = durable_revision;
 		state->acknowledged_revision = durable_revision;
 		state->written_revision = durable_revision;
+		state->failed_components = 0;
 		state->component_revisions.fill(durable_revision);
 		state->session_ended = false;
+		state->initial_creation = initial_creation;
 		return true;
 	}
 
@@ -86,6 +90,7 @@ bool player_revision_hydrate(int pid, player_revision_t durable_revision)
 	try
 	{
 		player_revision_entry entry;
+		entry.initial_creation = initial_creation;
 		entry.current_revision = durable_revision;
 		entry.acknowledged_revision = durable_revision;
 		entry.written_revision = durable_revision;
@@ -151,13 +156,28 @@ bool player_revision_acknowledge_durable(int pid, player_revision_t revision,
 	return true;
 }
 
-bool player_revision_record_written(int pid, player_revision_t revision)
+bool player_revision_record_failed(int pid, player_component_mask_t components)
 {
 	player_revision_entry *state = find_state(pid);
-	if (!state)
+	if (!state || !valid_components(components))
 		return false;
-	if (revision > state->written_revision)
+	state->failed_components |= components;
+	return true;
+}
+
+bool player_revision_record_written(int pid, player_revision_t revision,
+				    player_component_mask_t components)
+{
+	player_revision_entry *state = find_state(pid);
+	if (!state || !valid_components(components))
+		return false;
+	// Completions arrive in writer order. A later partial success cannot stand
+	// in for failed components until a successful capture includes them again.
+	state->failed_components &= ~components;
+	if (!state->failed_components && revision > state->written_revision)
 		state->written_revision = revision;
+	if (revision)
+		state->initial_creation = false;
 	return true;
 }
 
@@ -175,6 +195,7 @@ bool player_revision_snapshot_copy(int pid, struct player_revision_snapshot *sna
 		.unacknowledged_components = state->unacknowledged_components,
 		.overflowed = state->overflowed,
 		.session_ended = state->session_ended,
+		.initial_creation = state->initial_creation,
 	};
 	return true;
 }

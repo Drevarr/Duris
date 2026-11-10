@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Runtime and source contracts for player revision/component state."""
 
-from _paths import SRC, rel
+from _paths import SRC, extract_function, rel
 import subprocess
 import tempfile
 from pathlib import Path
@@ -65,7 +65,7 @@ int main()
     assert(snapshot.unacknowledged_components == 0);
     assert(player_revision_dirty_count() == 0);
     assert(!player_revision_queue(7, &revision, &components));
-    assert(player_revision_record_written(7, 7));
+    assert(player_revision_record_written(7, 7, PLAYER_CHECKPOINT_COMPONENT_ALL));
     assert(player_revision_snapshot_copy(7, &snapshot));
     assert(snapshot.written_revision == 7);
 
@@ -80,6 +80,15 @@ int main()
     assert(player_revision_snapshot_copy(8, &snapshot));
     assert(snapshot.current_revision == std::numeric_limits<player_revision_t>::max());
     assert(snapshot.overflowed);
+
+    assert(player_revision_hydrate(9, 0));
+    assert(player_revision_snapshot_copy(9, &snapshot) && !snapshot.initial_creation);
+    player_revision_forget(9);
+    assert(player_revision_hydrate(9, 0, true));
+    assert(player_revision_snapshot_copy(9, &snapshot) && snapshot.initial_creation);
+    assert(player_revision_record_written(9, 1, PLAYER_CHECKPOINT_COMPONENT_ALL));
+    assert(player_revision_snapshot_copy(9, &snapshot) && !snapshot.initial_creation);
+    player_revision_forget(9);
 
     player_revision_forget(7);
     assert(!player_revision_snapshot_copy(7, &snapshot));
@@ -144,8 +153,11 @@ print("[PASS] additive guarded schema initializes legacy and new rows at revisio
 FILES = (SRC / "files.c").read_text()
 forget = FILES[FILES.index("character_delete_result forget_deleted_character("):]
 assert "player_revision_forget(deleted.pid);" in forget[:forget.index("\n}\n")]
-delete = FILES[FILES.index("void delete_character(P_char ch, bool delete_locker,"):]
-assert delete.index("sql_read_work(") < delete.index("done(forget_deleted_character(deleted));", delete.index("sql_read_work("))
+entry = extract_function("files.c", "void delete_character(P_char ch, bool delete_locker,")
+assert "delete_character_identity(deleted, delete_locker," in entry
+delete = extract_function("files.c", "delete_character_identity(const deleted_character &deleted")
+sql_delete = delete
+assert sql_delete.index("sql_read_work(") < sql_delete.index("done(forget_deleted_character(deleted));")
 assert "player_revision_forget" not in SQL_PLAYER
 
 # A rename keeps the pid, so it leaves the revision state alone.

@@ -30,9 +30,8 @@ and [Verification](#verification) for executable checks.
   catalogs, reward pools, target suitability, geographic membership, and selection bounds.
 - [actcomm.c](../../src/cmd/actcomm.c) and
   [fight.c](../../src/combat/fight.c): the ASK and killer/group KILL hooks.
-- [sql.c](../../src/sql/sql.c) and
-  [flatfile_world_quest_history.c](../../src/flatfile/flatfile_world_quest_history.c):
-  backend-specific completion history and daily counts behind `sql_world_quest_*`.
+- [sql.c](../../src/sql/sql.c): MariaDB completion history and daily counts
+  behind `sql_world_quest_*`.
 - [difficulty.c](../../src/world/difficulty.c) and
   [currency_transaction.c](../../src/economy/currency_transaction.c): difficulty
   scales and the wallet/payment completion boundary.
@@ -100,8 +99,10 @@ Let `C` be that character's current level at the relevant reward call, `L` the
 saved accepted quest level, and `N` the original KILL quota.
 
 - **Items:** ASK and one-kill tasks guarantee one personal item at completion.
-  A KILL quota `N` adds an independent 10% bonus-item roll for each kill after
-  the first: `1 + Binomial(N - 1, 0.1)`. Nine kills therefore average 1.8 items;
+  A KILL quota `N` adds an independent one-in-`N + 1` bonus-item roll for each
+  kill after the first: `1 + Binomial(N - 1, 1 / (N + 1))`. That averages
+  `2N / (N + 1)` items, the historical mean for a character credited with every
+  kill, without its zero-item outcomes. Nine kills therefore average 1.8 items;
   exactly one has probability 43.046721%, and two or more 56.953279%. Rewards
   are delivered together at completion. Quotas outside 1–4096 retain the task
   for staff diagnosis, so all possible quantities fit the snapshot object limit.
@@ -144,7 +145,7 @@ or add a second XP bonus. KILL XP still uses rest active at each credited kill.
 The item count is rolled once and retained in `quest_reward_item_count`; failure
 while preparing a later item defers the complete batch and saves that decision
 for retry. The detached items, count, completion history, and a pending-reward marker commit together
-through the player-save transaction (MariaDB or the flatfile authority journal).
+through the MariaDB player-save transaction.
 The final KILL XP is credited before the remaining reward is calculated; the
 completed task retains those reward values for retry. Other remaining rewards
 and task reset wait for confirmed item publication. A rejected capture keeps the
@@ -161,7 +162,7 @@ or recording history again. The marker temporarily stores XP, epics and copper
 in the completed task's receiver, shares and credited-kill fields; these fields
 resume their ordinary meanings when the task is reset.
 ASK pending states 6 (RESTED) and 7 (WELLRESTED) preserve this eligibility in the
-existing `quest_accomplished` field on both backends; no migration is required.
+existing `quest_accomplished` field in MariaDB; no migration is required.
 Older pending state 2 has no captured eligibility and keeps delivery-time rest.
 An unfinished legacy quest uses the new quantity formula on completion; already
 completed legacy work with no saved count keeps its original one-item entitlement.
@@ -172,7 +173,7 @@ The single history row describes the base item; it is not a list of bonus items.
 [world_quest_policy.c](../../src/world/world_quest_policy.c) builds the global
 catalog once at boot through `calc_zone_mob_level()`, after world indexes,
 special procedures, and map setup.
-Both persistence backends use loaded content; `zones.quest_zone` is not an
+MariaDB gameplay uses loaded content; `zones.quest_zone` is not an
 approval list. Repeated quest requests reuse cached mobile profiles, reward
 pools, and per-level scores rather than scanning all prototypes or querying SQL
 for zone eligibility. Temporary probes restore live entity counts.
@@ -191,23 +192,17 @@ absent requires accepted level 41 or higher.
 books, quivers, instruments, spellbooks, totems, shields, fireweapons, weapons,
 and potions, with these exclusions:
 
-- `ITEM_NORENT`, `ITEM_TRANSIENT`, `STRUNG_KEYS`, `ITEM2_QUESTITEM`, artifacts,
-  `IS_NOSHOW`, weight above 99, and the `_noquest_` keyword.
+- `ITEM_NORENT`, `ITEM_TRANSIENT`, `STRUNG_KEYS`, `ITEM2_QUESTITEM`,
+  `ITEM2_CRUMBLELOOT`, artifacts, `IS_NOSHOW`, weight above 99, and the
+  `_noquest_` keyword.
 - Granted affects for stone skin, hide, sneak, flight, nofear, air/earth aura,
   inertial barrier, reduce, globe, haste, detect invisible, or detect illusion.
-- Every explicit item input or output in the loaded static `quest_index`,
-  whether or not a builder set `ITEM2_QUESTITEM`. Type-based static goals do
-  not enumerate additional VNUMs for this exclusion.
 
-Each zone then withholds its most valuable `world.quest.reward.top.withheld.percent`
-(configured 5%, missing-key fallback 20%) of source-eligible items, rounded up and
-including value ties. If ties would remove the entire pool even though the
-rounded requested count is smaller than the pool, withholding is suppressed.
-A sole item is still removed. This ceiling is calculated before level filtering.
-Remaining rewards must have positive `itemvalue` and pass `2 * itemvalue >= L`
-to enter that level's pool. Counts, means, and scores use only this final pool.
-The boot log reports `withheld_quest_items`, `withheld_top_value`, and the effective percentage. The setting
-is read when the catalog is built, so a change applies at the next boot.
+Ordinary items that static quests reference are eligible, and there is no top-value
+ceiling, so a zone's most valuable eligible items can be awarded. Eligible rewards
+must have positive `itemvalue` and pass `2 * itemvalue >= L` to enter that level's
+pool. Counts, means, and scores use only this final pool. The catalog is built at
+boot. `random_recipe()` draws from the zone's unleveled list of these same items.
 
 For eligible zones, the relative selection weight is
 `exp(-abs(average_level - L) / 6) * (average_ivalue / L) * eligible_item_count`.
@@ -270,8 +265,10 @@ The boot catalog uses surface continent identities and undirected authored
 map-to-map adjacency for Underdark components, ignoring travel conditions.
 Interior zones attach to the nearest authored zone boundary for each family
 separately, allowing nearby connector zones without flooding every connected
-interior. Multiple entrances in the same region agree; tied boundaries in
-different regions remain unresolved for that family. Surface and Underdark
+interior. Heavens (zone 0) is excluded from attachment boundaries and interior
+connections: its staff shortcuts must not make unrelated areas local. Multiple
+entrances in the same region agree; tied boundaries in different regions remain
+unresolved for that family. Surface and Underdark
 attachments do not conflict. Interiors cannot merge Underdark components.
 Ambiguous geography preserves accepted work as unproven; a known matching
 family still permits the task even if the other family is ambiguous.
@@ -488,14 +485,6 @@ differ; in particular `world.quest.share.max` falls back to 0 but this file sets
   multiplied by a remaining-time percentage clamped to 1–100.
   Its C++ fallback is 1.0. `world.quest.cost.abandon.time=24` is the decay
   period in hours (also fallback 24).
-- `world.quest.reward.top.withheld.percent=5` is read while building the boot
-  catalog. Its inclusive range is 5–25%; the missing-key default is 20%.
-  Finite values are clamped before integer conversion, and fractional values
-  truncate toward zero. Nonfinite values use 20% with a diagnostic. The catalog
-  startup message reports the effective percentage. Changing the property
-  requires restarting the server to rebuild the catalog; a property reload
-  alone does not change the pools. Boundary ties and small-pool rounding can
-  withhold more than the configured fraction.
 
 The checked-in `difficulty.dial.world.quest=5` is neutral (multiplier 1).
 The [difficulty functions](../../src/world/difficulty.c)
@@ -533,8 +522,8 @@ the increment relies on the subsequent positive XP credit to mark that component
 dirty rather than marking it directly. A zero-credit path does not itself mark
 the partial kill dirty; persistence then depends on another STATUS save trigger.
 
-Completion history is separate: SQL uses `world_quest_accomplished` with an
-asynchronous login/lazy-read cache; flatfile uses `<FLATFILE_ROOT>/players/<pid>.world-quests`.
+Completion history is separate: MariaDB uses `world_quest_accomplished` with an
+asynchronous login/lazy-read cache.
 SQL history reads return completion timestamps and count them against the UTC day
 when the cache is published; a read finishing after midnight cannot consume the
 new day's allowance with yesterday's completions. A completion/confirmed
@@ -547,16 +536,12 @@ Successful completion and a paid abandonment of progressed KILL work create
 history; purchasing, sharing, and free replacement do not.
 
 Completion history and the associated player after-image commit together in
-SQL or the flatfile authority journal. A progressed KILL abandonment reserves
+MariaDB. A progressed KILL abandonment reserves
 its fee until that transaction commits. If history cannot be written, a guarded
 fallback saves unrelated player changes with the pre-completion task and purse;
-a committed completion cannot be undone by replaying that fallback. Flatfile
-history is versioned and SHA-256 checked, with a 100,000-entry limit; it stores
-target, level, and time rather than SQL's giver/reward details. Target exclusions
-use all retained history.
-Unready SQL history and corrupt/unreadable flatfile history block new assignment
-and sharing checks. A genuinely absent flatfile history file starts as empty
-history. Current assignment snapshots do not reconstruct lost history.
+a committed completion cannot be undone by replaying that fallback. Target
+exclusions use all retained history. Unready SQL history blocks new assignment
+and sharing checks. Current assignment snapshots do not reconstruct lost history.
 
 ### Staff inspection and troubleshooting
 
@@ -602,18 +587,16 @@ the owning source paths above as well. Run each focused script below with
   300 scenarios also exercise level/zone boundaries, geography, route immunity,
   history/probe caps and refunds, followed by 10 SQL-history scenarios.
 - [test_world_quest_reward_policy.py](../../tests/async/test_world_quest_reward_policy.py):
-  executable withholding math and source contracts for reward filtering,
+  executable catalog construction and source contracts for reward filtering,
   sharing limits, fees, completion batches, and independent bonus rolls.
 - [test_world_quest_failure_feedback.py](../../tests/async/test_world_quest_failure_feedback.py):
   source assertions for failed assignment feedback, refunds, and preserved state.
 - [test_world_quest_xp_feedback.py](../../tests/async/test_world_quest_xp_feedback.py):
-  production reward/XP bodies with controlled dependencies on both backends,
+  production reward/XP bodies with controlled dependencies,
   including credited feedback, modifiers, ceilings, and zero-credit paths.
 - [test_world_quest_remaining_unloaded.py](../../tests/async/test_world_quest_remaining_unloaded.py):
   production score/status serialization and quest text with unknown allowance,
   missing labels, completed work, and read-only rendering.
-- [test_flatfile_world_quest_history.py](../../tests/async/test_flatfile_world_quest_history.py):
-  flatfile completion records, daily counting, corruption, and persistence.
 
 [run_world_quest_dual_backend.py](../../tests/async/run_world_quest_dual_backend.py)
 is a separate full-world qualification, not a routine documentation check. It
@@ -623,8 +606,7 @@ accounts/databases/state roots, never the repository `.env` or long-running
 local stack. Its gameplay cases exercise real grants, ordinary outbound/return
 travel, ASK/KILL completion, and partial progress across restart. Its recovery
 case exercises paid maps, invalidation, relogin/restart, and durable free
-replacement. Test-only `DURIS_WORLD_QUEST_BACKEND` selects `mariadb`, `flatfile`,
-or `both` (default). `DURIS_WORLD_QUEST_JOURNEY` selects `recovery`, `gameplay`,
+replacement. `DURIS_WORLD_QUEST_JOURNEY` selects `recovery`, `gameplay`,
 `both` (default), or `audit` for the loaded-world audit/observer timing pass.
 `reported` checks the Quietus, Bloodstone and Tharnadia purchase/abandon/regrant
 reports, consent/sharing/maps with locked exits, restart state for both players,
@@ -633,19 +615,18 @@ only in that run's private properties copy.
 `history` constructs yesterday-only completion history and an aged Tharnadia
 task, then checks real abandonment/regrant and restart. Its disposable MariaDB
 session clock constructs old-query-day/new-publication-day results and is
-restored before the completion marker; flatfile supplies the equivalent
-past-day-history control. `history-failure-restart` rejects history writes,
+restored before the completion marker. `history-failure-restart` rejects history writes,
 credits an unrelated wallet change, and checks recovery through restart and retry.
 Focused gameplay cases can be selected with `DURIS_WORLD_QUEST_GAMEPLAY_CASES=30:1`;
 the full matrix is `11:2,11:1,29:1,29:2,30:1` (KILL=1, ASK=2). For example:
 
 ```sh
-DURIS_WORLD_QUEST_BACKEND=flatfile DURIS_WORLD_QUEST_JOURNEY=gameplay \
+DURIS_WORLD_QUEST_JOURNEY=gameplay \
   DURIS_WORLD_QUEST_GAMEPLAY_CASES=30:1 \
   python3 tests/async/run_world_quest_dual_backend.py
 ```
 
-That focused run qualifies one backend/case, not the full default matrix.
+That focused run qualifies one MariaDB gameplay case, not the full matrix.
 The gameplay debugger sets the disposable Chaos actor's requested level and
 selects an otherwise eligible zone/prototype with ordinary outward/return paths
 for completion testing. Production selection still validates the chosen target.

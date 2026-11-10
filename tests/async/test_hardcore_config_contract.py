@@ -100,9 +100,11 @@ assert "hardcore_config_death_is_final" in fight
 assert "death_permadeath" in s
 assert "hardcore_config_level_loss_allowed" in limits
 assert "level_loss_protected_at" in s
-assert "death.max.count=5" in c
-assert "configured death limit" in help_index
-assert "fifth death" not in help_index.lower()
+assert "death.max.count=3" in c
+hardcore_help = help_index.split("HARDCORE (General Information)\n", 1)[1].split("\n#\n", 1)[0]
+assert "three lives" in hardcore_help
+assert "third counted death permanently deletes the character" in hardcore_help
+assert "Arena deaths do not consume a life" in hardcore_help
 
 # Every typed policy field must be consumed by runtime code outside the loader.
 for field in (

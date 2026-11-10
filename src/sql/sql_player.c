@@ -1,3 +1,5 @@
+#include "sql/item_affect_rows.h"
+#include "sql/item_instance_fields.h"
 #include "combat/trap_legacy.h"
 #include "economy/divine_trade_runtime.h"
 // sql_player.c
@@ -40,11 +42,6 @@
 #include "account/account.h"
 #include "guild/assocs.h"
 #include "core/files.h"
-#include "flatfile/flatfile_identity_adapter.h"
-#include "flatfile/flatfile_identity_repository.h"
-#include "flatfile/flatfile_locker_repository.h"
-#include "flatfile/flatfile_recipe_repository.h"
-#include "flatfile/flatfile_spellbook_repository.h"
 #include "world/world_singletons.h"
 #include "core/mm.h"
 #include "classes/necromancy.h"
@@ -58,7 +55,6 @@
 #include "account/password_hash.h"
 #include "player/player_revision_state.h"
 #include "player/player_save_worker.h"
-#include "persistence/persistence_mode.h"
 #include "item/item_transfer_command.h"
 #include "item/item_transfer_repository.h"
 #include "item/item_claim_repository.h"
@@ -78,312 +74,6 @@ extern unsigned long next_obj_uid;
 extern P_Guild guild_list;
 extern Skill skills[];
 void ensure_pconly_pool(void);
-
-#ifdef __NO_MYSQL__
-
-// stubs when mysql is disabled
-#pragma GCC diagnostic push
-#pragma GCC diagnostic ignored "-Wunused-parameter"
-
-bool sql_begin_transaction(void)
-{
-	return false;
-}
-bool sql_commit(void)
-{
-	return false;
-}
-bool sql_rollback(void)
-{
-	return false;
-}
-bool sql_in_transaction(void)
-{
-	return false;
-}
-
-bool sql_add_player_recipe(int pid, int recipe_vnum)
-{
-	const char *root = persistence_mode_flatfile_root();
-	std::string error;
-	const auto result = root ? flatfile_recipe_add(root, pid, recipe_vnum, &error) :
-				   flatfile_recipe_result::invalid;
-	if (result == flatfile_recipe_result::ok)
-		return true;
-	persistence_alert(AVATAR, "recipes", "redacted", "none", "none", "add", "flat_write_failed",
-			  "pid=%d recipe=%d error=%s", pid, recipe_vnum, error.c_str());
-	return false;
-}
-bool sql_delete_player_recipes(int pid)
-{
-	const char *root = persistence_mode_flatfile_root();
-	std::string error;
-	const auto result = root ? flatfile_recipe_clear(root, pid, &error) :
-				   flatfile_recipe_result::invalid;
-	if (result == flatfile_recipe_result::ok)
-		return true;
-	persistence_alert(AVATAR, "recipes", "redacted", "none", "none", "clear",
-			  "flat_write_failed", "pid=%d error=%s", pid, error.c_str());
-	return false;
-}
-bool sql_has_player_recipe(int pid, int recipe_vnum)
-{
-	const char *root = persistence_mode_flatfile_root();
-	std::string error;
-	bool contains = false;
-	const auto result =
-		root ? flatfile_recipe_contains(root, pid, recipe_vnum, &contains, &error) :
-		       flatfile_recipe_result::invalid;
-	if (result == flatfile_recipe_result::ok)
-		return contains;
-	persistence_alert(AVATAR, "recipes", "redacted", "none", "none", "contains",
-			  "flat_read_failed", "pid=%d recipe=%d error=%s", pid, recipe_vnum,
-			  error.c_str());
-	return false;
-}
-int *sql_get_player_recipes(int pid, int *count)
-{
-	if (!count)
-		return NULL;
-	*count = 0;
-	const char *root = persistence_mode_flatfile_root();
-	std::string error;
-	std::vector<int32_t> recipes;
-	const auto result = root ? flatfile_recipe_list(root, pid, &recipes, &error) :
-				   flatfile_recipe_result::invalid;
-	if (result != flatfile_recipe_result::ok)
-	{
-		persistence_alert(AVATAR, "recipes", "redacted", "none", "none", "list",
-				  "flat_read_failed", "pid=%d error=%s", pid, error.c_str());
-		return NULL;
-	}
-	if (recipes.empty())
-		return NULL;
-	int *result_recipes = static_cast<int *>(malloc(recipes.size() * sizeof(int)));
-	if (!result_recipes)
-	{
-		persistence_alert(AVATAR, "recipes", "redacted", "none", "none", "list",
-				  "allocation_failed", "pid=%d recipes=%zu", pid, recipes.size());
-		return NULL;
-	}
-	std::copy(recipes.begin(), recipes.end(), result_recipes);
-	*count = static_cast<int>(recipes.size());
-	return result_recipes;
-}
-
-bool sql_player_exists(const char *name)
-{
-	bool exists = true;
-	std::string error;
-	if (!flatfile_player_identity_exists(name, &exists, &error))
-		return true;
-	return exists;
-}
-int sql_get_player_pid(const char *name)
-{
-	int32_t pid = -1;
-	std::string error;
-	if (!flatfile_player_identity_pid(name, &pid, &error))
-		return -1;
-	return pid;
-}
-bool sql_player_names_load(void)
-{
-	return true;
-}
-void sql_player_names_set(int, const char *) {}
-void sql_player_names_forget(int) {}
-void sql_player_names_hold(int, const char *) {}
-void sql_player_names_release(int, const char *) {}
-const char *sql_get_player_name(int)
-{
-	return nullptr;
-}
-int sql_highest_player_pid(void)
-{
-	return 0;
-}
-
-bool sql_load_player_shapechanges(P_char ch)
-{
-	return false;
-}
-
-bool sql_save_account(struct acct_entry *acc)
-{
-	return false;
-}
-
-char *sql_escape_string(const char *str)
-{
-	return NULL;
-}
-void sql_player_error(const char *site) {}
-
-bool sql_load_all_corpses(void)
-{
-	return false;
-}
-
-bool sql_save_shopkeeper(P_char ch, int shop_nr)
-{
-	return false;
-}
-bool sql_restore_shopkeepers(bool /*refill*/)
-{
-	return true;
-}
-bool sql_save_dirty_shopkeepers(bool force)
-{
-	(void)force;
-	return true;
-}
-
-void sql_restore_saved_items(void) {}
-bool sql_save_ship(P_ship ship)
-{
-	return false;
-}
-P_ship sql_place_ship(const char * /*owner_name*/, bool *unplaced)
-{
-	if (unplaced)
-		*unplaced = false;
-	return NULL;
-}
-bool sql_ship_stored(const char * /*owner_name*/)
-{
-	return false;
-}
-
-void sql_forget_ship(const char *) {}
-
-bool sql_load_all_ships(void)
-{
-	return false;
-}
-bool sql_delete_ship(const char *owner_name, uint32_t ship_id)
-{
-	return false;
-}
-
-bool sql_save_guild(Guild *guild)
-{
-	return false;
-}
-Guild *sql_load_guild(unsigned int guild_id)
-{
-	return NULL;
-}
-bool sql_load_all_guilds(void)
-{
-	return false;
-}
-
-std::vector<std::string> sql_rename_character_statements(int, const char *, const char *, P_ship)
-{
-	return {};
-}
-
-std::shared_ptr<sql_chest_log_entry> sql_prepare_chest_activity(int, int, const char *, int,
-								const char *)
-{
-	return {};
-}
-void sql_finish_chest_activity(const std::shared_ptr<sql_chest_log_entry> &, bool) {}
-bool sql_log_chest_activity(int /*locker_id*/, int /*chest_id*/, const char * /*char_name*/,
-			    int /*action_type*/, const char * /*item_short*/)
-{
-	return false;
-}
-void sql_chest_log_pulse(void) {}
-bool sql_chest_log_pending(int)
-{
-	return false;
-}
-bool sql_chest_log_available(void)
-{
-	return true;
-}
-P_obj sql_locker_items_from_rows(const sql_rows & /*rows*/, int /*locker_id*/, int /*chest_id*/,
-				 P_obj /*chest_obj*/)
-{
-	return NULL;
-}
-
-bool sql_add_spellbook_mob(int pid, int mob_vnum)
-{
-	const char *root = persistence_mode_flatfile_root();
-	std::string error;
-	const auto result = root ? flatfile_spellbook_add(root, pid, mob_vnum, &error) :
-				   flatfile_spellbook_result::invalid;
-	if (result == flatfile_spellbook_result::ok)
-		return true;
-	persistence_alert(AVATAR, "spellbooks", "redacted", "none", "none", "add",
-			  "flat_write_failed", "pid=%d mob=%d error=%s", pid, mob_vnum,
-			  error.c_str());
-	return false;
-}
-bool sql_remove_spellbook_mob(int pid, int mob_vnum)
-{
-	const char *root = persistence_mode_flatfile_root();
-	std::string error;
-	const auto result = root ? flatfile_spellbook_remove(root, pid, mob_vnum, &error) :
-				   flatfile_spellbook_result::invalid;
-	if (result == flatfile_spellbook_result::ok)
-		return true;
-	persistence_alert(AVATAR, "spellbooks", "redacted", "none", "none", "remove",
-			  "flat_write_failed", "pid=%d mob=%d error=%s", pid, mob_vnum,
-			  error.c_str());
-	return false;
-}
-bool sql_has_spellbook_mob(int pid, int mob_vnum)
-{
-	const char *root = persistence_mode_flatfile_root();
-	std::string error;
-	bool contains = false;
-	const auto result =
-		root ? flatfile_spellbook_contains(root, pid, mob_vnum, &contains, &error) :
-		       flatfile_spellbook_result::invalid;
-	if (result == flatfile_spellbook_result::ok)
-		return contains;
-	persistence_alert(AVATAR, "spellbooks", "redacted", "none", "none", "contains",
-			  "flat_read_failed", "pid=%d mob=%d error=%s", pid, mob_vnum,
-			  error.c_str());
-	return false;
-}
-int *sql_get_spellbook_mobs(int pid, int *count)
-{
-	if (!count)
-		return NULL;
-	*count = 0;
-	const char *root = persistence_mode_flatfile_root();
-	std::string error;
-	std::vector<int32_t> mobs;
-	const auto loaded = root ? flatfile_spellbook_list(root, pid, &mobs, &error) :
-				   flatfile_spellbook_result::invalid;
-	if (loaded != flatfile_spellbook_result::ok)
-	{
-		persistence_alert(AVATAR, "spellbooks", "redacted", "none", "none", "list",
-				  "flat_read_failed", "pid=%d error=%s", pid, error.c_str());
-		return NULL;
-	}
-	if (mobs.empty())
-		return NULL;
-	int *result = static_cast<int *>(malloc(mobs.size() * sizeof(int)));
-	if (!result)
-	{
-		persistence_alert(AVATAR, "spellbooks", "redacted", "none", "none", "list",
-				  "allocation_failed", "pid=%d mobs=%zu", pid, mobs.size());
-		return NULL;
-	}
-	std::copy(mobs.begin(), mobs.end(), result);
-	*count = static_cast<int>(mobs.size());
-	return result;
-}
-
-#pragma GCC diagnostic pop
-
-#else
 
 #include "flatfile/flatfile_shopkeeper_capture.h"
 #include "player/player_snapshot_capture.h"
@@ -949,8 +639,31 @@ static bool sql_load_item_extra_descr_from_table(int item_id, P_obj obj, const c
 		return false;
 	struct extra_descr_data *loaded_spellbook = NULL;
 	MYSQL_ROW row;
+	bool origin_seen = false;
 	while ((row = mysql_fetch_row(result)))
+	{
+		if (row[0] && !strcmp(row[0], SQL_ITEM_NAMED_SET_ORIGIN_KEYWORD))
+		{
+			int zone = 0;
+			const auto *lengths = mysql_fetch_lengths(result);
+			const auto status = sql_decode_named_set_origin(
+				std::string_view(row[0], lengths[0]),
+				row[1] ? std::string_view(row[1], lengths[1]) : std::string_view(),
+				&zone);
+			if (origin_seen || status != sql_named_set_origin_decode_status::decoded)
+			{
+				persistence_alert(
+					AVATAR, "named_set_origin", table, "none", "none",
+					"invalid_origin",
+					"item_id=%d has malformed or duplicate origin metadata",
+					item_id);
+				mysql_free_result(result);
+				return false;
+			}
+			origin_seen = true;
+		}
 		sql_add_item_extra_descr(obj, row[0], row[1], table, item_id, &loaded_spellbook);
+	}
 	mysql_free_result(result);
 	normalize_legacy_trap(obj, OBJ_VNUM(obj));
 	return true;
@@ -989,36 +702,35 @@ static bool sql_merge_duplicate_spellbook(struct extra_descr_data *existing,
 	return true;
 }
 
-// Set obj's affects to its stored (location, modifier) rows. Any stored row replaces
-// the prototype's affects; duplicates are dropped.
-static void sql_set_item_affects(P_obj obj, const std::vector<std::pair<int, int>> &affects)
+static void sql_restore_item_instance_fields(P_obj obj, const char *extra2, const char *anti,
+					     const char *anti2, const char *craftsmanship)
 {
-	if (affects.empty())
-		return;
-	for (int a = 0; a < MAX_OBJ_AFFECT; a++)
-	{
-		obj->affected[a].location = 0;
-		obj->affected[a].modifier = 0;
-	}
-	int aff_idx = 0;
-	for (const auto &[loc, mod] : affects)
-	{
-		if (aff_idx >= MAX_OBJ_AFFECT)
-			break;
-		bool is_dup = false;
-		for (int d = 0; d < aff_idx; d++)
-			if (obj->affected[d].location == loc && obj->affected[d].modifier == mod)
-			{
-				is_dup = true;
-				break;
-			}
-		if (!is_dup)
-		{
-			obj->affected[aff_idx].location = loc;
-			obj->affected[aff_idx].modifier = mod;
-			aff_idx++;
-		}
-	}
+	if (extra2)
+		obj->extra2_flags = strtoul(extra2, nullptr, 10);
+	if (anti)
+		obj->anti_flags = strtoul(anti, nullptr, 10);
+	if (anti2)
+		obj->anti2_flags = strtoul(anti2, nullptr, 10);
+	if (craftsmanship)
+		obj->craftsmanship = atoi(craftsmanship);
+}
+
+// Load the indexed rows first. The first indexed row replaces all prototype
+// slots, and subsequent legacy rows (if any) are ignored.
+static bool sql_set_item_affect(P_obj obj, int location, int modifier, const char *slot_text,
+				int &count)
+{
+	if (!slot_text && count < 0)
+		return true;
+	const int slot = slot_text ? atoi(slot_text) : count;
+	if (slot < 0 || slot >= MAX_OBJ_AFFECT)
+		return false;
+	if (slot_text && count == 0)
+		memset(obj->affected, 0, sizeof(obj->affected));
+	obj->affected[slot].location = location;
+	obj->affected[slot].modifier = modifier;
+	count = slot_text ? -1 : count + 1;
+	return true;
 }
 
 static bool sql_save_item_extra_descr(int item_id, P_obj obj, const char *table)
@@ -1053,12 +765,19 @@ static bool sql_save_item_extra_descr(int item_id, P_obj obj, const char *table)
 	}
 
 	bool spellbook_emitted = false;
+	bool origin_seen = false;
 	std::unordered_set<std::string> description_keys;
 	struct extra_descr_data *ed;
 	for (ed = obj->ex_description; ed; ed = ed->next)
 	{
 		if (!ed->keyword)
 			continue;
+		if (!strcmp(ed->keyword, SQL_ITEM_NAMED_SET_ORIGIN_KEYWORD))
+		{
+			if (origin_seen)
+				return false;
+			origin_seen = true;
+		}
 
 		const char *source_keyword = ed->keyword;
 		const char *source_description = ed->description;
@@ -1360,15 +1079,15 @@ bool sql_save_account(struct acct_entry *acc)
 
 /* Repair selectable account mappings only after safe opening baselines exist.
  * Returns 0 or the MySQL error; *repaired counts the mappings it changed. */
-static unsigned int sql_repair_account_character_projection(MYSQL *connection,
-							    const std::string &escaped_account,
-							    int *repaired)
+unsigned int sql_repair_account_character_projection(MYSQL *connection,
+						     const std::string &escaped_account,
+						     int *repaired, int only_pid)
 {
 	const std::string eligibility = sql_format(
-		"pd.active=1 AND LOWER(pd.account_name)=LOWER('%s') AND NOT EXISTS ("
+		"pd.active=1 AND (%d=0 OR pd.pid=%d) AND LOWER(pd.account_name)=LOWER('%s') AND NOT EXISTS ("
 		"SELECT 1 FROM account_characters tombstone WHERE tombstone.deleted_at IS NOT NULL "
 		"AND (tombstone.pid=pd.pid OR LOWER(tombstone.char_name)=LOWER(pd.name)))",
-		escaped_account.c_str());
+		only_pid, only_pid, escaped_account.c_str());
 	const std::string baselines[] = {
 		sql_format(
 			"INSERT INTO currency_wallet_baseline(pid,opening_copper,opening_silver,"
@@ -1410,32 +1129,33 @@ static unsigned int sql_repair_account_character_projection(MYSQL *connection,
 			       "AND (LOWER(keeper.char_name)=LOWER(pd.name) OR keeper.id<stale.id) "
 			       "WHERE stale.deleted_at IS NULL "
 			       "AND LOWER(stale.char_name)<>LOWER(pd.name) "
-			       "AND LOWER(pd.account_name)=LOWER('%s')",
-			       escaped_account.c_str())))
+			       "AND LOWER(pd.account_name)=LOWER('%s') AND (%d=0 OR pd.pid=%d)",
+			       escaped_account.c_str(), only_pid, only_pid)))
 		return error_code;
 	const my_ulonglong duplicates = mysql_affected_rows(connection);
 
 	if (const unsigned int error_code = sql_execute(
 		    connection,
-		    sql_format("INSERT INTO account_characters "
-			       "(id, account_name, pid, char_name, created_at, deleted_at) "
-			       "SELECT active_mapping.id, pd.account_name, pd.pid, pd.name, NOW(), "
-			       "NULL FROM player_data pd "
-			       "LEFT JOIN account_characters active_mapping "
-			       "ON active_mapping.pid=pd.pid AND active_mapping.deleted_at IS NULL "
-			       "JOIN currency_wallet_baseline wallet ON wallet.pid=pd.pid "
-			       "JOIN epic_balance_baseline epic ON epic.pid=pd.pid "
-			       "JOIN combat_frag_baseline combat ON combat.pid=pd.pid "
-			       "WHERE pd.active=1 AND LOWER(pd.account_name)=LOWER('%s') "
-			       "AND NOT EXISTS ("
-			       "SELECT 1 FROM account_characters tombstone "
-			       "WHERE tombstone.deleted_at IS NOT NULL "
-			       "AND (tombstone.pid=pd.pid "
-			       "OR LOWER(tombstone.char_name)=LOWER(pd.name))) "
-			       "ON DUPLICATE KEY UPDATE "
-			       "account_name=VALUES(account_name), pid=VALUES(pid), "
-			       "char_name=VALUES(char_name), deleted_at=NULL",
-			       escaped_account.c_str())))
+		    sql_format(
+			    "INSERT INTO account_characters "
+			    "(id, account_name, pid, char_name, created_at, deleted_at) "
+			    "SELECT active_mapping.id, pd.account_name, pd.pid, pd.name, NOW(), "
+			    "NULL FROM player_data pd "
+			    "LEFT JOIN account_characters active_mapping "
+			    "ON active_mapping.pid=pd.pid AND active_mapping.deleted_at IS NULL "
+			    "JOIN currency_wallet_baseline wallet ON wallet.pid=pd.pid "
+			    "JOIN epic_balance_baseline epic ON epic.pid=pd.pid "
+			    "JOIN combat_frag_baseline combat ON combat.pid=pd.pid "
+			    "WHERE pd.active=1 AND LOWER(pd.account_name)=LOWER('%s') AND (%d=0 OR pd.pid=%d) "
+			    "AND NOT EXISTS ("
+			    "SELECT 1 FROM account_characters tombstone "
+			    "WHERE tombstone.deleted_at IS NOT NULL "
+			    "AND (tombstone.pid=pd.pid "
+			    "OR LOWER(tombstone.char_name)=LOWER(pd.name))) "
+			    "ON DUPLICATE KEY UPDATE "
+			    "account_name=VALUES(account_name), pid=VALUES(pid), "
+			    "char_name=VALUES(char_name), deleted_at=NULL",
+			    escaped_account.c_str(), only_pid, only_pid)))
 		return error_code;
 
 	const my_ulonglong affected = mysql_affected_rows(connection) + duplicates;
@@ -2043,15 +1763,33 @@ static P_obj locker_items_from_index(const locker_row_index &index, int locker_i
 		}
 		if (row[22] && *row[22])
 			obj->condition = atoi(row[22]);
+		sql_restore_item_instance_fields(obj, row[40], row[41], row[42], row[43]);
 		obj->db_item_id = item_id;
 
 		const auto affects = index.affects.find(item_id);
 		if (affects != index.affects.end())
 		{
-			std::vector<std::pair<int, int>> stored;
+			int count = 0;
 			for (const sql_row *affect : affects->second)
-				stored.emplace_back(atoi((*affect)[2]), atoi((*affect)[3]));
-			sql_set_item_affects(obj, stored);
+			{
+				const char *slot = (*affect)[4];
+				const int location = atoi((*affect)[2]);
+				const int modifier = atoi((*affect)[3]);
+				if (!slot && count >= 0)
+				{
+					// The compact legacy locker format historically dropped duplicate pairs.
+					if (count == 0)
+						memset(obj->affected, 0, sizeof(obj->affected));
+					if (std::any_of(obj->affected, obj->affected + count,
+							[=](const auto &saved) {
+								return saved.location == location &&
+								       saved.modifier == modifier;
+							}))
+						continue;
+				}
+				if (!sql_set_item_affect(obj, location, modifier, slot, count))
+					break;
+			}
 		}
 		const auto extras = index.extras.find(item_id);
 		if (extras != index.extras.end())
@@ -2270,6 +2008,7 @@ enum corpse_load_column
 	CORPSE_COL_ITEM_ACTION_DESCRIPTION,
 	CORPSE_COL_ITEM_AFFECT_LOCATION,
 	CORPSE_COL_ITEM_AFFECT_MODIFIER,
+	CORPSE_COL_ITEM_AFFECT_SLOT,
 	CORPSE_COL_ITEM_UID,
 	CORPSE_COL_ITEM_CONDITION,
 	CORPSE_COL_SHORT_DESCRIPTION,
@@ -2291,6 +2030,10 @@ enum corpse_load_column
 	CORPSE_COL_ITEM_BITVECTOR3,
 	CORPSE_COL_ITEM_BITVECTOR4,
 	CORPSE_COL_ITEM_BITVECTOR5,
+	CORPSE_COL_ITEM_EXTRA2_FLAGS,
+	CORPSE_COL_ITEM_ANTI_FLAGS,
+	CORPSE_COL_ITEM_ANTI2_FLAGS,
+	CORPSE_COL_ITEM_CRAFTSMANSHIP,
 	CORPSE_COL_COUNT
 };
 
@@ -2342,6 +2085,7 @@ bool sql_load_all_corpses(void)
 	// a row whose item failed to load must not have its affects applied to the
 	// previous, unrelated object.
 	bool last_item_stored = false;
+	int affect_count = 0;
 	int loaded = 0;
 	MYSQL_ROW row;
 
@@ -2353,16 +2097,17 @@ bool sql_load_all_corpses(void)
 		"ci.weight, ci.cost, ci.timer, "
 		"ci.extra_flags, ci.value0, ci.value1, ci.value2, ci.value3, ci.value4, "
 		"ci.value5, ci.value6, ci.value7, ci.name, ci.short_descr, ci.description, "
-		"ci.action_descr, COALESCE(cia.location, -1), COALESCE(cia.modifier, 0), "
+		"ci.action_descr, COALESCE(cia.location, -1), COALESCE(cia.modifier, 0), cia.affect_slot, "
 		"ci.obj_uid, ci.item_condition, "
 		"c.short_descr, c.description, c.name, c.weight, "
 		"c.value0, c.value1, c.value2, c.value3, c.value4, c.value5, c.value7, "
 		"ci.wear_flags, ci.item_type, ci.item_material, "
-		"ci.bitvector1, ci.bitvector2, ci.bitvector3, ci.bitvector4, ci.bitvector5 "
+		"ci.bitvector1, ci.bitvector2, ci.bitvector3, ci.bitvector4, ci.bitvector5, "
+		"ci.extra2_flags, ci.anti_flags, ci.anti2_flags, ci.craftsmanship "
 		"FROM corpses c "
 		"LEFT JOIN corpse_items ci ON ci.corpse_id = c.id "
 		"LEFT JOIN corpse_item_affects cia ON cia.item_id = ci.id "
-		"ORDER BY c.id, ci.id, cia.id");
+		"ORDER BY c.id, ci.id, cia.affect_slot IS NULL, cia.id");
 	if (!result)
 		goto cleanup;
 	if (mysql_num_fields(result) != CORPSE_COL_COUNT)
@@ -2464,6 +2209,7 @@ bool sql_load_all_corpses(void)
 			}
 
 			// start new corpse
+			cur_corpse = NULL;
 			num_objs = 0;
 			last_item_id = -1;
 			last_item_stored = false;
@@ -2529,17 +2275,22 @@ bool sql_load_all_corpses(void)
 			if (aff_loc >= 0)
 			{
 				P_obj obj = obj_map[num_objs - 1];
-				for (int i = 0; i < MAX_OBJ_AFFECT; i++)
+				const char *slot = row[CORPSE_COL_ITEM_AFFECT_SLOT];
+				if (!slot && affect_count >= 0)
 				{
-					if (obj->affected[i].location == 0 &&
-					    obj->affected[i].modifier == 0)
-					{
-						obj->affected[i].location = aff_loc;
-						obj->affected[i].modifier =
-							atoi(row[CORPSE_COL_ITEM_AFFECT_MODIFIER]);
-						break;
-					}
+					// Legacy corpse rows filled the first empty slot after the first row.
+					affect_count = MAX_OBJ_AFFECT;
+					for (int i = 0; i < MAX_OBJ_AFFECT; i++)
+						if (obj->affected[i].location == 0 &&
+						    obj->affected[i].modifier == 0)
+						{
+							affect_count = i;
+							break;
+						}
 				}
+				sql_set_item_affect(obj, aff_loc,
+						    atoi(row[CORPSE_COL_ITEM_AFFECT_MODIFIER]),
+						    slot, affect_count);
 			}
 			continue;
 		}
@@ -2630,6 +2381,10 @@ bool sql_load_all_corpses(void)
 			obj->bitvector4 = strtoul(row[CORPSE_COL_ITEM_BITVECTOR4], NULL, 10);
 		if (row[CORPSE_COL_ITEM_BITVECTOR5])
 			obj->bitvector5 = strtoul(row[CORPSE_COL_ITEM_BITVECTOR5], NULL, 10);
+		sql_restore_item_instance_fields(obj, row[CORPSE_COL_ITEM_EXTRA2_FLAGS],
+						 row[CORPSE_COL_ITEM_ANTI_FLAGS],
+						 row[CORPSE_COL_ITEM_ANTI2_FLAGS],
+						 row[CORPSE_COL_ITEM_CRAFTSMANSHIP]);
 
 		char owner_ref[32];
 		snprintf(owner_ref, sizeof(owner_ref), "%llu",
@@ -2643,14 +2398,18 @@ bool sql_load_all_corpses(void)
 			continue;
 		}
 
+		affect_count = 0;
 		int aff_loc = atoi(row[CORPSE_COL_ITEM_AFFECT_LOCATION]);
 		if (aff_loc >= 0)
-		{
-			obj->affected[0].location = aff_loc;
-			obj->affected[0].modifier = atoi(row[CORPSE_COL_ITEM_AFFECT_MODIFIER]);
-		}
+			sql_set_item_affect(obj, aff_loc,
+					    atoi(row[CORPSE_COL_ITEM_AFFECT_MODIFIER]),
+					    row[CORPSE_COL_ITEM_AFFECT_SLOT], affect_count);
 
-		sql_load_item_extra_descr_from_table(item_id, obj, "corpse_item");
+		if (!sql_load_item_extra_descr_from_table(item_id, obj, "corpse_item"))
+		{
+			extract_obj(obj, FALSE);
+			goto cleanup;
+		}
 
 		obj_map[num_objs] = obj;
 		id_map[num_objs] = item_id;
@@ -2739,6 +2498,15 @@ bool sql_load_all_corpses(void)
 	ok = true;
 
 cleanup:
+	if (!ok)
+	{
+		// The current graph has not been published. Keep its authoritative rows
+		// intact and let boot reject the failed restore rather than saving gaps.
+		for (int i = 0; i < num_objs; ++i)
+			extract_obj(obj_map[i], FALSE);
+		if (cur_corpse)
+			extract_obj(cur_corpse, FALSE);
+	}
 	if (result)
 		mysql_free_result(result);
 	skip_corpse_save = 0; // re-enable corpse saves
@@ -2991,25 +2759,36 @@ bool sql_save_shopkeeper(P_char ch, int shop_nr)
 	       submitted == player_save_submit_result::replaced;
 }
 
+static bool sql_load_saved_item_affects(int item_id, P_obj obj)
+{
+	MYSQL_RES *result = db_query(
+		"SELECT location, modifier, affect_slot FROM saved_item_affects WHERE item_id=%d "
+		"ORDER BY affect_slot IS NULL, id",
+		item_id);
+	if (!result)
+		return false;
+	MYSQL_ROW row;
+	int count = 0;
+	while ((row = mysql_fetch_row(result)))
+		if (!sql_set_item_affect(obj, atoi(row[0]), atoi(row[1]), row[2], count))
+		{
+			mysql_free_result(result);
+			return false;
+		}
+	mysql_free_result(result);
+	return true;
+}
+
 static bool sql_save_saved_item_affects(int item_id, P_obj obj)
 {
 	if (!obj || !DB || item_id <= 0)
 		return false;
 
-	for (int i = 0; i < MAX_OBJ_AFFECT; i++)
-	{
-		if (obj->affected[i].location != 0 || obj->affected[i].modifier != 0)
-		{
-			char query[256];
-			snprintf(
-				query, sizeof(query),
-				"INSERT INTO saved_item_affects (item_id, location, modifier) VALUES (%d, %d, %d)",
-				item_id, obj->affected[i].location, obj->affected[i].modifier);
-			if (!sql_run_query(query))
-				return false;
-		}
-	}
-	return true;
+	decltype(player_item_snapshot::affects) affects;
+	for (size_t slot = 0; slot < affects.size(); ++slot)
+		affects[slot] = { obj->affected[slot].location, obj->affected[slot].modifier };
+	return sql_run_query(
+		sql_item_affect_insert("saved_item_affects", item_id, affects).c_str());
 }
 
 static int sql_save_saved_item_recursive(const char *item_key, int room_vnum, P_obj obj,
@@ -3079,19 +2858,21 @@ static int sql_save_saved_item_recursive(const char *item_key, int room_vnum, P_
 		"weight, cost, timer, extra_flags, "
 		"value0, value1, value2, value3, value4, value5, value6, value7, "
 		"name, short_descr, description, action_descr, wear_flags, item_type, bitvector1, bitvector2, bitvector3, bitvector4, bitvector5, "
-		"item_material, obj_uid"
+		"item_material, obj_uid, extra2_flags, anti_flags, anti2_flags, craftsmanship"
 		") VALUES ("
 		"'%s', %d, %d, %s, 1, "
 		"%d, %d, %ld, %lu, "
 		"%d, %d, %d, %d, %d, %d, %d, %d, "
 		"%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, "
-		"%s, %lu"
+		"%s, %lu, %u, %u, %u, %d"
 		")",
 		esc_key ? esc_key : "", room_vnum, vnum, container_str, obj->weight, obj->cost,
 		(long)obj->timer[0], (unsigned long)obj->extra_flags, obj->value[0], obj->value[1],
 		obj->value[2], obj->value[3], obj->value[4], obj->value[5], obj->value[6],
 		obj->value[7], name_str, short_str, desc_str, action_str, wear_str, type_str,
-		bv1_str, bv2_str, bv3_str, bv4_str, bv5_str, material_str, obj->obj_uid);
+		bv1_str, bv2_str, bv3_str, bv4_str, bv5_str, material_str, obj->obj_uid,
+		sql_item_permanent_extra2(*obj), obj->anti_flags, obj->anti2_flags,
+		obj->craftsmanship);
 
 	if (esc_key)
 		free(esc_key);
@@ -3365,7 +3146,8 @@ static bool sql_restore_shopkeeper_catalog(int only_shop, P_char *restored, bool
 		"SELECT si.id, si.shopkeeper_id, si.vnum, si.equip_slot, si.weight, si.cost, si.timer, "
 		"si.extra_flags, si.value0, si.value1, si.value2, si.value3, si.value4, si.value5, "
 		"si.value6, si.value7, si.name, si.short_descr, si.description, si.action_descr, si.container_id, "
-		"si.wear_flags, si.item_type, si.item_material, si.bitvector1, si.bitvector2, si.bitvector3, si.bitvector4, si.bitvector5, si.obj_uid "
+		"si.wear_flags, si.item_type, si.item_material, si.bitvector1, si.bitvector2, si.bitvector3, si.bitvector4, si.bitvector5, si.obj_uid, "
+		"si.extra2_flags, si.anti_flags, si.anti2_flags, si.craftsmanship "
 		"FROM shopkeeper_items si "
 		"INNER JOIN shopkeepers s ON si.shopkeeper_id = s.id "
 		"WHERE (%d < 0 OR s.shop_id=%d) ORDER BY si.shopkeeper_id, si.id",
@@ -3491,6 +3273,7 @@ static bool sql_restore_shopkeeper_catalog(int only_shop, P_char *restored, bool
 				obj->bitvector4 = strtoul(row[27], NULL, 10);
 			if (row[28])
 				obj->bitvector5 = strtoul(row[28], NULL, 10);
+			sql_restore_item_instance_fields(obj, row[30], row[31], row[32], row[33]);
 			obj->db_item_id = item_id;
 			if (!sql_load_item_extra_descr_from_table(item_id, obj, "shopkeeper_item"))
 			{
@@ -3537,12 +3320,13 @@ static bool sql_restore_shopkeeper_catalog(int only_shop, P_char *restored, bool
 	}
 
 	// query 4: load all item affects
-	result = db_query("SELECT sia.item_id, sia.location, sia.modifier "
-			  "FROM shopkeeper_item_affects sia "
-			  "INNER JOIN shopkeeper_items si ON sia.item_id = si.id "
-			  "INNER JOIN shopkeepers s ON si.shopkeeper_id = s.id "
-			  "WHERE (%d < 0 OR s.shop_id=%d) ORDER BY sia.item_id",
-			  only_shop, only_shop);
+	result = db_query(
+		"SELECT sia.item_id, sia.location, sia.modifier, sia.affect_slot "
+		"FROM shopkeeper_item_affects sia "
+		"INNER JOIN shopkeeper_items si ON sia.item_id = si.id "
+		"INNER JOIN shopkeepers s ON si.shopkeeper_id = s.id "
+		"WHERE (%d < 0 OR s.shop_id=%d) ORDER BY sia.item_id, sia.affect_slot IS NULL, sia.id",
+		only_shop, only_shop);
 	if (!result)
 	{
 		discard_shopkeeper_restore_stage(keepers, all_items, false);
@@ -3562,14 +3346,10 @@ static bool sql_restore_shopkeeper_catalog(int only_shop, P_char *restored, bool
 				if (t->item_id != aff_item_id)
 					continue;
 				matched = true;
-				if (t->affect_count == 0)
+				if (t->affect_count == 0 && !row[3])
 					memset(t->obj->affected, 0, sizeof(t->obj->affected));
-				if (t->affect_count < MAX_OBJ_AFFECT)
-				{
-					t->obj->affected[t->affect_count].location = location;
-					t->obj->affected[t->affect_count++].modifier = modifier;
-					placed = true;
-				}
+				placed = sql_set_item_affect(t->obj, location, modifier, row[3],
+							     t->affect_count);
 				break;
 			}
 			if (!matched || !placed)
@@ -3992,7 +3772,7 @@ static P_obj sql_load_saved_item_contents(const char *item_key, int room_vnum, i
 		 "name, short_descr, description, action_descr, "
 		 "wear_flags, item_type, item_material, "
 		 "bitvector1, bitvector2, bitvector3, bitvector4, bitvector5, "
-		 "obj_uid "
+		 "obj_uid, extra2_flags, anti_flags, anti2_flags, craftsmanship "
 		 "FROM saved_items WHERE item_key='%s' AND container_id=%d",
 		 esc_key, container_id);
 	free(esc_key);
@@ -4100,28 +3880,12 @@ static P_obj sql_load_saved_item_contents(const char *item_key, int room_vnum, i
 									   source_ids, valid));
 			continue;
 		}
+		sql_restore_item_instance_fields(obj, row[27], row[28], row[29], row[30]);
 		obj->db_item_id = item_id;
 		if (!sql_load_item_extra_descr_from_table(item_id, obj, "saved_item"))
 			*valid = false;
 
-		char aff_query[128];
-		snprintf(aff_query, sizeof(aff_query),
-			 "SELECT location, modifier FROM saved_item_affects WHERE item_id=%d",
-			 item_id);
-		MYSQL_RES *aff_result = db_query("%s", aff_query);
-		if (aff_result)
-		{
-			MYSQL_ROW aff_row;
-			int aff_idx = 0;
-			while ((aff_row = mysql_fetch_row(aff_result)) && aff_idx < MAX_OBJ_AFFECT)
-			{
-				obj->affected[aff_idx].location = atoi(aff_row[0]);
-				obj->affected[aff_idx].modifier = atoi(aff_row[1]);
-				aff_idx++;
-			}
-			mysql_free_result(aff_result);
-		}
-		else
+		if (!sql_load_saved_item_affects(item_id, obj))
 			*valid = false;
 
 		obj->contains = sql_load_saved_item_contents(item_key, room_vnum, item_id,
@@ -4485,7 +4249,7 @@ void sql_restore_saved_items(void)
 			 "name, short_descr, description, action_descr, "
 			 "wear_flags, item_type, item_material, "
 			 "bitvector1, bitvector2, bitvector3, bitvector4, bitvector5, "
-			 "obj_uid "
+			 "obj_uid, extra2_flags, anti_flags, anti2_flags, craftsmanship "
 			 "FROM saved_items WHERE container_id IS NULL ORDER BY id DESC");
 	if (!result)
 	{
@@ -4619,28 +4383,12 @@ void sql_restore_saved_items(void)
 			extract_obj(obj, FALSE);
 			continue;
 		}
+		sql_restore_item_instance_fields(obj, row[29], row[30], row[31], row[32]);
 		obj->db_item_id = item_id;
 		if (!sql_load_item_extra_descr_from_table(item_id, obj, "saved_item"))
 			valid = false;
 
-		char aff_query[128];
-		snprintf(aff_query, sizeof(aff_query),
-			 "SELECT location, modifier FROM saved_item_affects WHERE item_id=%d",
-			 item_id);
-		MYSQL_RES *aff_result = db_query("%s", aff_query);
-		if (aff_result)
-		{
-			MYSQL_ROW aff_row;
-			int aff_idx = 0;
-			while ((aff_row = mysql_fetch_row(aff_result)) && aff_idx < MAX_OBJ_AFFECT)
-			{
-				obj->affected[aff_idx].location = atoi(aff_row[0]);
-				obj->affected[aff_idx].modifier = atoi(aff_row[1]);
-				aff_idx++;
-			}
-			mysql_free_result(aff_result);
-		}
-		else
+		if (!sql_load_saved_item_affects(item_id, obj))
 			valid = false;
 
 		obj->contains = sql_load_saved_item_contents(item_key, room_vnum, item_id, 0,
@@ -5426,5 +5174,3 @@ int *sql_get_spellbook_mobs(int pid, int *count)
 }
 
 // account bank
-
-#endif // __NO_MYSQL__

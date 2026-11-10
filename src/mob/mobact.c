@@ -39,6 +39,13 @@
 #include "world/specs.prototypes.h"
 #include "magic/spells.h"
 #include "world/vnum.obj.h"
+#include "abilities/abilities.h"
+
+extern int calming_delay();
+extern int calming_level_gap();
+extern int calming_gap_roll(const Rolls &rolls);
+extern int calming_notarget_percent();
+extern int calming_notarget_roll(const Rolls &rolls);
 
 /*
  * external variables
@@ -65,12 +72,13 @@ extern struct str_app_type str_app[];
 extern struct zone_data *zone_table;
 extern const char *undead_type[];
 extern struct potion potion_data[];
-extern bool can_banish(P_char ch, P_char victim);
+extern bool can_banish(P_char ch, P_char victim, bool announce);
 extern unsigned long long ne_event_tick;
 extern bool has_skin_spell(P_char);
 extern bool has_wind_blade_wielded(P_char);
 extern void event_wait(P_char ch, P_char victim, P_obj obj, void *data);
 extern P_nevent ne_schedule[PULSES_IN_TICK];
+extern P_nevent current_nevent;
 extern struct misfire_properties_struct misfire_properties;
 extern const racewar_struct racewar_color[MAX_RACEWAR + 2];
 
@@ -1118,7 +1126,7 @@ bool CastMageSpell(P_char ch, P_char victim, int helping)
 		{
 			best_corpse = read_object(2, VIRTUAL);
 			best_corpse->value[2] = high_corpse =
-				MIN(50, GET_LEVEL(ch) + number(0, 8) - 4);
+				std::min(50, GET_LEVEL(ch) + number(0, 8) - 4);
 
 			switch (number(0, 3))
 			{
@@ -3693,7 +3701,7 @@ bool CastClericSpell(P_char ch, P_char victim, int helping)
 	{
 		P_char tch;
 		for (tch = world[ch->in_room].people; tch; tch = tch->next_in_room)
-			if (IS_PC_PET(tch) && can_banish(ch, tch))
+			if (IS_PC_PET(tch) && can_banish(ch, tch, false))
 			{
 				spl = SPELL_BANISH;
 				break;
@@ -5093,9 +5101,11 @@ void SweepAttack(P_char ch)
 				    FALSE, tch, 0, 0, TO_CHAR);
 				act("$n &+ycrashes to the &+Lground!&n", FALSE, tch, 0, 0, TO_ROOM);
 
-				damage(ch, tch, dice(4, MAX(1, GET_LEVEL(ch) / 4)), TYPE_UNDEFINED);
+				const bool died = damage(ch, tch,
+							 dice(4, MAX(1, GET_LEVEL(ch) / 4)),
+							 TYPE_UNDEFINED);
 				// Dracos hurt themselves via tailsweeps 15-25 damage (not very signifigant since they vamp tho).
-				if (IS_ALIVE(ch) && IS_DRACOLICH(ch))
+				if (!died && IS_DRACOLICH(ch))
 				{
 					damage(tch, ch, dice(4, 11) + 56, TYPE_UNDEFINED);
 				}
@@ -6690,8 +6700,8 @@ P_char PickTarget(P_char ch)
 		}
 
 		// Reflection Kobolds don't get innate calming anymore.
-		if (has_innate(t_ch, INNATE_CALMING) &&
-		    number(0, 101) <= get_property("innate.calming.notarget.perc", 75) &&
+		if (innate_calming_active(t_ch) &&
+		    calming_notarget_roll(live_rolls) <= calming_notarget_percent() &&
 		    !(IS_NPC(t_ch) && GET_VNUM(t_ch) == 250))
 		{
 			continue;
@@ -7887,24 +7897,16 @@ void event_mob_mundane(P_char ch, P_char /*victim*/, P_obj /*object*/, void * /*
 	    (tmp_ch = PickTarget(ch)))
 	{
 		int calming = 0;
-		int nocalming = 0;
-		if ((IS_RACEWAR_EVIL(tmp_ch) &&
-		     IS_SET(hometowns[VNUM2TOWN(world[tmp_ch->in_room].number) - 1].flags,
-			    JUSTICE_GOODHOME)) ||
-		    (IS_RACEWAR_GOOD(tmp_ch) &&
-		     IS_SET(hometowns[VNUM2TOWN(world[tmp_ch->in_room].number) - 1].flags,
-			    JUSTICE_EVILHOME)))
-			nocalming = 1;
 
-		// Alright, if !elite ch and !nocalming.. check for calming:
+		// Non-elite mobs respect Calming outside enemy hometowns.
 		//   if ch's level <= target's level - 5 or 25% hit,
 		//   and target has innate calming and isn't a reflection/image.
-		if (!IS_ELITE(ch) && !nocalming &&
-		    ((GET_LEVEL(ch) - GET_LEVEL(tmp_ch) <= 5) || !number(0, 3)) &&
-		    (has_innate(tmp_ch, INNATE_CALMING) &&
-		     !(IS_NPC(tmp_ch) && GET_VNUM(tmp_ch) == 250)))
+		if (!IS_ELITE(ch) &&
+		    ((GET_LEVEL(ch) - GET_LEVEL(tmp_ch) <= calming_level_gap()) ||
+		     !calming_gap_roll(live_rolls)) &&
+		    (innate_calming_active(tmp_ch) && !(IS_NPC(tmp_ch) && GET_VNUM(tmp_ch) == 250)))
 		{
-			calming = (int)get_property("innate.calming.delay", 10);
+			calming = calming_delay();
 		}
 
 		// Statupdate2013 - Drannak
@@ -11004,6 +11006,10 @@ void event_mob_proc(P_char mob, P_char victim, P_obj object, void * /*data*/)
 	}
 	// Proc on PERIODIC.
 	(*mob_index[GET_RNUM(mob)].func.mob)(mob, victim, CMD_PERIODIC, 0);
+
+	/* Mob procs may extract the mob, which detaches this event before freeing it. */
+	if (!current_nevent || current_nevent->ch != mob)
+		return;
 
 	// Add another event... should check SPEC_ACT and CMD_SET_PERIODIC, but *shrug* supposedly done it once.
 	if (IS_ALIVE(mob))

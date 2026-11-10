@@ -3,11 +3,14 @@
 // logged to the dupe log. This drives the real save and load repositories against
 // a real server: the first player saves holding an item, the second player's save
 // claims it, and the first player's next load leaves the stale row behind.
+#include "core/defines.h"
+#include "magic/spells.h"
 #include "persistence/dupe_log.h"
 #include "persistence/persistence_observability.h"
 #include "player/player_load_repository.h"
 #include "player/player_save_worker.h"
 #include "player/player_snapshot_repository.h"
+#include "player/player_snapshot_codec.h"
 #include "sql/sql_pool.h"
 #include "combat/combat_outcome_command.h"
 #include "world/zone_touch_command.h"
@@ -120,6 +123,111 @@ int main()
 	dupe_log_set_path_for_tests(dupe_log.c_str());
 	execute("INSERT INTO player_data(pid,name,account_name) VALUES "
 		"(11,'Giver','claim_probe'),(12,'Taker','claim_probe')");
+
+	execute("INSERT INTO player_data(pid,name,account_name) VALUES "
+		"(13,'Enhanced','claim_probe')");
+	auto earring = item(28001, 98961, -1);
+	earring.affects = { { { 34, 2 }, { 20, -1 }, { 34, 2 }, { 0, 0 } } };
+	earring.extra2_flags = ITEM2_CRAFTED | ITEM2_ENHANCED | ITEM2_BLESS | ITEM2_MAGIC;
+	earring.anti_flags = 5;
+	earring.anti2_flags = 6;
+	earring.craftsmanship = 42;
+	earring.dynamic_affects = { { SPELL_BLESS, 0, ITEM2_BLESS | ITEM2_MAGIC },
+				    { TAG_ALTERED_EXTRA2, 0, ITEM2_MAGIC } };
+	auto sparse = item(28002, 1252, -1);
+	sparse.affects = { { { 35, 2 }, { 0, 0 }, { 34, 3 }, { 0, 0 } } };
+	auto cleared = item(28003, 98961, -1);
+	auto pet_item = sparse;
+	pet_item.object_uid = 28004;
+	pet_item.extra2_flags = ITEM2_ENHANCED;
+	pet_item.anti_flags = UINT32_MAX;
+	pet_item.craftsmanship = -5;
+	auto legacy = item(28005, 1252, -1);
+	legacy.affects = { { { 35, 2 }, { 34, 3 }, { 0, 0 }, { 0, 0 } } };
+	auto enhanced = save_holding(13, 1, { earring, sparse, cleared, legacy });
+	enhanced.components |= PLAYER_COMPONENT_PETS;
+	player_pet_snapshot pet = {};
+	pet.pet_uid = 28006;
+	pet.mob_vnum = 700;
+	pet.items = { pet_item };
+	enhanced.pets = { pet };
+	std::vector<uint8_t> wire;
+	player_snapshot decoded = {};
+	require(player_snapshot_encode(enhanced, &wire) == player_snapshot_codec_result::ok &&
+			player_snapshot_decode(wire.data(), wire.size(), &decoded) ==
+				player_snapshot_codec_result::ok,
+		"complete snapshot codec rejected the enhancement fixtures");
+	require(player_snapshot_repository_apply(test_connection, decoded).outcome ==
+			player_save_apply_outcome::applied,
+		"enhanced inventory/pet save failed");
+	execute("DELETE a FROM player_item_affects a JOIN player_items i ON i.id=a.item_id "
+		"WHERE i.obj_uid=28005");
+	execute("INSERT INTO player_item_affects(item_id,location,modifier) "
+		"SELECT id,35,2 FROM player_items WHERE obj_uid=28005 UNION ALL "
+		"SELECT id,34,3 FROM player_items WHERE obj_uid=28005");
+	execute("UPDATE player_items SET extra2_flags=NULL,anti_flags=NULL,anti2_flags=NULL,"
+		"craftsmanship=NULL WHERE obj_uid=28005");
+	constexpr uint16_t instance_mask =
+		PLAYER_LOAD_ITEM_OVERRIDE_EXTRA2_FLAGS | PLAYER_LOAD_ITEM_OVERRIDE_ANTI_FLAGS |
+		PLAYER_LOAD_ITEM_OVERRIDE_ANTI2_FLAGS | PLAYER_LOAD_ITEM_OVERRIDE_CRAFTSMANSHIP;
+	const auto check_affects = [&](const player_load_result &result)
+	{
+		require(result.outcome == player_load_outcome::applied &&
+				result.snapshot.items.size() == enhanced.items.size(),
+			"enhanced inventory reload failed");
+		for (const auto &expected : enhanced.items)
+		{
+			const auto &items = result.snapshot.items;
+			const auto found =
+				std::find_if(items.begin(), items.end(), [&](const auto &saved)
+					     { return saved.object_uid == expected.object_uid; });
+			require(found != items.end() && found->affects == expected.affects &&
+					(result.item_identities[found - items.begin()].override_mask &
+					 PLAYER_LOAD_ITEM_OVERRIDE_AFFECTS),
+				"wrong affect slots for item " +
+					std::to_string(expected.object_uid));
+			const auto mask =
+				result.item_identities[found - items.begin()].override_mask;
+			if (expected.object_uid == legacy.object_uid)
+				require((mask & instance_mask) == 0,
+					"legacy NULL fields overrode prototype state");
+			else
+			{
+				const auto permanent_flags = expected.extra2_flags & ~ITEM2_BLESS;
+				require((mask & instance_mask) == instance_mask &&
+						found->extra2_flags == permanent_flags &&
+						found->anti_flags == expected.anti_flags &&
+						found->anti2_flags == expected.anti2_flags &&
+						found->craftsmanship == expected.craftsmanship &&
+						found->dynamic_affects.empty(),
+					"wrong permanent fields for item " +
+						std::to_string(expected.object_uid));
+			}
+		}
+		require(result.snapshot.pets.size() == 1 &&
+				result.snapshot.pets[0].items.size() == 1 &&
+				result.snapshot.pets[0].items[0].object_uid ==
+					pet_item.object_uid &&
+				result.snapshot.pets[0].items[0].affects == pet_item.affects &&
+				result.snapshot.pets[0].items[0].extra2_flags ==
+					pet_item.extra2_flags &&
+				result.snapshot.pets[0].items[0].anti_flags ==
+					pet_item.anti_flags &&
+				result.snapshot.pets[0].items[0].craftsmanship ==
+					pet_item.craftsmanship,
+			"pet item lost its identity or affect slots");
+	};
+	check_affects(load(13, 13));
+	decoded.revision = 2;
+	decoded.items[1].affects[2][1] = 1;
+	execute("CREATE TRIGGER reject_pet_item_slots BEFORE INSERT ON player_pet_item_affects "
+		"FOR EACH ROW SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT='affect rollback probe'");
+	require(player_snapshot_repository_apply(test_connection, decoded).outcome !=
+			player_save_apply_outcome::applied,
+		"the affect write failure was ignored");
+	execute("DROP TRIGGER reject_pet_item_slots");
+	check_affects(load(13, 14));
+	std::cout << "[PASS] exact item and pet affect slots, legacy rows and rollback\n";
 
 	// Raw UID collisions must retain both roots regardless of which payload
 	// parses first, while unrelated inventory remains writable.

@@ -4,6 +4,12 @@ The project uses focused regression tests in `tests/async/`, plus
 schema/migration checks at `tests/` root. The root `Makefile` provides a single
 gate while retaining fast commands for focused work.
 
+MariaDB is the only server persistence backend. Some maintained test filenames
+and shared helper names still contain `flatfile`; those names do not enable a
+file-based server. Server journeys require an isolated MariaDB schema. Use the
+disposable wrapper and the test's current `--server`/`--backend mariadb` options,
+or run its entry in `make test-db`. Never use `PERSISTENCE_BACKEND=flatfile`.
+
 ## Layout
 
 ```
@@ -85,8 +91,9 @@ RUNTIME_DB_IMAGE=mariadb:11.8 tests/async/run_runtime_compatibility_mysql.sh
 python3 tests/async/run_migration_runner_engines.py
 ```
 
-`TEST_JOBS=0` is the default and selects up to eight workers based on available
-CPUs. Test output is buffered per process so parallel failures remain readable,
+`TEST_JOBS=0` is the default and selects up to sixteen workers based on available
+CPUs. The PostHog HTTPS pulse-budget test runs after the pool finishes so
+concurrent compiler jobs from this run do not distort its 250 ms wall-clock check. Test output is buffered per process so parallel failures remain readable,
 and a failing test's output is printed as soon as it fails. A test still running
 900 s after it started, or a journey 1800 s after, is ended with everything it
 started and reported as `TIMEOUT`; a test ended by a signal is reported by the
@@ -96,9 +103,17 @@ the tests still running. However a test ends, whatever it started and left
 running ends with it. Stopping the runner, by Ctrl-C or a SIGTERM, ends the
 tests it is running with everything they started, and starts no others.
 The runner executes every discovered `test_*.py` in a separate process and
-returns nonzero if any test fails. The journeys that boot a real server, and the
-large sanitizer harness, start together once the parallel phase is done. They
-wait on game time, not on the CPU, and they share one server build.
+returns nonzero if any test fails. Tests start longest first, by their last time in
+`bin/test-history`, so the long journeys start at once and the short tests fill the
+workers around them; a test with no recorded time starts first.
+
+Nearly every harness compiles its sources and links in one `g++` command, which
+ccache cannot cache. The runner puts `scripts/mutate/g++` first on `PATH`: it splits
+such a command into one ccache compile per source and a link, with the same flags and
+diagnostics, so a source shared by many harnesses compiles once and a rerun compiles
+only what changed. The cache is `bin/test-ccache` (10 GB, set `CCACHE_DIR` to use
+another), and a harness's random directory does not defeat it. Without ccache the
+real `g++` runs unchanged. `scripts/coverage.sh` keeps its own compiler.
 
 `make test-all` deliberately excludes Docker and externally provisioned
 database checks. `make test-db` builds the server and generates the world first, then
@@ -117,7 +132,7 @@ tests/async/test_mysql_playtime_journey.py --server bin/server/dms_new`. The
 journey creates and removes its own schema and
 invokes `test_playtime_mysql_repository.py` with that schema's environment. Both
 scripts are excluded from argument-free discovery; the database-independent
-playtime capture, checkpoint, legacy SQL, and flat-file tests remain in `make test-all`.
+playtime capture, checkpoint and legacy SQL tests remain in `make test-all`.
 
 The game loop budget journey (`test_mysql_game_loop_budget_journey.py`, in
 `make test-db`) boots the full world on MariaDB, has scripted players camp and rent
@@ -169,8 +184,8 @@ or narrow the backend matrix merely to make a temporary-table fixture pass.
 ### Shared journey server artifacts
 
 The Python runner defaults `DURIS_REGRESSION_BUILD_CACHE` to
-`bin/regression-artifacts`. Account recovery, flat-file boot preflight, Chaos
-kit, combat and full-world boot acquire one compatible flat-file server from
+`bin/regression-artifacts`. Account recovery, boot preflight, Chaos
+kit, combat and full-world boot acquire one compatible MariaDB server from
 `tests/async/server_build_artifacts.py`. Each journey retains its own temporary
 authority, journals, logs, listeners and process cleanup. Executables are shared
 read-only; runtime state is never stored in the artifact directory. The
@@ -178,8 +193,16 @@ item-prompt ASan/UBSan harness remains a separate build with its existing flags
 and the server build's 600-second ceiling. That one server build uses every
 core, and the journeys start together when it is done.
 
+The shared MariaDB journey server runs a 125 ms game pulse instead of 250 ms
+(`FAST_PULSE_USEC`, passed to Make as `TEST_PULSE_USEC`). Game logic counts pulses,
+so a journey plays the same game twice as fast. A journey that times the game
+against the wall clock (it sleeps into a pulse window, tests a timeout in seconds,
+or restores a wall-clock deadline that the game turns into pulses at four a second)
+asks for `build_mariadb_server(..., real_clock=True)`, a separate artifact
+with the real pulse. `bin/server/dms_new` and every production build keep 250 ms.
+
 The artifact key covers all files under `src/` (including untracked files),
-test headers, the helper contract, the flat-file backend, and the inherited build
+test headers, the helper contract, the MariaDB backend, and the inherited build
 environment, including profile, feature flags and Make overrides. It also hashes
 the effective compiler, Make, assembler, linker, compiler internals, installed
 headers and libraries. Standard GNU compiler search directories and explicit
@@ -191,7 +214,7 @@ wrappers that do not support GNU compiler discovery. Runtime-only full-world
 diagnostics and shell working-directory variables do not invalidate a build.
 
 On every acquisition, the helper verifies executable and build-log SHA-256
-hashes and rechecks the client-free compilation assertions. Missing or malformed
+hashes and rechecks the MariaDB client compilation and link assertions. Missing or malformed
 metadata, altered binaries/logs and changed inputs trigger a fresh build. Inputs
 are checked again after compilation; a build spanning an input change is rejected.
 A per-key lock prevents duplicate concurrent builds, and atomic manifests publish
@@ -268,11 +291,11 @@ additional checks when the change touches what they check:
 
 | Check | When |
 | --- | --- |
-| The backup-recovery container job (root-only `test_persistence_backup_integration.py`) | backup, restore, `scripts/backup_*`, or the flat-file launcher |
+| The backup-recovery container job (root-only `test_persistence_backup_integration.py`) | backup, restore, `scripts/backup_*`, or the launcher |
 | CodeQL and Trivy (`security.yml`) | dependencies, `packaging/`, `Dockerfile`, network or authentication code, and before a production deploy |
 | `npm ci --prefix site && npm test --prefix site` | `docs/` or `site/` |
 
-Do not replay the `flatfile-build`, `quality` or `build.yml` workflow jobs step
+Do not replay the `quality` or `build.yml` workflow jobs step
 by step. Their tests are the ones `make test-all` just ran on the same host.
 
 When a change fixes a defect and adds or changes its regression test, run
@@ -305,7 +328,7 @@ the suite runs. Nothing else runs it, and its percentage is never a target: it s
 no test reaches. It works in a detached worktree of the commit (`HEAD` by default) under
 `bin/analysis/coverage-<sha>/`, so the checkout and any running gate are untouched, with
 `scripts/coverage/g++` first on `PATH`. That wrapper gives every compile, the server's, the
-journeys' flat-file builds and the harnesses', `--coverage` and its own directory of notes
+journeys' MariaDB builds and the harnesses', `--coverage` and its own directory of notes
 and counts under `bin/coverage/<sha>/data/`, so a harness built in a temporary directory
 leaves its counts behind. It runs `make -k test-all`, and `make test-db` too with `--db`
 (`COVERAGE_ARGS=--db make coverage`), then writes `bin/coverage/<sha>/index.html`,
@@ -362,8 +385,8 @@ crash stays fixed.
 
 ## Full-world save diagnostics
 
-`test_flatfile_full_world_boot.py` supports opt-in synthetic failure/recovery
-experiments without using the configured database:
+`test_mariadb_full_world_boot.py` supports opt-in synthetic failure/recovery
+experiments on disposable MariaDB without using the configured database:
 
 | Variable | Effect |
 | --- | --- |
@@ -427,7 +450,7 @@ measurements, or complete fault/reconciliation matrix the 200-player gate requir
 
 Password reset by email has a core harness (injected mail sender and
 clock, no network), a wire-level SMTP harness against a fake relay on `127.0.0.1`, a
-source-contract pin set, and a telnet journey that boots the client-free server with a
+source-contract pin set, and a telnet journey that boots the MariaDB server with a
 fake relay. None of them needs a real relay or a database; the compiled harnesses need
 `g++` plus the libcurl and OpenSSL development headers from the dependency metapackage:
 
@@ -444,7 +467,14 @@ required but unavailable, and timeout classification after a successful greeting
 Successful TLS negotiation and SMTP AUTH are not exercised, so these fixtures do not
 qualify a real relay.
 
-The MariaDB journey uses a disposable database and the same fake relay. It checks telnet
+The core harness also checks verification/reset purpose separation, independent account
+cooldowns, and invalidation of both kinds of code. New-account fixtures redeem inbox
+verification before exercising recovery.
+
+The MariaDB journey uses a disposable database and the same fake relay. It checks
+inbox ownership before storing a registration address, wrong and reused verification
+codes, failure and same-code retry for durable email writes, and retention of the old
+recovery address while a replacement is pending. It also checks telnet
 and unauthenticated WebSocket recovery, failed writes and same-code retry, single use,
 session revocation, restart persistence, account fences changed while saving, loop
 responsiveness, lost COMMIT replies before and after application, and cooldown timestamp

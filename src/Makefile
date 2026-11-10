@@ -26,6 +26,10 @@ WARNING_FLAGS = -Wall -Wextra -Wpedantic -Werror \
 # profile or the feature defines below.
 EXTRA_CFLAGS =
 EXTRA_LDFLAGS =
+# Microseconds per game pulse; empty keeps 250000 (config.h).
+# tests/async/server_build_artifacts.py shortens it for the journeys' flat-file server,
+# which has its own OBJDIR, so the default objects and dms_new never mix clocks.
+TEST_PULSE_USEC =
 PERSISTENCE_BACKEND ?= mariadb
 BUILD_PROFILE ?= development
 
@@ -40,19 +44,20 @@ CFLAGS += -O2
 else
 $(error BUILD_PROFILE must be development or production)
 endif
+ifneq ($(TEST_PULSE_USEC),)
+ifneq ($(origin OBJDIR),command line)
+$(error TEST_PULSE_USEC needs its own OBJDIR)
+endif
+CFLAGS += -DOPT_USEC=$(TEST_PULSE_USEC)
+endif
 CFLAGS += $(EXTRA_CFLAGS)
 LDFLAGS += $(EXTRA_LDFLAGS)
 
-ifeq ($(PERSISTENCE_BACKEND),mariadb)
+ifneq ($(PERSISTENCE_BACKEND),mariadb)
+$(error PERSISTENCE_BACKEND must be mariadb; the flat-file server backend has been removed)
+endif
 MYSQL_INCLUDES = -I/usr/include/mysql
 MYSQL_LIBS = -lmysqlclient
-else ifeq ($(PERSISTENCE_BACKEND),flatfile)
-CFLAGS += -D__NO_MYSQL__
-MYSQL_INCLUDES = -I./no_mysql
-MYSQL_LIBS =
-else
-$(error PERSISTENCE_BACKEND must be mariadb or flatfile)
-endif
 
 #CFLAGS += -DCTF_MUD=1
 
@@ -100,6 +105,9 @@ SHIP_OBJS = $(SHIP_SRCS:%.c=ships/%.o)
 
 OBJS =  $(SHIP_OBJS) \
 				 item/item_actions.o \
+				 item/item_value.o \
+				 item/item_value_runtime.o \
+				 item/item_removal_audit.o \
 				 item/legacy_object_identity.o \
 				 item/native_artifact_actions.o \
 				 item/tsunami_actions.o \
@@ -140,6 +148,7 @@ OBJS =  $(SHIP_OBJS) \
 				 cmd/class.o \
 				 cmd/skills.o \
 				 cmd/spells.o \
+				 abilities/abilities.o \
 				 cmd/actmove.o \
 				 cmd/actnew.o \
 				 cmd/actobj.o \
@@ -149,7 +158,8 @@ OBJS =  $(SHIP_OBJS) \
 				 cmd/actset.o \
 				 cmd/actwiz.o \
 				 cmd/community_spellup.o \
-				 net/ansi.o net/chat_presentation.o \
+				 net/ansi.o net/chat_presentation.o net/output_links.o net/mxp.o \
+				 net/output_presentation.o \
 				 net/output_style.o \
 				 net/output_profiles.o \
 				 specs/specs.ailvio.o \
@@ -163,7 +173,6 @@ OBJS =  $(SHIP_OBJS) \
 				 guild/artifact_population.o \
 				 guild/artifact_population_boot.o \
 				 guild/artifact_population_repository.o \
-				 guild/artifact_population_flatfile.o \
 				 guild/artifact_population_recovery.o \
 				 guild/artifact_cache_codec.o \
 				 economy/donation_event.o \
@@ -212,9 +221,7 @@ OBJS =  $(SHIP_OBJS) \
 				 economy/divine_trade.o \
 				 economy/divine_trade_command.o \
 				 economy/divine_trade_repository.o \
-				 economy/divine_trade_flatfile.o \
                  economy/divine_trade_runtime.o \
-				 flatfile/flatfile_cargo_repository.o \
 				 combat/breath_weapons.o \
 				 world/buildings.o \
          economy/cardgames.o \
@@ -316,47 +323,8 @@ OBJS =  $(SHIP_OBJS) \
 				 persistence/persistence_mode.o \
 				 core/env_file.o \
 				 flatfile/flatfile_store.o \
-				 flatfile/flatfile_shopkeeper_restock.o \
-				 flatfile/flatfile_authority_transaction.o \
-				 flatfile/flatfile_account_repository.o \
-				 flatfile/flatfile_account_delete.o \
-				 flatfile/flatfile_account_reward_summon_repository.o \
-				 flatfile/flatfile_account_adapter.o \
-				 flatfile/flatfile_identity_repository.o \
-				 flatfile/flatfile_identity_adapter.o \
-				 flatfile/flatfile_character_delete.o \
-				 flatfile/flatfile_player_repository.o \
-				 flatfile/flatfile_player_snapshot_file.o \
-				 flatfile/flatfile_item_uid_allocator.o \
-				 flatfile/flatfile_item_repository.o \
-				 flatfile/flatfile_collector_repository.o \
-				 flatfile/flatfile_artifact_repository.o \
-				 flatfile/flatfile_artifact_guild_delivery.o \
-				 flatfile/flatfile_corpse_ownership.o \
-				 flatfile/flatfile_corpse_restore.o \
-				 flatfile/flatfile_association_repository.o \
-				 flatfile/flatfile_locker_repository.o \
-				 flatfile/flatfile_frag_leaderboard_repository.o \
 				 flatfile/flatfile_help_catalog.o \
-				 flatfile/flatfile_ip_activity_repository.o \
-				 flatfile/flatfile_nexus_repository.o \
-				 flatfile/flatfile_auction_repository.o \
-				 flatfile/flatfile_boon_repository.o \
-				 flatfile/flatfile_offline_message_repository.o \
-				 flatfile/flatfile_player_domain_repository.o \
-				 flatfile/flatfile_recipe_repository.o \
-				 flatfile/flatfile_spellbook_repository.o \
-				 flatfile/flatfile_ship_repository.o \
-				 flatfile/flatfile_shopkeeper_repository.o \
 				 flatfile/flatfile_shopkeeper_capture.o \
-				 flatfile/flatfile_shopkeeper_ownership.o \
-				 flatfile/flatfile_shopkeeper_materialize.o \
-				 flatfile/flatfile_shopkeeper_restore.o \
-				 flatfile/flatfile_shop_trade_repository.o \
-				 flatfile/flatfile_shop_trade_materialization.o \
-				 flatfile/flatfile_shop_trophy_history.o \
-				 flatfile/flatfile_world_item_repository.o \
-				 flatfile/flatfile_world_quest_history.o \
 				 persistence/critical_command.o \
 				 persistence/critical_command_coordinator.o \
 				 persistence/critical_command_repository.o \
@@ -366,8 +334,8 @@ OBJS =  $(SHIP_OBJS) \
 				 item/item_command_parser.o \
 				 item/forced_weapon_drop.o \
 				 item/item_movement_transaction.o \
-				 economy/shop_trade_transaction.o \
-				 economy/shop_trade_runtime.o \
+				 item/starter_kit_intent.o \
+				 account/kept_character_recovery.o \
 				 economy/shopkeeper_boot.o \
 				 economy/shopkeeper_restock.o \
 				 item/item_transfer_repository.o \
@@ -394,16 +362,12 @@ OBJS =  $(SHIP_OBJS) \
 				 economy/boon_reward_command.o \
 				 economy/boon_reward_repository.o \
 				 economy/boon_reward_transaction.o \
-				 economy/boon_shop_command.o \
-				 economy/boon_shop_transaction.o \
-				 economy/shop_trade_command.o \
 				 world/zone_story_quest_tracking.o \
 				 world/zone_story_quest_catalog.o \
 				 world/zone_story_quest_repository.o \
 				 world/zone_story_quest_feature.o \
 				 world/zone_story_quest_production.o \
 				 world/zone_story_quest_runtime.o \
-				 flatfile/flatfile_zone_story_quest_state.o \
 				 sql/zone_story_quest_state_repository.o \
 				 world/zone_touch_command.o \
 				 world/zone_touch_repository.o \
@@ -456,6 +420,9 @@ OBJS =  $(SHIP_OBJS) \
 				 classes/psionics.o \
 				 world/quest.o \
 				 core/random.o \
+				 item/named_sets.o \
+				 item/named_set_effects.o \
+				 item/named_set_origin.o \
 				 item/random_equipment.o \
 				 item/random_equipment_drop.o \
 				 item/random_equipment_tables.o \
@@ -633,26 +600,29 @@ dms_new: $(DMS_BINARY)
 
 FORCE:
 
-# The server binary has one stable runtime path, but its object graph and link
-# dependencies differ by persistence backend and build profile. Keep each
-# combination's objects isolated and update this stamp when either selection
-# changes so a switch cannot leave an up-to-date binary linked for the prior
-# runtime role.
-$(BACKEND_STAMP): FORCE
-	@mkdir -p $(dir $@)
-	@set -eu; \
-	backend='$(PERSISTENCE_BACKEND)'; \
-	profile='$(BUILD_PROFILE)'; \
-	identity="$$backend/$$profile"; \
-	if [ ! -f "$@" ] || [ "$$(cat "$@")" != "$$identity" ]; then \
-		printf '%s\n' "$$identity" >"$@.tmp"; \
-		mv "$@.tmp" "$@"; \
-	fi
+# Only the report object embeds Git identity; a new revision need not rebuild
+# the whole server. The executable hash also identifies exported/dirty builds.
+VALUE_REVISION_HEADER := $(BIN_ROOT)/generated/item_value_revision.h
+$(VALUE_REVISION_HEADER): FORCE
+	@python3 ../scripts/write_build_revision.py "$@" "$(ROOT_DIR)"
+$(OBJDIR)/item/material_rarity.o: CFLAGS += -include $(VALUE_REVISION_HEADER)
+$(OBJDIR)/item/material_rarity.o: $(VALUE_REVISION_HEADER)
 
-$(DMS_BINARY): $(DMS_OBJS) $(BACKEND_STAMP)
+# A backend/profile switch must relink even if its objects are older than the
+# previous binary. Publish the build stamp only with a completed link.
+DMS_BUILD_ID := $(PERSISTENCE_BACKEND)/$(BUILD_PROFILE)
+DMS_PROFILE_CHANGED := $(shell test "$$(cat "$(BACKEND_STAMP)" 2>/dev/null)" = "$(DMS_BUILD_ID)" || echo yes)
+
+$(DMS_BINARY): $(DMS_OBJS) $(if $(DMS_PROFILE_CHANGED),FORCE)
 	@mkdir -p $(dir $@)
-	$(CC) $(CFLAGS) $(LDFLAGS) -rdynamic -g -o $@ $(DMS_OBJS) $(LIBS)
-	chmod a+rx $@
+	@set -eu; tmp=$$(mktemp "$@.XXXXXX"); trap 'rm -f "$$tmp" "$$tmp.backend"' EXIT; \
+	$(CC) $(CFLAGS) $(LDFLAGS) -rdynamic -g -o "$$tmp" $(DMS_OBJS) $(LIBS); \
+	chmod 755 "$$tmp"; \
+	printf '%s\n' "$(DMS_BUILD_ID)" >"$$tmp.backend"; \
+	exec 8<"$(dir $@)"; flock -x 8; \
+	rm -f "$(BACKEND_STAMP)"; \
+	mv -T "$$tmp" "$@"; \
+	mv -T "$$tmp.backend" "$(BACKEND_STAMP)"
 
 pfile: $(PFILE_BINARY)
 
@@ -686,7 +656,9 @@ $(SERVER_BIN_DIR)/%.so: %.c
 	ld -shared -o $@ /usr/lib/crtbeginS.o $(OBJDIR)/$*.o /usr/lib/crtendS.o
 
 clean-server:
-	rm -f $(DMS_BINARY) $(BACKEND_STAMP)
+	@if [ -d "$(dir $(DMS_BINARY))" ]; then \
+		flock -x "$(dir $(DMS_BINARY))" rm -f "$(DMS_BINARY)" "$(BACKEND_STAMP)"; \
+	fi
 	rm -rf $(OBJDIR)
 
 clean: clean-server

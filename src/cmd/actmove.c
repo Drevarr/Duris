@@ -33,6 +33,11 @@
 #include "kingdom/kingdom.h"
 #include "persistence/persistence_checkpoint.h"
 #include "player/player_revision_state.h"
+#include "abilities/abilities.h"
+
+extern int calming_delay();
+extern int calming_level_gap();
+extern int calming_gap_roll(const Rolls &rolls);
 
 /*
  * external variables
@@ -51,6 +56,8 @@ extern const char *short_dirs[];
 extern const char *dirs2[];
 extern const struct stat_data stat_factor[];
 extern const int innate_abilities[];
+extern int delirium_wander_roll(const Rolls &rolls);
+extern int sound_suppression_noise_limit();
 extern const int class_innates[][5];
 extern const int movement_loss[];
 extern const int rev_dir[];
@@ -1152,8 +1159,8 @@ char *enter_message(P_char ch, P_char people, int exitnumb, char *amsg, int was_
 		{
 			if (IS_TRUSTED(people) ||
 			    (((IS_AFFECTED(people, AFF_SENSE_LIFE) ||
-			       (has_innate(ch, INNATE_OPHIDIAN_EYES) &&
-				GET_SPEC(ch, CLASS_DRAGOON, SPEC_DRAGON_HUNTER))) ||
+			       (has_innate(people, INNATE_OPHIDIAN_EYES) &&
+				GET_SPEC(people, CLASS_DRAGOON, SPEC_DRAGON_HUNTER))) ||
 			      IS_AFFECTED(people, AFF_SKILL_AWARE)) &&
 			     StatSave(people, APPLY_INT, -4)) ||
 			    (GET_SPEC(ch, CLASS_ROGUE, SPEC_THIEF) &&
@@ -1300,6 +1307,102 @@ void blow_char_somewhere_else(P_char ch, int dir)
 	act("$n is suddenly blown in from elsewhere.", FALSE, ch, 0, 0, TO_ROOM);
 }
 
+// What a crippled character pays in extra vitality to move.
+int crippled_move_cost()
+{
+	return 5;
+}
+
+static bool walking_door_allows(P_char ch, const room_direction_data *exit)
+{
+	return !IS_SET(exit->exit_info, EX_CLOSED) || IS_TRUSTED(ch) ||
+	       (IS_AFFECTED2(ch, AFF2_PASSDOOR) &&
+		(!IS_SET(exit->exit_info, EX_LOCKED) || !IS_SET(exit->exit_info, EX_PICKPROOF)));
+}
+
+// Run every departure hook before placement can implicitly transport a riding companion.
+static bool leave_walking_group(P_char ch, int destination, int direction)
+{
+	const int source = ch->in_room;
+	const auto exit = world[source].dir_option[direction];
+	if (!exit || exit->to_room != destination)
+		return false;
+	P_char mount = GET_MOUNT(ch), rider = GET_RIDER(ch);
+	const std::pair<P_char, uint64_t> people[] = { { ch, ch->runtime_id },
+						       { mount, mount ? mount->runtime_id : 0 },
+						       { rider, rider ? rider->runtime_id : 0 } };
+	const uint64_t removals = character_removal_generation;
+	auto present = [&](const auto &person) -> P_char
+	{
+		// Ordinary NPC walking must not scan the full character list unless a hook removed someone.
+		if (!person.first || (removals != character_removal_generation &&
+				      find_character_by_runtime_id(person.second) != person.first))
+			return nullptr;
+		return person.first->runtime_id == person.second ? person.first : nullptr;
+	};
+	auto live = [&](const auto &person) -> P_char
+	{
+		P_char current = present(person);
+		return IS_ALIVE(current) ? current : nullptr;
+	};
+	bool departed = true;
+	for (const auto &person : people)
+	{
+		if (!person.first)
+			continue;
+		P_char current = live(person);
+		if (!current || current->in_room != source)
+		{
+			departed = false;
+			break;
+		}
+		char_from_room(current);
+		if (!live(person) || current->in_room != NOWHERE)
+		{
+			departed = false;
+			break;
+		}
+	}
+	departed = departed && world[source].dir_option[direction] == exit &&
+		   exit->to_room == destination;
+	for (const auto &person : people)
+		if (person.first)
+		{
+			P_char current = live(person);
+			departed = departed && current && current->in_room == NOWHERE &&
+				   current->specials.was_in_room == world[source].number &&
+				   walking_door_allows(current, exit);
+		}
+	departed = departed && GET_MOUNT(ch) == mount && GET_RIDER(ch) == rider &&
+		   (!mount || GET_RIDER(mount) == ch) && (!rider || GET_MOUNT(rider) == ch);
+	if (departed)
+		return true;
+	// Restore only detached survivors. Suspend existing links so recovery cannot undo a redirect.
+	bool suspended[2] = {};
+	for (int i = 0; i < 2; ++i)
+	{
+		P_char first = present(people[i == 0 ? 0 : 2]);
+		P_char second = present(people[i == 0 ? 1 : 0]);
+		if (first && second && GET_MOUNT(first) == second)
+		{
+			unlink_char(first, second, LNK_RIDING);
+			suspended[i] = true;
+		}
+	}
+	for (const auto &person : people)
+		if (P_char current = live(person); current && current->in_room == NOWHERE)
+			char_to_room(current, source, -2, true);
+	for (int i = 0; i < 2; ++i)
+	{
+		P_char first = live(people[i == 0 ? 0 : 2]);
+		P_char second = live(people[i == 0 ? 1 : 0]);
+		if (suspended[i] && first && second && first->in_room == second->in_room &&
+		    first->in_room != NOWHERE && !GET_MOUNT(first) && !GET_RIDER(second))
+			link_char(first, second, LNK_RIDING);
+	}
+	return false;
+}
+
 /*
  * This function is meant to be called from procs and do_simple_move only
  */
@@ -1375,19 +1478,15 @@ revalidate_movement:
 
 	if (IS_SET(EXIT(ch, exitnumb)->exit_info, EX_CLOSED))
 	{
-		if (IS_TRUSTED(ch))
+		const auto exit = EXIT(ch, exitnumb);
+		bool permitted = true;
+		// Room placement also transports riding companions; none may borrow another's passdoor.
+		for (P_char participant : { ch, GET_MOUNT(ch), GET_RIDER(ch) })
 		{
-			send_to_char(
-				"You go with your godly self, ignoring physical barriers and all...\n",
-				ch);
+			if (participant && !walking_door_allows(participant, exit))
+				permitted = false;
 		}
-		else if (IS_AFFECTED2(ch, AFF2_PASSDOOR) &&
-			 (!IS_SET(EXIT(ch, exitnumb)->exit_info, EX_LOCKED) ||
-			  !IS_SET(EXIT(ch, exitnumb)->exit_info, EX_PICKPROOF)))
-		{
-			send_to_char("Your body vibrates as you fan out your molecules.\n", ch);
-		}
-		else
+		if (!permitted)
 		{
 			if (EXIT(ch, exitnumb)->keyword)
 			{
@@ -1402,6 +1501,12 @@ revalidate_movement:
 
 			return FALSE;
 		}
+		if (IS_TRUSTED(ch))
+			send_to_char(
+				"You go with your godly self, ignoring physical barriers and all...\n",
+				ch);
+		else
+			send_to_char("Your body vibrates as you fan out your molecules.\n", ch);
 	}
 	else if (world[ch->in_room].current_speed && !IS_TRUSTED(ch))
 	{
@@ -1540,12 +1645,13 @@ revalidate_movement:
 
 	if (affected_by_spell(moving, SPELL_BLOODTOSTONE))
 	{
-		need_movement += number(1, 4);
+		extern int blood_to_stone_move_cost(const Rolls &rolls);
+		need_movement += blood_to_stone_move_cost(live_rolls);
 	}
 
 	if (affected_by_spell(moving, TAG_CRIPPLED))
 	{
-		need_movement += 5;
+		need_movement += crippled_move_cost();
 	}
 
 	if (sprung_traps.empty() && IS_PC(ch) && GET_CHAR_SKILL(ch, SKILL_SNEAK) > 0 &&
@@ -1701,8 +1807,8 @@ revalidate_movement:
 					// TODO: MWD is logic for ophid correct here?
 					if (IS_TRUSTED(tch) ||
 					    (((IS_AFFECTED(tch, AFF_SENSE_LIFE) ||
-					       (has_innate(ch, INNATE_OPHIDIAN_EYES) &&
-						GET_SPEC(ch, CLASS_DRAGOON, SPEC_DRAGON_HUNTER))) ||
+					       (has_innate(tch, INNATE_OPHIDIAN_EYES) &&
+						GET_SPEC(tch, CLASS_DRAGOON, SPEC_DRAGON_HUNTER))) ||
 					      (ch->lobj && ch->lobj->Visible_Type()) ||
 					      IS_AFFECTED(tch, AFF_SKILL_AWARE)) &&
 					     StatSave(tch, APPLY_INT, -4)))
@@ -1764,10 +1870,9 @@ revalidate_movement:
 	 */
 	if (world[new_room].people)
 	{
-		char_from_room(ch);
-		if (ch->in_room != NOWHERE)
+		if (!leave_walking_group(ch, new_room, exitnumb))
 			return FALSE;
-		if (!char_to_room(ch, new_room, -2))
+		if (!char_to_room(ch, new_room, -2, true))
 		{
 			return FALSE;
 		}
@@ -1785,11 +1890,12 @@ revalidate_movement:
 			enter_message(ch, tch, exitnumb, amsg, was_in, new_room);
 
 			calming = 0;
-			if (!IS_ELITE(tch) && !IS_INVADER(ch) &&
-			    (((GET_LEVEL(tch) - GET_LEVEL(ch)) <= 5) || !number(0, 3)) &&
-			    has_innate(ch, INNATE_CALMING))
+			if (!IS_ELITE(tch) &&
+			    (((GET_LEVEL(tch) - GET_LEVEL(ch)) <= calming_level_gap()) ||
+			     !calming_gap_roll(live_rolls)) &&
+			    innate_calming_active(ch))
 			{
-				calming = (int)get_property("innate.calming.delay", 10);
+				calming = calming_delay();
 			}
 
 			// A little randomness.
@@ -1859,8 +1965,8 @@ revalidate_movement:
 				// TODO: MWD is logic correct for ophid?
 				else if (IS_TRUSTED(tch) ||
 					 (((IS_AFFECTED(tch, AFF_SENSE_LIFE) ||
-					    (has_innate(ch, INNATE_OPHIDIAN_EYES) &&
-					     GET_SPEC(ch, CLASS_DRAGOON, SPEC_DRAGON_HUNTER))) ||
+					    (has_innate(tch, INNATE_OPHIDIAN_EYES) &&
+					     GET_SPEC(tch, CLASS_DRAGOON, SPEC_DRAGON_HUNTER))) ||
 					   IS_AFFECTED(tch, AFF_SKILL_AWARE)) &&
 					  StatSave(tch, APPLY_INT, -4)))
 				{
@@ -1939,11 +2045,23 @@ revalidate_movement:
 	const int mount_room = mount ? mount->in_room : NOWHERE;
 	const int rider_room = rider ? rider->in_room : NOWHERE;
 
-	char_from_room(ch);
-	if (ch->in_room != NOWHERE)
-		return FALSE;
+	if (ch->in_room == was_in)
+	{
+		if (!leave_walking_group(ch, new_room, exitnumb))
+			return FALSE;
+	}
+	else
+	{
+		const uint64_t runtime_id = ch->runtime_id;
+		const uint64_t removals = character_removal_generation;
+		char_from_room(ch);
+		if ((removals != character_removal_generation &&
+		     find_character_by_runtime_id(runtime_id) != ch) ||
+		    ch->runtime_id != runtime_id || !IS_ALIVE(ch) || ch->in_room != NOWHERE)
+			return FALSE;
+	}
 	ch->specials.was_in_room = world[was_in].number;
-	if (!char_to_room(ch, new_room, exitnumb))
+	if (!char_to_room(ch, new_room, exitnumb, true))
 	{
 		return FALSE;
 	}
@@ -2078,14 +2196,15 @@ revalidate_movement:
 				 {
 				   act("You can't follow $N!", FALSE, k->follower, 0, ch, TO_CHAR);
 				 }*/
-				if (affected_by_spell(ch, SPELL_DELIRIUM) && !number(0, 2))
+				if (affected_by_spell(ch, SPELL_DELIRIUM) &&
+				    !delirium_wander_roll(live_rolls))
 				{
 					int attempts = 0;
 					cmd2 = number(1, 6);
 					while (!CAN_GO(ch, cmd2) && attempts < 10)
 					{
 						attempts++;
-						cmd2 = number(0, 6);
+						cmd2 = number(1, 6);
 					}
 
 					if (attempts < 9)
@@ -2147,7 +2266,8 @@ revalidate_movement:
 			noise_var = noise_var + number(-1, 1);
 
 			// Sounds suppression threshold is 13.
-			if (affected_by_spell(ch, SPELL_SUPPRESSION) && noise_var <= 13)
+			if (affected_by_spell(ch, SPELL_SUPPRESSION) &&
+			    noise_var <= sound_suppression_noise_limit())
 			{ // Just a placeholder.
 			}
 			else
@@ -2336,7 +2456,8 @@ void do_move(P_char ch, char *argument, int cmd)
 	cmd = cmd_to_exitnumb(cmd);
 	const bool completing = completing_water_crossing(ch, cmd);
 
-	if (!completing && affected_by_spell(ch, SPELL_DELIRIUM) && !number(0, 2))
+	if (!completing && affected_by_spell(ch, SPELL_DELIRIUM) &&
+	    !delirium_wander_roll(live_rolls))
 	{
 		cmd2 = number(1, 6);
 
@@ -3190,6 +3311,28 @@ void do_unlock(P_char ch, char *argument, int /*cmd*/)
 	}
 }
 
+// How long, in pulses, an attempt keeps the picker from another.
+static int pick_lock_rest()
+{
+	return get_property("timer.secs.pickLock", 5) * WAIT_SEC;
+}
+
+// The lag, in pulses, after an attempt.
+static int pick_lock_lag()
+{
+	return 8;
+}
+
+std::string pick_lock_facts(P_char ch)
+{
+	return fact("Chance", std::to_string(GET_CHAR_SKILL(ch, SKILL_PICK_LOCK)) +
+				      " in 100, plus your pick's bonus") +
+	       fact("Before you can try again", seconds(pick_lock_rest())) +
+	       fact("Your lag", seconds(pick_lock_lag())) +
+	       "  You need a lock pick. Pickproof locks always fail, and a failure can break\n"
+	       "  the pick.\n";
+}
+
 void do_pick(P_char ch, char *argument, int /*cmd*/)
 {
 	int percent, door, other_room, chance, retval;
@@ -3235,7 +3378,7 @@ void do_pick(P_char ch, char *argument, int /*cmd*/)
 		send_to_char("Using what?  Your teeth?\n", ch);
 		return;
 	}
-	if (!affect_timer(ch, get_property("timer.secs.pickLock", 5), SKILL_PICK_LOCK))
+	if (!affect_timer(ch, pick_lock_rest(), SKILL_PICK_LOCK))
 	{
 		send_to_char("Your hands are still shaking from that last attempt, rest a bit.\n",
 			     ch);
@@ -3277,17 +3420,16 @@ void do_pick(P_char ch, char *argument, int /*cmd*/)
 		 * else if( ((percent - IS_SET (obj->value[1], CONT_HARDPICK) ? 30 : 0) > BOUNDED (0, chance, 100)) ||
 		 * IS_SET (obj->value[1], CONT_PICKPROOF)) {
 		 */
-		else if ((percent > chance) || IS_SET(obj->value[1], CONT_PICKPROOF))
+		else if ((percent > BOUNDED(0, chance, 100)) ||
+			 IS_SET(obj->value[1], CONT_PICKPROOF))
 		{
 			send_to_char("You failed to pick the lock.\n", ch);
 			notch_skill(ch, SKILL_PICK_LOCK, 25);
-			CharWait(ch, 8);
-			percent = percent - chance + pick->value[1] -
-						  IS_SET(obj->value[1], CONT_HARDPICK) ?
-					  15 :
-					  0;
+			CharWait(ch, pick_lock_lag());
+			percent = percent - chance + pick->value[1] +
+				  (IS_SET(obj->value[1], CONT_HARDPICK) ? 15 : 0);
 			if (IS_SET(obj->value[1], CONT_PICKPROOF))
-				percent -= 20; /*
+				percent += 20; /*
 				                * higher chance to break picks
 				                */
 			if ((percent > -1) && (number(-1, percent) > 0))
@@ -3308,7 +3450,7 @@ void do_pick(P_char ch, char *argument, int /*cmd*/)
 			REMOVE_BIT(obj->value[1], CONT_LOCKED);
 			send_to_char("*Click*\n", ch);
 			act("$n fiddles with $p.", FALSE, ch, obj, 0, TO_ROOM);
-			CharWait(ch, 8);
+			CharWait(ch, pick_lock_lag());
 		}
 	else if ((door = find_door(ch, Gbuf2, Gbuf3)) >= 0)
 		if (IS_RIDING(ch))
@@ -3337,10 +3479,10 @@ void do_pick(P_char ch, char *argument, int /*cmd*/)
 		{
 			send_to_char("You failed to pick the lock.\n", ch);
 			notch_skill(ch, SKILL_PICK_LOCK, 25);
-			CharWait(ch, 8);
+			CharWait(ch, pick_lock_lag());
 			percent = percent - chance + pick->value[1];
 			if (IS_SET(EXIT(ch, door)->exit_info, EX_PICKPROOF))
-				percent -= 20; /*
+				percent += 20; /*
 				                * higher chance to break picks
 				                */
 			if ((percent > -1) && (number(-1, percent) > 0))
@@ -3373,7 +3515,7 @@ void do_pick(P_char ch, char *argument, int /*cmd*/)
 			else
 				act("$n picks the lock of the door.", TRUE, ch, 0, 0, TO_ROOM);
 			send_to_char("The lock quickly yields to your skills.\n", ch);
-			CharWait(ch, 8);
+			CharWait(ch, pick_lock_lag());
 
 			if (IS_SET(EXIT(ch, door)->exit_info, EX_PICKABLE))
 				pick->value[1] += 20; /*

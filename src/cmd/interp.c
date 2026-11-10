@@ -66,6 +66,10 @@
 #include "net/unicode.h"
 #include "world/vnum.room.h"
 #include "world/weather.h"
+#include "abilities/abilities.h"
+
+extern int calming_command_roll(const Rolls &rolls);
+extern int calming_chance_bonus();
 
 /*
  * external variables
@@ -1287,7 +1291,9 @@ const char *command[MAX_CMD] = {
 	"last",
 	"race",
 	"class",
-	"\n" /* MAX_CMD = 876, MAX_CMD_LIST = 1000 */
+	"keptchar",
+	"copyover",
+	"\n" /* MAX_CMD = 878, MAX_CMD_LIST = 1000 */
 };
 
 const char *fill_words[] = { "in", "from", "with", "the", "on", "at", "to", "\n" };
@@ -1453,6 +1459,10 @@ bool cmd_depends_on_item_movement(int cmd)
 	case CMD_POUR:
 	case CMD_QUAFF:
 	case CMD_RECITE:
+	case CMD_CAST:
+	case CMD_INSTACAST:
+	case CMD_SPELLWEAVE:
+	case CMD_WILL:
 	case CMD_RELOAD:
 	case CMD_SALVAGE:
 	case CMD_SIP:
@@ -2097,11 +2107,8 @@ void command_interpreter(P_char ch, char *argument)
 					break;
 				}
 			if (IS_FIGHTING(ch) && !cmd_info[cmd].in_battle)
-				send_to_char(
-					is_normal_movement_command(cmd) ?
-						"You cannot move normally while fighting; use 'flee' to escape.\r\n" :
-						"Sorry, you aren't allowed to do that in combat.\r\n",
-					ch);
+				send_to_char("Sorry, you aren't allowed to do that in combat.\r\n",
+					     ch);
 			return;
 		}
 		else
@@ -2510,9 +2517,9 @@ void command_interpreter(P_char ch, char *argument)
 					// 5% chance to fail sneak.
 					if ((exec_char->in_room == old_room) || !SNEAK(exec_char) ||
 					    !number(0, 19))
-						// 5% chance for calming to work.
-						if (!has_innate(ch, INNATE_CALMING) ||
-						    !number(0, 19))
+						// Calming usually suppresses this check, except in enemy hometowns.
+						if (!innate_calming_active(exec_char) ||
+						    !calming_command_roll(live_rolls))
 							// And the charisma calm chance.
 							if (number(1, 100) > CALMCHANCE(exec_char))
 								check_aggro_from_command(exec_char);
@@ -2818,7 +2825,7 @@ void half_chop(char *string, char *arg1, char *arg2)
 
 bool special(P_char ch, int cmd, char *arg)
 {
-	P_obj i;
+	P_obj i, next_obj;
 	P_char k;
 	int j;
 
@@ -2848,8 +2855,10 @@ bool special(P_char ch, int cmd, char *arg)
 	/*
 	 * special in inventory?
 	 */
-	for (i = ch->carrying; i; i = i->next_content)
+	// A proc may extract its own object, so read the next one first.
+	for (i = ch->carrying; i; i = next_obj)
 	{
+		next_obj = i->next_content;
 		if ((i->R_num >= 0) && obj_index[i->R_num].func.obj)
 			if ((*obj_index[i->R_num].func.obj)(i, ch, cmd, arg))
 				return (1);
@@ -2889,10 +2898,13 @@ bool special(P_char ch, int cmd, char *arg)
 	/*
 	 * special in object present?
 	 */
-	for (i = world[ch->in_room].contents; i; i = i->next_content)
+	for (i = world[ch->in_room].contents; i; i = next_obj)
+	{
+		next_obj = i->next_content;
 		if ((i->R_num >= 0) && obj_index[i->R_num].func.obj)
 			if ((*obj_index[i->R_num].func.obj)(i, ch, cmd, arg))
 				return (1);
+	}
 
 	return (0);
 }
@@ -3012,6 +3024,7 @@ void assign_command_pointers(void)
 	/* wizcommands */
 
 	CMD_GRT(CMD_APPROVE, STAT_DEAD + POS_PRONE, do_approve, AVATAR);
+	CMD_GRT(CMD_KEPTCHAR, STAT_DEAD + POS_PRONE, do_keptchar, OVERLORD);
 	CMD_GRT(CMD_ADVANCE, STAT_DEAD + POS_PRONE, do_advance, GREATER_G);
 	CMD_GRT(CMD_ALLOW, STAT_DEAD + POS_PRONE, do_allow, GREATER_G);
 	CMD_GRT(CMD_AT, STAT_DEAD + POS_PRONE, do_at, AVATAR);
@@ -3066,6 +3079,7 @@ void assign_command_pointers(void)
 	CMD_GRT(CMD_SETBIT, STAT_DEAD + POS_PRONE, do_setbit, GREATER_G);
 	CMD_GRT(CMD_SHUTDOW, STAT_DEAD + POS_PRONE, do_shutdow, FORGER);
 	CMD_GRT(CMD_SHUTDOWN, STAT_DEAD + POS_PRONE, do_shutdown, FORGER);
+	CMD_GRT(CMD_COPYOVER, STAT_DEAD + POS_PRONE, do_copyover, FORGER);
 	CMD_GRT(CMD_SILENCE, STAT_DEAD + POS_PRONE, do_silence, AVATAR);
 	CMD_GRT(CMD_SNOOP, STAT_DEAD + POS_PRONE, do_snoop, GREATER_G);
 	CMD_GRT(CMD_SNOWBALL, STAT_DEAD + POS_PRONE, do_action, AVATAR);
@@ -3943,9 +3957,9 @@ void check_aggro_from_command(P_char exec_char)
 	// Chance of aggro mobs not attacking.
 	calming_chance = CALMCHANCE(exec_char);
 	// Innate calming is +10% chance for this type of aggro check.
-	if (has_innate(exec_char, INNATE_CALMING))
+	if (innate_calming_active(exec_char))
 	{
-		calming_chance += 10;
+		calming_chance += calming_chance_bonus();
 	}
 
 	// Check for a PC master (controller of exec_char) that's in the same room.
@@ -4023,9 +4037,10 @@ void check_aggro_from_command(P_char exec_char)
 				if (IS_ALIVE(exec_master) && exec_master->in_room == room)
 				{
 					exec_char = exec_master;
-					calming_chance =
-						CALMCHANCE(exec_char) +
-						(has_innate(exec_char, INNATE_CALMING) ? 10 : 0);
+					calming_chance = CALMCHANCE(exec_char) +
+							 (innate_calming_active(exec_char) ?
+								  calming_chance_bonus() :
+								  0);
 					exec_master = NULL;
 				}
 				else

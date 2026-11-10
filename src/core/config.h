@@ -29,7 +29,6 @@
 /* configurable options */
 
 #define ENABLE_TERSE 1
-#define THARKUN_ARTIS 1
 
 #define MEMCHK 1 /* Memory debugger, 1 for simple, 2 for long */
 #define DB_NOTIFYoff /* Logs when it can't find shit in area files */
@@ -75,7 +74,9 @@
 
 /* time factors */
 #define MAX_ARENA_CORPSE_TIME 1200 /*   5 RL minutes */
+#ifndef OPT_USEC
 #define OPT_USEC 250000 /* time delay corresponding to 4 pulses/sec */
+#endif
 #define OVL_PULSE 18 /* anti-spam repeated input limit period */
 #define PULSE_BARD_UPDATE 35 /* 15 sec */
 #define PULSE_MOBILE 30 /* 10 seconds */
@@ -117,7 +118,7 @@
 #define MINLVLIMMORTAL 57 /* bottom of immortal levels */
 #define MAX_CIRCLE 12 /* Alter at your own peril! */
 #define MAX_CMD_LIST 1000 /* maximum number of total commands */
-#define MAX_CMD 876 // current number of commands, including the final newline
+#define MAX_CMD 878 // current number of commands, including the final newline
 #define MAX_CONNECTIONS 256 /* last descriptor allowed, really; needs fixed */
 #define MAX_LOGIN_CONNECTIONS_PER_ADDRESS 8 /* open and not yet logged in to an account */
 #define LOGIN_PROMPT_TIMEOUT (120 * WAIT_SEC) /* silence at a login prompt */

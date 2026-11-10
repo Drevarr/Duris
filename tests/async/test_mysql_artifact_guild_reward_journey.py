@@ -16,7 +16,7 @@ import subprocess
 import tempfile
 import time
 
-import test_flatfile_combat_journey as journey
+import test_mariadb_combat_journey as journey
 from test_flight_network_journey import authority, command
 from run_world_quest_dual_backend import setup_run_root
 
@@ -193,7 +193,7 @@ def run(binary, case):
                     journey.create_character(client, expected_room=None, account=account, character=name,
                                              email=name.lower() + '@example.invalid')
                     client.send('save')
-                    client.expect('Save complete for ' + name + '.', timeout=60)
+                    client.expect('Saving ' + name + '.', timeout=60)
                 stop()
                 sql(f"UPDATE player_data SET level=62,highest_level=62 WHERE name='{GOD}'")
                 sql(f"UPDATE player_data SET level=51,highest_level=51,m_class=1024,secondary_class=0 WHERE name='{PLAYER}'")
@@ -232,7 +232,8 @@ def run(binary, case):
                 # Keep independent luck-based random epics out of the elite feed totals.
                 command(god, 'setbit char ' + PLAYER + ' luck -1000')
                 assert 'Class: Necromancer' in command(player, 'score')
-                assert re.search(r'\bLuk:\s+1\b', command(player, 'attributes'))
+                settle(lambda: re.search(r'\bLuk:\s+1\b', command(player, 'attributes')),
+                       'the effective luck change was not published')
                 assert 'new association is set up' in command(god, 'supervise found ' + PLAYER + ' n Rewardguild')
                 settle(lambda: sql("SELECT COUNT(*) FROM guilds WHERE TRIM(name)='Rewardguild'") == '1', 'guild snapshot missing')
                 gid = int(sql("SELECT id FROM guilds WHERE TRIM(name)='Rewardguild'"))
@@ -315,7 +316,7 @@ def run(binary, case):
                     command(god, 'setbit char ' + VICTIM + ' hit 1')
                     command(god, f'artifacts reset {ARTIFACT}')
                     command(god, 'goto 3')
-                    player.send('save'); player.expect('Save complete for ' + PLAYER + '.', timeout=60)
+                    player.send('save'); player.expect('Saving ' + PLAYER + '.', timeout=60)
                     hold_row('artifacts', 'vnum', ARTIFACT)
                     began = len(player.transcript)
                     print('artifact journey: PvP participants ready; artifact writer held', flush=True)
@@ -333,7 +334,7 @@ def run(binary, case):
                     assert int(after['artifact'].split('\t')[-1]) == timer_before + 720000, after
                     assert after['guild'] == '105\t1', after
                     assert sql('SELECT p.command_type FROM artifact_guild_outcome a JOIN critical_operation_inbox p ON p.operation_id=a.parent_operation_id') == '8'
-                    player.send('save'); player.expect('Save complete for ' + PLAYER + '.', timeout=60)
+                    player.send('save'); player.expect('Saving ' + PLAYER + '.', timeout=60)
                     evidence['pvp_transcript'] = bytes(player.transcript[began:]).decode(errors='replace')
                     evidence['after_pvp'] = after
                     stop()
@@ -353,7 +354,7 @@ def run(binary, case):
                 # This is the ordinary caster combat setting, not a spell override.
                 assert 'stop all your attacks' in command(player, 'offensive off')
                 assert 'stop all your attacks' in command(god, 'offensive off')
-                player.send('save'); player.expect('Save complete for ' + PLAYER + '.', timeout=60)
+                player.send('save'); player.expect('Saving ' + PLAYER + '.', timeout=60)
                 for _ in range(3):
                     command(god, 'load mob 11')
                     command(god, 'setbit char raoul level 53')
@@ -500,7 +501,7 @@ def run(binary, case):
                 recovered_equipment = command(player, 'equipment')
                 assert 'ioun stone' in recovered_equipment, recovered_equipment
                 evidence['copyover_after_drain'] = True
-                player.send('save'); player.expect('Save complete for ' + PLAYER + '.', timeout=60)
+                player.send('save'); player.expect('Saving ' + PLAYER + '.', timeout=60)
                 stop()
                 before_restart = saved_state()
                 assert sql(f'SELECT COALESCE(canonical_item_uid,0),identity_state FROM artifact_domain_state WHERE vnum={ARTIFACT}') == identity_before
@@ -533,7 +534,7 @@ def run(binary, case):
                 evidence['staff_player_load_admission'] = {'canonical_live_count': 1, 'duplicate_refused': True, 'account_reconnected': True}
                 admitted_stat = command(god, f'stat obj {ARTIFACT}')
                 assert re.search(r'Number in game\s*:\s*1\b', admitted_stat), admitted_stat
-                player.send('save'); player.expect('Save complete for ' + PLAYER + '.', timeout=60)
+                player.send('save'); player.expect('Saving ' + PLAYER + '.', timeout=60)
                 assert sql(f"SELECT COUNT(*) FROM player_items p JOIN player_items c ON c.container_id=p.id AND c.obj_uid=8888898 WHERE p.id={rejected_root} AND p.obj_uid=8888899 AND p.short_descr='rejected mutable artifact'") == '1'
                 assert sql("SELECT COUNT(*) FROM item_current_owner WHERE item_uid IN (8888899,8888898)") == '0'
                 assert sql(f"SELECT COUNT(*) FROM item_current_owner WHERE item_uid=8888897 AND owner_type=1 AND owner_id={source_pid} AND state=1") == '1'
@@ -603,7 +604,7 @@ def run(binary, case):
                 assert live_uid != old_uid
                 assert re.search(r'Number in game\s*:\s*1\b', command(god, f'stat obj {SWAP_LIVE}'))
                 assert re.search(r'Number in game\s*:\s*0\b', command(god, f'stat obj {ARTIFACT}'))
-                player.send('save'); player.expect('Save complete for ' + PLAYER + '.', timeout=60)
+                player.send('save'); player.expect('Saving ' + PLAYER + '.', timeout=60)
                 settle(lambda: sql(f'SELECT COUNT(*) FROM player_items WHERE pid={source_pid} AND obj_uid={live_uid}') == '1',
                        'online replacement payload did not save')
                 stop()

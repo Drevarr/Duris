@@ -1203,25 +1203,9 @@ int tired_young_man(P_char ch, P_char pl, int cmd, char * /*arg*/)
 
 int shimmering_longsword(P_obj obj, P_char ch, int cmd, char *arg)
 {
-	int dam = cmd / 1000;
-	P_char vict;
-
-	if (cmd == CMD_SET_PERIODIC)
-	{
-		return FALSE;
-	}
-
-	// If it's not an attack, ch isn't alive, it's not wielded prime/secondary, or not wielded by ch.
-	if (!dam || !IS_ALIVE(ch) ||
-	    (!OBJ_WORN_POS(obj, WIELD) && !OBJ_WORN_POS(obj, SECONDARY_WEAPON)) ||
-	    !OBJ_WORN_BY(obj, ch))
-	{
-		return FALSE;
-	}
-
-	// If vict already dead.. don't proc.
-	vict = legacy_proc_arg<P_char>(arg);
-	if (!IS_ALIVE(vict))
+	// If it's not an attack on a living victim, or it's not wielded prime/secondary.
+	P_char vict = melee_proc_target(obj, ch, cmd, arg);
+	if (!vict || (!OBJ_WORN_POS(obj, WIELD) && !OBJ_WORN_POS(obj, SECONDARY_WEAPON)))
 	{
 		return FALSE;
 	}
@@ -1229,14 +1213,14 @@ int shimmering_longsword(P_obj obj, P_char ch, int cmd, char *arg)
 	if (!number(0, 29))
 	{
 		act("As $p slashes $N's armor, a &+Bbright blue force of "
-		    "mystic power streaks out the blade&n, bombarding $N body!",
+		    "mystic power streaks out the blade&n, bombarding $N's body!",
 		    FALSE, obj->loc.wearing, obj, vict, TO_CHAR);
 		act("As $n's $q slashes your armor, a &+Bbright blue force "
 		    "of mystic power streaks out the blade&n, bombarding your body!",
 		    FALSE, obj->loc.wearing, obj, vict, TO_VICT);
 		act("As $n's $q slashes $N's armor, a &+Bbright blue force "
 		    "of mystic power streaks out the blade&n, bombarding $N's body!",
-		    FALSE, obj->loc.wearing, obj, vict, TO_ROOM);
+		    FALSE, obj->loc.wearing, obj, vict, TO_NOTVICT);
 		spell_lightning_bolt(30, ch, 0, SPELL_TYPE_SPELL, vict, 0);
 		return TRUE;
 	}

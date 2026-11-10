@@ -81,6 +81,7 @@ void all_affects(P_char ch, int mode) {
         if(af->location==APPLY_HIT && !(af->flags&AFFTYPE_NOAPPLY)) TmpAffs.Hits+=af->modifier;
     // INSERT_HP_RECALC
 }
+char affect_total(P_char actor,int) { all_affects(actor,FALSE); all_affects(actor,TRUE); return 0; }
 affected_type *affect_to_char(P_char actor,affected_type *af) {
     auto *copy=new affected_type(*af); copy->next=actor->affected; actor->affected=copy;
     actor->specials.affected_by2|=af->bitvector2;
@@ -458,10 +459,14 @@ int main() {
 }
 '''
 
-callbacks = '\n'.join(function(ROOT / 'src/specs/specs.underworld.c', signature) for signature in (
-    'void event_tsunamiwave(', 'int SeaKingdom_Tsunami(', 'int deflect_ioun('))
+callbacks = function(ROOT / 'src/net/comm.c', 'void act_trio(') + '\n' + function(ROOT / 'src/specs/specs.object.c', 'struct proc_data *defense_proc_data(') + '\n' + '\n'.join(function(ROOT / 'src/specs/specs.underworld.c', signature) for signature in (
+    'void event_tsunamiwave(', 'int SeaKingdom_Tsunami(', 'static bool deflect_spell(', 'int deflect_ioun('))
 callbacks += '\n' + function(ROOT / 'src/specs/specs.object.c', 'int living_necroplasm(')
-callbacks += '\n' + function(ROOT / 'src/magic/magic.c', 'void spell_vampire(')
+callbacks += '\n' + '\n'.join(function(ROOT / 'src/magic/magic.c', signature) for signature in (
+    'static int vampire_duration(', 'static int vampire_str_max(', 'static int vampire_con_max(',
+    'static int vampire_hitroll(', 'static int vampire_damroll(', 'void spell_vampire('))
+callbacks += '\n' + '\n'.join(function(ROOT / 'src/magic/magic.c', signature) for signature in (
+    'static int vitality_hit_points(', 'static int vitality_duration('))
 callbacks += '\n' + function(ROOT / 'src/magic/magic.c', 'void spell_vitality(').replace('void spell_vitality(', 'static void real_spell_vitality(', 1)
 hp_source = (ROOT / 'src/magic/affects.c').read_text()
 hp_start = hp_source.index('\tif (!mode && (GET_MAX_HIT(ch) == 0))')

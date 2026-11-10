@@ -9,12 +9,13 @@ import subprocess
 import tempfile
 import time
 
-import test_flatfile_combat_journey as journey
+import test_mariadb_combat_journey as journey
 from test_flight_network_journey import authority, command
 
 ROOT = journey.ROOT
 PLAYER, ACCOUNT = "Spellscholar", "Spellsacct"
 GOD, GOD_ACCOUNT = "Spellwarden", "Spellstaff"
+BLIGHTER, BLIGHTER_ACCOUNT = "Spellruin", "Ruinacct"
 
 
 def run(binary, backend):
@@ -89,33 +90,56 @@ def run(binary, backend):
 
             try:
                 process = boot()
-                for name, account in ((PLAYER, ACCOUNT), (GOD, GOD_ACCOUNT)):
+                for name, account, class_key, race_key, alignment in (
+                    (PLAYER, ACCOUNT, "j", "h", "g"),
+                    (GOD, GOD_ACCOUNT, "w", "h", "g"),
+                    (BLIGHTER, BLIGHTER_ACCOUNT, "x", "d", "e"),
+                ):
                     client = journey.MudClient(plain)
                     clients.append(client)
-                    journey.create_character(client, account=account, character=name,
+                    expected_room = None if name == BLIGHTER else "The Regression Arena"
+                    journey.create_character(client, expected_room=expected_room, account=account, character=name,
                                              email=name.lower() + "@example.invalid",
-                                             class_name="j" if name == PLAYER else "w")
+                                             class_name=class_key, race_name=race_key, alignment=alignment)
                     client.send("save")
-                    client.expect("Save complete for " + name + ".", timeout=30)
+                    client.expect("Saving " + name + ".", timeout=30)
                 stop()
                 if sql:
                     sql("UPDATE player_data SET level=62,highest_level=62 WHERE name='" + GOD + "'")
-                else:
-                    journey.make_overlord(Path(env["FLATFILE_STATE_DIR"]), GOD)
                 process = boot()
                 god = login(GOD, GOD_ACCOUNT)
                 player = login(PLAYER, ACCOUNT)
+                blighter = login(BLIGHTER, BLIGHTER_ACCOUNT)
+                raw_start = len(blighter.raw_transcript)
+                blighter_spells = command(blighter, "spells")
+                assert f">====[ {BLIGHTER} | Blighter | Max Circle 1 ]====<" in blighter_spells
+                assert "deforest is your spell interface" in blighter_spells
+                assert b"\x1b[0;1;37mdeforest\x1b[0m is your spell interface" in blighter.raw_transcript[raw_start:]
+                assert "spell slots available" in command(blighter, "deforest")
+                raw_start = len(player.raw_transcript)
                 own = command(player, "spells")
-                assert PLAYER + " : SPELLS" in own and "magic missile" in own
-                assert "Circle 1 (circle accessible)" in own
-                assert "(future circle)" in own and "in spellbook" in own
+                raw_own = player.raw_transcript[raw_start:]
+                header = f">====[ {PLAYER} | Conjurer | Max Circle 1 ]====<"
+                footer = "See: spells <class or specialization> | spells info <spell name>"
+                own_lines = own.splitlines()
+                assert header in own_lines and own_lines[own_lines.index(header) + 2] == "1st CIRCLE:"
+                assert footer in own_lines and "magic missile [in spellbook]" in own_lines
+                assert "12th CIRCLE:" in own_lines
+                assert "(circle accessible)" not in own and "(future circle)" not in own
+                assert own_lines[own_lines.index(footer) - 1] == "memorize is your spell interface"
+                assert b"\x1b[0;1;30mburning hands" in raw_own
+                assert b"\x1b[0;1;37mmemorize\x1b[0m is your spell interface" in raw_own
+                assert b"\x1b[0;1;37mspells <class or specialization>" in raw_own
+                assert b"\x1b[0;1;37mspells info <spell name>" in raw_own
                 staff = command(god, "spells")
-                assert GOD + " : SPELLS" in staff and "No eligible spells" in staff
+                assert f">====[ {GOD} | Warrior | Max Circle 12 ]====<" in staff
+                assert "No eligible spells" in staff
+                assert "is your spell interface" not in staff
                 assert "BASE-CLASS CIRCLE REFERENCE" not in staff
                 inspected = command(god, "spells " + PLAYER)
-                assert PLAYER + " : SPELLS" in inspected
-                assert "Current maximum Circle: 1" in inspected and "(future circle)" in inspected
-                assert PLAYER + " : SPELLS" in command(god, "spells target " + PLAYER)
+                assert header in inspected and footer in inspected
+                assert "is your spell interface" not in inspected
+                assert header in command(god, "spells target " + PLAYER)
                 assert "staff-only" in command(player, "spells " + GOD)
                 assert "staff-only" in command(player, "spells target " + GOD)
                 for text in ("spells all", "spells a", "spells al"):
@@ -133,11 +157,15 @@ def run(binary, backend):
                 assert "Circle 12" in cleric and "heal" in cleric
                 assert "No spells assigned" in command(player, "spells warrior")
                 fire = command(player, "spells FiRe-MaGuS")
-                assert "SPECIALIZATION" in fire and "fire form" in fire
-                assert "magic missile" in fire
+                assert "SPECIALIZATION" in fire and "  * fire form" in fire.splitlines()
+                assert "  magic missile" in fire.splitlines()
+                assert "memorize is the default spell interface" in fire
+                for name in ("blighter", "storm bringer"):
+                    assert "deforest is the default spell interface" in command(player, f"spells {name}")
                 assert "fire form" not in command(player, "spells conjurer")
                 wizard = command(player, "spells wizard")
-                assert "Spells lost from base class:" in wizard
+                assert "  * anti-magic ray" in wizard.splitlines()
+                assert "* indicates spells gained from spec. Spells lost from base class:" in wizard
                 assert "solbeeps missile barrage" in wizard.split("Spells lost from base class:", 1)[1]
                 assert "(Rogue)" in command(player, "spells assassin")
                 assert "(Rogue)" in command(player, "spells thief")
@@ -163,11 +191,24 @@ def run(binary, backend):
                 lost_info = command(player, "spells info solbeeps missile barrage")
                 assert "Wizard" in lost_info and "Unavailable (lost from base class)" in lost_info
                 assert "Circle 8 (changed)" in command(player, "spells info haste")
+                # Nothing numeric to show: today's page unchanged.
+                fear = command(player, "spells info fear")
+                assert "fear : SPELL INFO" in fear and "Your access" in fear and "Mechanics" not in fear, fear
+                blade = command(player, "spells info flame blade")
+                assert "Below level 21 the blade casts no spell." in blade, blade
                 assert "Your required Circle:" in info and "Current maximum Circle: 1" in info
                 assert "Circle requirement: not yet met" in info and "Spellbook" in info
-                assert info.index("Class / specialization") < info.index("Your access") < info.index("Helpfile details")
+                assert info.index("Class / specialization") < info.index("Your access") < info.index("Mechanics") < info.index("Helpfile details")
+                assert "Fire damage: 20-120 at your level, 1" in info, info
+                assert "If the target fails its save:" in info
+                sanctuary = command(player, "spells info sanctuary")
+                assert "Duration: 15-16 game hours (18.75-20 minutes)" in sanctuary, sanctuary
                 redirected = command(player, "spells info magic missile")
                 assert "Redirected spell details for the disposable journey" in redirected
+                # Converted in batch 1: its numbers come before the redirected help.
+                assert "Missiles: 1 at your level, 1" in redirected, redirected
+                assert "Damage per missile: 5-17, the same for every missile" in redirected
+                assert redirected.index("Mechanics") < redirected.index("Redirected spell details")
                 missing = command(player, "spells info fire form")
                 assert "Circle 10 (added)" in missing and "Your access" in missing
                 assert "Help topic not found" in missing
@@ -180,10 +221,27 @@ def run(binary, backend):
                 # Real dispatcher and NPC inspection, including class/reserved collisions.
                 command(god, "load mob 11")
                 assert "BASE CLASS" in command(god, "spells cleric")
-                assert "SPELLS" in command(god, "spells target cleric")
-                assert "SPELLS" in command(god, "spells target all")
                 assert "Matching names:" in command(god, "spells s")
-                assert "SPELLS" in command(god, "spells target s")
+                for alias in ("cleric", "all", "s"):
+                    assert ">====[ raoul cleric all s | None | Max Circle 1 ]====<" in command(
+                        god, f"spells target {alias}")
+                # Batch 4 spells show their shared numbers and still play through their handlers.
+                doom = command(player, "spells info creeping doom")
+                assert "Damage per wave: 41-61 at your level, 1" in doom and "Waves: 4-5" in doom, doom
+                god.send("cast 'true seeing'")
+                god.expect("Your vision sharpens considerably", timeout=30)
+                # The converted fireball still plays through its real handler.
+                god.send("cast 'fireball' raoul")
+                god.expect_any(("You throw a fireball", "Your fireball hits"), timeout=30)
+                # Batch 2: heal shows its shared numbers and still plays through its handler.
+                heal_info = command(player, "spells info heal")
+                assert "Healing: 101-105 at your level, 1" in heal_info, heal_info
+                god.send("cast 'heal' " + GOD)
+                god.expect("A warm feeling fills your body", timeout=30)
+                # So does batch 1's magic missile, on a fresh target.
+                command(god, "load mob 11")
+                god.send("cast 'magic missile' raoul")
+                god.expect_any(("the magic missile hits", "magic missile tears away"), timeout=30)
                 command(god, "toggle paging yes")
                 god.send("spells all")
                 god.expect("BASE-CLASS CIRCLE REFERENCE")
@@ -192,7 +250,8 @@ def run(binary, backend):
                 god.expect(">", timeout=20)
                 command(god, "toggle paging no")
                 assert b"\x1b[" in player.raw_transcript
-                for name, text in (("info", info), ("all", table), ("personal", own), ("fire", fire)):
+                for name, text in (("info", info), ("all", table), ("personal", own), ("fire", fire),
+                                   ("heal", heal_info)):
                     (ROOT / "bin/tests" / ("spells-" + name + "-" + backend + ".txt")).write_text(text)
                     # Browser-generated sections, excluding authored help and the score fence.
                     generated = text.split("Helpfile details", 1)[0].split("Score information", 1)[0]
@@ -215,7 +274,7 @@ def run(binary, backend):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--backend", choices=("mariadb", "flatfile"), default="flatfile")
+    parser.add_argument("--backend", choices=("mariadb",), default="mariadb")
     parser.add_argument("--server", type=Path, required=True)
     args = parser.parse_args()
     run(args.server.resolve(), args.backend)

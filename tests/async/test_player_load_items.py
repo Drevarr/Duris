@@ -277,6 +277,13 @@ P_obj read_object(int rnum, int)
     object->loc.room = NOWHERE;
     object->type = rnum == 100 ? ITEM_CONTAINER : ITEM_OTHER;
     object->weight = rnum == 100 ? 2 : 3;
+    if (rnum == 104)
+    {
+        object->extra2_flags = ITEM2_CRAFTED;
+        object->anti_flags = 11;
+        object->anti2_flags = 12;
+        object->craftsmanship = 13;
+    }
     if (rnum == 102)
     {
         auto *normal = static_cast<extra_descr_data *>(std::calloc(1, sizeof(extra_descr_data)));
@@ -332,6 +339,7 @@ void extract_char(P_char pet)
 }
 
 int last_pet_flags = 0;
+int last_pet_duration = 0;
 int GET_CLASS(P_char ch, uint cls) { return (ch->player.m_class & cls) != 0; }
 int last_death_delay = 0;
 void schedule_pet_death(P_char, int delay) { last_death_delay = delay; }
@@ -346,6 +354,7 @@ char affect_total(P_char ch, int)
 int setup_pet(P_char, P_char, int duration, int flags)
 {
     last_pet_flags = flags;
+    last_pet_duration = duration;
     return duration;
 }
 
@@ -817,6 +826,32 @@ int main()
         refused_artifact_vnum=0; refused_artifact_errno=EEXIST;
     }
     {
+        // Two SQL items with the same prototype. Old NULLs keep its flags
+        // and quality, while explicit zeros and nonzero instance overrides win.
+        reset_test_state();
+        test_character owner(42);
+        auto result = base_result();
+        add_item(result, 1, 9, 104, PLAYER_SNAPSHOT_NO_PARENT, 0);
+        add_item(result, 2, 10, 104, PLAYER_SNAPSHOT_NO_PARENT, 0);
+        result.snapshot.items[1].anti_flags = 25;
+        result.snapshot.items[1].craftsmanship = 28;
+        result.item_identities[1].override_mask |= PLAYER_LOAD_ITEM_OVERRIDE_EXTRA2_FLAGS |
+            PLAYER_LOAD_ITEM_OVERRIDE_ANTI_FLAGS | PLAYER_LOAD_ITEM_OVERRIDE_ANTI2_FLAGS |
+            PLAYER_LOAD_ITEM_OVERRIDE_CRAFTSMANSHIP;
+        player_load_item_materialize_metrics metrics = {};
+        assert(materialize_fixture_items(&owner.character, result, &metrics));
+        P_obj legacy = owner.character.carrying;
+        P_obj instance = legacy->next_content;
+        if (legacy->obj_uid == 10)
+            std::swap(legacy, instance);
+        assert(legacy->obj_uid == 9 && legacy->extra2_flags == ITEM2_CRAFTED &&
+               legacy->anti_flags == 11 && legacy->anti2_flags == 12 && legacy->craftsmanship == 13);
+        assert(instance->obj_uid == 10 && instance->extra2_flags == 0 &&
+               instance->anti_flags == 25 && instance->anti2_flags == 0 &&
+               instance->craftsmanship == 28);
+        player_load_items_discard(&owner.character);
+    }
+    {
         reset_test_state();
         test_character owner(42);
         player_load_result result = base_result();
@@ -910,6 +945,25 @@ int main()
             result.item_owner_revision, true, true, &roots, &metrics));
         assert(roots.empty() && metrics.outcome ==
                player_load_item_materialize_outcome::invalid_snapshot);
+    }
+
+    // Origins are validated for the whole ownership graph before any allocation.
+    for (int malformed : {0, 1, 2, 3}) {
+        reset_test_state();
+        test_character owner(42);
+        player_load_result result=base_result();
+        add_item(result,1,10,101,PLAYER_SNAPSHOT_NO_PARENT,0);
+        result.snapshot.items[0].extra_descriptions.push_back(
+            {SQL_ITEM_NAMED_SET_ORIGIN_KEYWORD, malformed==0 ? "bad" : "808", false, {}});
+        if(malformed==1 || malformed==2)
+            result.snapshot.items[0].extra_descriptions.push_back(
+                {SQL_ITEM_NAMED_SET_ORIGIN_KEYWORD, malformed==1 ? "808" : "811", false, {}});
+        if(malformed==3)
+            result.snapshot.items[0].extra_descriptions[0].description=std::string("808\0tail",8);
+        player_load_item_materialize_metrics metrics{};
+        assert(!materialize_fixture_items(&owner.character,result,&metrics));
+        assert(metrics.outcome==player_load_item_materialize_outcome::invalid_snapshot);
+        assert(allocations==0 && !owner.character.carrying && item_ownership_runtime_size()==0);
     }
 
     // Distinct native books coexist; reordered copies are duplicate metadata.
@@ -1187,6 +1241,33 @@ int main()
         assert(pets[0]->carrying && pets[0]->carrying->obj_uid == 20);
         player_load_pets_discard(&pets);
     }
+    for (bool decodable : {true, false}) {
+        // A rollback holds state only the upgrade can decode; the upgrade releases it.
+        reset_test_state();
+        test_character owner(42);
+        player_load_result result = base_result();
+        add_pet(result, 3001, 200);
+        auto &saved = result.snapshot.pets[0];
+        saved.hold_reason = pet_hold_reason::invalid_state;
+        pet_restore_state state;
+        state.version = 2;
+        state.named_set_cooldowns[0] = time(nullptr) + 60;
+        assert(pet_restore_state_encode(state, &saved.restore_state));
+        if (!decodable)
+            saved.restore_state.resize(saved.restore_state.size() - 1);
+        std::vector<P_char> pets;
+        player_load_pet_materialize_metrics metrics = {};
+        assert(player_load_pets_stage(&owner.character, result, &pets, &metrics));
+        assert(pets.size() == 1 && static_cast<bool>(pets[0]) == decodable);
+        assert(decodable == !owner.pc.held_pets);
+        if (decodable)
+            player_load_pets_discard(&pets);
+        else
+        {
+            assert(owner.pc.held_pets->pets[0].hold_reason == pet_hold_reason::invalid_state);
+            player_load_pets_commit(&owner.character, &pets, result);
+        }
+    }
     for (int malformed = 0; malformed < 8; ++malformed) {
         reset_test_state();
         test_character owner(42);
@@ -1278,6 +1359,33 @@ int main()
         assert(owner.pc.held_pets->pets[0].items[0].object_uid == 20);
         player_load_pets_commit(&owner.character, &pets, result);
         assert(!owner.character.followers);
+    }
+
+    {
+        // A cooldown-only ordinary pet retains the legacy resource/charm path.
+        reset_test_state();
+        test_character owner(42);
+        player_load_result result = base_result();
+        result.snapshot.room_vnum = 123;
+        add_pet(result, 3001, 200);
+        pet_restore_state state;
+        state.version = 2;
+        state.named_set_cooldowns = {time(nullptr) + 60, 0, 0};
+        assert(pet_restore_state_encode(state, &result.snapshot.pets[0].restore_state));
+        std::vector<P_char> pets;
+        player_load_pet_materialize_metrics metrics{};
+        assert(player_load_pets_stage(&owner.character, result, &pets, &metrics));
+        assert(pets.size() == 1 && pets[0] && !owner.pc.held_pets);
+        assert(GET_MAX_HIT(pets[0]) == 20 && GET_HIT(pets[0]) == 10);
+        assert(GET_MAX_MANA(pets[0]) == 5 && GET_MANA(pets[0]) == 3);
+        assert(GET_MAX_VITALITY(pets[0]) == 6 && GET_VITALITY(pets[0]) == 4);
+        assert(!pets[0]->only.npc->summon_kind);
+        player_load_pets_commit(&owner.character, &pets, result);
+        assert(owner.character.followers && (last_pet_flags & PET_RESTORE));
+        assert(last_pet_duration == 12);
+        extract_char(owner.character.followers->follower);
+        std::free(owner.character.followers);
+        owner.character.followers = nullptr;
     }
 
     for (bool mephit : {false,true}) for (int vnum : {1100,1110,1111,1112}) {
@@ -1470,7 +1578,7 @@ assert MATERIALIZE.count("wizlog(OVERLORD") == 1
 assert "alert_refusal_once(result.pid)" in MATERIALIZE
 assert "request.include_items = true" in COPYOVER
 assert "restoreItemsOnly(ch, 0)" not in COPYOVER
-rtype_zero = NANNY[NANNY.index("else if (d->rtype == 0)") :]
+rtype_zero = NANNY[NANNY.index("else if (d->rtype == 0 || d->rtype == RENT_QUIT)") :]
 assert "sql_load_player_items(ch)" not in rtype_zero[:500]
 
 print("linear player-item hydration contracts passed")

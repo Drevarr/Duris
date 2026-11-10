@@ -9,6 +9,7 @@
  */
 
 #include "core/prototypes.h"
+#include "item/named_set_effects.h"
 #include "core/profile.h"
 #include "core/structs.h"
 #include "net/comm.h"
@@ -44,6 +45,7 @@
 #include "sql/sql.h"
 #include "world/vnum.obj.h"
 #include "world/weather.h"
+#include "abilities/abilities.h"
 
 /*
  * external variables
@@ -87,6 +89,8 @@ struct mm_ds *dead_link_pool = NULL;
 struct mm_ds *dead_obj_link_pool = NULL;
 struct mm_ds *dead_obj_affect_pool = NULL;
 
+extern P_nevent ne_schedule[PULSES_IN_TICK];
+
 struct event_room_affect_data
 {
 	struct room_affect *af;
@@ -129,6 +133,31 @@ struct hold_data TmpAffs;
 //=================================================================================
 //=== AFFECTS - MODIFY/APPLY
 //=================================================================================
+
+// A shield's armor value with shield combat.
+static int shield_combat_value(P_char ch, int value)
+{
+	value += (int)((float)value * (float)GET_CHAR_SKILL(ch, SKILL_SHIELD_COMBAT) *
+		       shield_combat_mult) /
+		 100;
+	// Only Swashbucklers and Guardians get tank bonus (and Pal/AP/Mercs).  Why Mercs?  Dunno...
+	if (GET_CLASS(ch, CLASS_PALADIN | CLASS_ANTIPALADIN | CLASS_MERCENARY) ||
+	    GET_SPEC(ch, CLASS_WARRIOR, SPEC_GUARDIAN) ||
+	    GET_SPEC(ch, CLASS_WARRIOR, SPEC_SWASHBUCKLER))
+	{
+		value *= shield_combat_tank_mult;
+	}
+	return value;
+}
+
+std::string shield_combat_facts(P_char ch)
+{
+	if (!GET_CHAR_SKILL(ch, SKILL_SHIELD_COMBAT))
+		return "  You need this skill to fight well with a shield.\n";
+	return fact("Your shield's armor value",
+		    std::to_string(shield_combat_value(ch, 100)) + "%") +
+	       "  It also helps a shield punch and stopping fired arrows.\n";
+}
 
 int apply_ac(P_char ch, int eq_pos)
 {
@@ -296,17 +325,7 @@ int apply_ac(P_char ch, int eq_pos)
 		{
 			// We add a percentage of the skill * value * the multiplier.
 			// So, at 100 skill, we add value * multiplier (currently .5) -> value * 1.5.
-			value += (int)((float)value *
-				       (float)GET_CHAR_SKILL(ch, SKILL_SHIELD_COMBAT) *
-				       shield_combat_mult) /
-				 100;
-			// Only Swashbucklers and Guardians get tank bonus (and Pal/AP/Mercs).  Why Mercs?  Dunno...
-			if (GET_CLASS(ch, CLASS_PALADIN | CLASS_ANTIPALADIN | CLASS_MERCENARY) ||
-			    GET_SPEC(ch, CLASS_WARRIOR, SPEC_GUARDIAN) ||
-			    GET_SPEC(ch, CLASS_WARRIOR, SPEC_SWASHBUCKLER))
-			{
-				value *= shield_combat_tank_mult;
-			}
+			value = shield_combat_value(ch, value);
 			/* Commented this out, it should be somewhere in calculate_ac or damage or such in fight.c.
 			 *   Somewhere where ac is used, not when shield is equipped.  It doesn't matter atm, since
 			 *   it's an epic skill right now.
@@ -332,6 +351,58 @@ int calculate_mana(P_char ch)
 	return mana + 6;
 }
 
+// An illithid's hit points from toughness.
+static float toughness_illithid_hit_points(P_char ch)
+{
+	return GET_CHAR_SKILL(ch, SKILL_TOUGHNESS) * get_property("epic.skill.toughness", 0.500) *
+	       (GET_CLASS(ch, CLASS_WARRIOR | CLASS_PALADIN | CLASS_ANTIPALADIN | CLASS_MERCENARY) ?
+			2 :
+			1);
+}
+
+// Anyone else's hit points from toughness.
+static int toughness_hit_points(P_char ch, int toughness)
+{
+	if (toughness > 0 && !GET_CLASS(ch, CLASS_MONK))
+	{
+		toughness = static_cast<double>(toughness) *
+			    get_property("epic.skill.toughness", 0.500) *
+			    (GET_CLASS(ch, CLASS_WARRIOR | CLASS_PALADIN | CLASS_ANTIPALADIN |
+						   CLASS_MERCENARY) ?
+				     2. :
+				     1.);
+	}
+	else
+	{
+		if (toughness < 50)
+		{
+			toughness = ((float)toughness *
+				     get_property("epic.skill.toughness.monk.low", 0.800));
+		}
+		else if (toughness >= 50 && toughness <= 90)
+		{
+			toughness = ((float)toughness *
+				     get_property("epic.skill.toughness.monk.medium", 1.000));
+		}
+		else
+		{
+			toughness = ((float)toughness *
+				     get_property("epic.skill.toughness.monk.high", 1.250));
+		}
+	}
+	return toughness;
+}
+
+std::string toughness_facts(P_char ch)
+{
+	if (!GET_CHAR_SKILL(ch, SKILL_TOUGHNESS))
+		return "  You need this skill to be tougher.\n";
+	const int points = IS_ILLITHID(ch) ?
+				   (int)toughness_illithid_hit_points(ch) :
+				   toughness_hit_points(ch, GET_CHAR_SKILL(ch, SKILL_TOUGHNESS));
+	return fact("Hit points", "+" + std::to_string(points));
+}
+
 // This is a rewrite of calculate_hitpoints(ch).  It's a little faster for Illithid hps.
 // It's a little faster overall I think.
 // It also uses the racial bonus as figured with APPLY_CON_RACE eq instead of using ch's
@@ -347,12 +418,7 @@ int calculate_hitpoints2(P_char ch)
 	{
 		// Could simplify as there are no Warrior/Pal/AP/Merc Illithids, but just in case.
 		return GET_MAX_HIT(ch) + GET_LEVEL(ch) + 10 + MAX(GET_C_CON(ch), 100) - 100 +
-		       GET_CHAR_SKILL(ch, SKILL_TOUGHNESS) *
-			       get_property("epic.skill.toughness", 0.500) *
-			       (GET_CLASS(ch, CLASS_WARRIOR | CLASS_PALADIN | CLASS_ANTIPALADIN |
-						      CLASS_MERCENARY) ?
-					2 :
-					1);
+		       toughness_illithid_hit_points(ch);
 	}
 
 	// Calculate level
@@ -433,33 +499,7 @@ int calculate_hitpoints2(P_char ch)
 	}
 
 	// Calculate toughness bonus
-	if ((toughness = GET_CHAR_SKILL(ch, SKILL_TOUGHNESS)) > 0 && !GET_CLASS(ch, CLASS_MONK))
-	{
-		toughness = static_cast<double>(toughness) *
-			    get_property("epic.skill.toughness", 0.500) *
-			    (GET_CLASS(ch, CLASS_WARRIOR | CLASS_PALADIN | CLASS_ANTIPALADIN |
-						   CLASS_MERCENARY) ?
-				     2. :
-				     1.);
-	}
-	else
-	{
-		if (toughness < 50)
-		{
-			toughness = ((float)toughness *
-				     get_property("epic.skill.toughness.monk.low", 0.800));
-		}
-		else if (toughness >= 50 && toughness <= 90)
-		{
-			toughness = ((float)toughness *
-				     get_property("epic.skill.toughness.monk.medium", 1.000));
-		}
-		else
-		{
-			toughness = ((float)toughness *
-				     get_property("epic.skill.toughness.monk.high", 1.250));
-		}
-	}
+	toughness = toughness_hit_points(ch, GET_CHAR_SKILL(ch, SKILL_TOUGHNESS));
 
 	// Small bonus for the first 9 levels heh.
 	newbie = MAX(0, 10 - level);
@@ -526,6 +566,76 @@ void add_racial_stat_bonus(P_char ch, struct hold_data *affs)
 	affs->m_Luc += bonus;
 }
 
+// Hitroll and damroll the weapon master innates add, by level.
+static int dual_wielding_master_hitroll(int level)
+{
+	return level / 5;
+}
+
+static int weapon_master_hitroll(int level)
+{
+	return level / 8;
+}
+
+static int hammer_master_damroll(int level)
+{
+	return level / 10;
+}
+
+static int blade_master_damroll(int level)
+{
+	return level / 12;
+}
+
+static std::string weapon_master_facts(P_char ch, const std::string &weapon, int damroll)
+{
+	const int level = GET_LEVEL(ch);
+	return fact("Your hitroll with " + weapon + " as your main weapon",
+		    "+" + std::to_string(weapon_master_hitroll(level)) + " at your level, " +
+			    std::to_string(level)) +
+	       fact("Your damroll with one", "+" + std::to_string(damroll));
+}
+
+std::string dual_wielding_master_innate_facts(P_char ch)
+{
+	const int level = GET_LEVEL(ch);
+	return fact("Your hitroll with a weapon in each main hand",
+		    "+" + std::to_string(dual_wielding_master_hitroll(level)) + " at your level, " +
+			    std::to_string(level));
+}
+
+std::string hammer_master_innate_facts(P_char ch)
+{
+	return weapon_master_facts(ch, "a hammer", hammer_master_damroll(GET_LEVEL(ch)));
+}
+
+std::string axe_master_innate_facts(P_char ch)
+{
+	return weapon_master_facts(ch, "an axe", blade_master_damroll(GET_LEVEL(ch)));
+}
+
+std::string longsword_master_innate_facts(P_char ch)
+{
+	return weapon_master_facts(ch, "a longsword", blade_master_damroll(GET_LEVEL(ch)));
+}
+
+// A halfling's luck, added on each affect update.
+static int gamblers_luck_bonus()
+{
+	return 10;
+}
+
+std::string gamblers_luck_innate_facts(P_char /*ch*/)
+{
+	return fact("Your luck", "+" + std::to_string(gamblers_luck_bonus()));
+}
+
+// What two daggers do to the combat pulse.
+float two_daggers_pulse()
+{
+	return get_property("innate.dualDaggers.pulse", -3.0);
+}
+
 /*
  * this routine actually applies the summarized affects to the character.
  * All sanity checking is done here. By breaking it out we can exercise
@@ -534,7 +644,6 @@ void add_racial_stat_bonus(P_char ch, struct hold_data *affs)
  *
  * JAB
  */
-
 void apply_affs(P_char ch, int mode)
 {
 	int t1, t2, t3, temp;
@@ -652,6 +761,8 @@ void apply_affs(P_char ch, int mode)
 		SET_BIT(ch->specials.affected_by, AFF_FLY);
 	if (has_innate(ch, INNATE_NATURAL_MOVEMENT))
 		SET_BIT(ch->specials.affected_by3, AFF3_PASS_WITHOUT_TRACE);
+	if (has_innate(ch, INNATE_BLUR))
+		SET_BIT(ch->specials.affected_by3, AFF3_BLUR);
 	if (has_innate(ch, INNATE_HASTE))
 		SET_BIT(ch->specials.affected_by, AFF_HASTE);
 	if (has_innate(ch, INNATE_REGENERATION))
@@ -887,16 +998,16 @@ void apply_affs(P_char ch, int mode)
 	if (has_innate(ch, INNATE_DUAL_WIELDING_MASTER) && ch->equipment[PRIMARY_WEAPON] &&
 	    ch->equipment[SECONDARY_WEAPON])
 	{
-		temp = ch->points.hitroll + GET_LEVEL(ch) / 5;
+		temp = ch->points.hitroll + dual_wielding_master_hitroll(GET_LEVEL(ch));
 		ch->points.hitroll = (temp > 127) ? 127 : temp;
 	}
 
 	if (has_innate(ch, INNATE_HAMMER_MASTER) && ch->equipment[PRIMARY_WEAPON] &&
 	    ch->equipment[PRIMARY_WEAPON]->value[0] == WEAPON_HAMMER)
 	{
-		temp = ch->points.hitroll + GET_LEVEL(ch) / 8;
+		temp = ch->points.hitroll + weapon_master_hitroll(GET_LEVEL(ch));
 		ch->points.hitroll = (temp > 127) ? 127 : temp;
-		temp = ch->points.damroll + GET_LEVEL(ch) / 10;
+		temp = ch->points.damroll + hammer_master_damroll(GET_LEVEL(ch));
 		ch->points.damroll = (temp > 255) ? 255 : temp;
 	}
 
@@ -904,9 +1015,9 @@ void apply_affs(P_char ch, int mode)
 	    (ch->equipment[PRIMARY_WEAPON] &&
 	     ch->equipment[PRIMARY_WEAPON]->value[0] == WEAPON_AXE))
 	{
-		temp = ch->points.hitroll + GET_LEVEL(ch) / 8;
+		temp = ch->points.hitroll + weapon_master_hitroll(GET_LEVEL(ch));
 		ch->points.hitroll = (temp > 127) ? 127 : temp;
-		temp = ch->points.damroll + GET_LEVEL(ch) / 12;
+		temp = ch->points.damroll + blade_master_damroll(GET_LEVEL(ch));
 		ch->points.damroll = (temp > 255) ? 255 : temp;
 	}
 
@@ -914,15 +1025,15 @@ void apply_affs(P_char ch, int mode)
 	    (ch->equipment[PRIMARY_WEAPON] &&
 	     ch->equipment[PRIMARY_WEAPON]->value[0] == WEAPON_LONGSWORD))
 	{
-		temp = ch->points.hitroll + GET_LEVEL(ch) / 8;
+		temp = ch->points.hitroll + weapon_master_hitroll(GET_LEVEL(ch));
 		ch->points.hitroll = (temp > 127) ? 127 : temp;
-		temp = ch->points.damroll + GET_LEVEL(ch) / 12;
+		temp = ch->points.damroll + blade_master_damroll(GET_LEVEL(ch));
 		ch->points.damroll = (temp > 255) ? 255 : temp;
 	}
 
 	if (has_innate(ch, INNATE_GAMBLERS_LUCK))
 	{
-		GET_C_LUK(ch) = GET_C_LUK(ch) + 10;
+		GET_C_LUK(ch) = GET_C_LUK(ch) + gamblers_luck_bonus();
 	}
 
 	// Warding Faith is retired; external ward affects remain supported.
@@ -1368,57 +1479,156 @@ void affect_modify(int loc, int mod, unsigned long *bitv, int from_eq)
 	}
 }
 
+// The numbers of the command aura a group leader gives the group, and himself.
+static int command_aura_hit_dam(int level)
+{
+	return level / 12;
+}
+
+static int command_aura_avenger_regen(int level)
+{
+	return level / 2;
+}
+
+static int command_aura_stat_max(int level)
+{
+	return level / 10;
+}
+
+static int command_aura_lightbringer_armor(int level)
+{
+	return -(level);
+}
+
+static int command_aura_fear_save(int level)
+{
+	return -(level / 10);
+}
+
+std::string command_aura_innate_facts(P_char ch)
+{
+	const int level = GET_LEVEL(ch);
+	const auto number_line = [](const char *label, int value)
+	{ return fact(label, (value > 0 ? "+" : "") + std::to_string(value)); };
+	return "  As group leader, you and members in your room get these, by your level.\n" +
+	       number_line("Hitroll", command_aura_hit_dam(level)) +
+	       number_line("Damroll", command_aura_hit_dam(level)) +
+	       number_line("Avenger: hit point regeneration", command_aura_avenger_regen(level)) +
+	       number_line("Inquisitor: maximum constitution", command_aura_stat_max(level)) +
+	       number_line("Lightbringer: armor class", command_aura_lightbringer_armor(level)) +
+	       number_line("Dreadlord: fear saves, lower is better",
+			   command_aura_fear_save(level)) +
+	       number_line("Deathlord: maximum strength", command_aura_stat_max(level)) +
+	       number_line("Shadowlord: maximum agility", command_aura_stat_max(level));
+}
+
 void get_aura_affects(P_char ch)
 {
 	affected_type af;
 
 	memset(&af, 0, sizeof(affected_type));
 	af.location = APPLY_HITROLL;
-	af.modifier = GET_LEVEL(ch) / 12;
+	af.modifier = command_aura_hit_dam(GET_LEVEL(ch));
 	affect_modify(af.location, af.modifier, &(af.bitvector), FALSE);
 
 	af.location = APPLY_DAMROLL;
-	af.modifier = GET_LEVEL(ch) / 12;
+	af.modifier = command_aura_hit_dam(GET_LEVEL(ch));
 	affect_modify(af.location, af.modifier, &(af.bitvector), FALSE);
 
 	if (GET_CLASS(ch, CLASS_AVENGER))
 	{
 		af.location = APPLY_HIT_REG;
-		af.modifier = GET_LEVEL(ch) / 2;
+		af.modifier = command_aura_avenger_regen(GET_LEVEL(ch));
 		affect_modify(af.location, af.modifier, &(af.bitvector), FALSE);
 
 		if (GET_SPEC(ch, CLASS_AVENGER, SPEC_INQUISITOR))
 		{
 			af.location = APPLY_CON_MAX;
-			af.modifier = GET_LEVEL(ch) / 10;
+			af.modifier = command_aura_stat_max(GET_LEVEL(ch));
 			affect_modify(af.location, af.modifier, &(af.bitvector), FALSE);
 		}
 		else if (GET_SPEC(ch, CLASS_AVENGER, SPEC_LIGHTBRINGER))
 		{
 			af.location = APPLY_ARMOR;
-			af.modifier = -(GET_LEVEL(ch));
+			af.modifier = command_aura_lightbringer_armor(GET_LEVEL(ch));
 			affect_modify(af.location, af.modifier, &(af.bitvector), FALSE);
 		}
 	}
 	else if (GET_CLASS(ch, CLASS_DREADLORD))
 	{
 		af.location = APPLY_SAVING_FEAR;
-		af.modifier = -(GET_LEVEL(ch) / 10);
+		af.modifier = command_aura_fear_save(GET_LEVEL(ch));
 		affect_modify(af.location, af.modifier, &(af.bitvector), FALSE);
 
 		if (GET_SPEC(ch, CLASS_DREADLORD, SPEC_DEATHLORD))
 		{
 			af.location = APPLY_STR_MAX;
-			af.modifier = GET_LEVEL(ch) / 10;
+			af.modifier = command_aura_stat_max(GET_LEVEL(ch));
 			affect_modify(af.location, af.modifier, &(af.bitvector), FALSE);
 		}
 		else if (GET_SPEC(ch, CLASS_DREADLORD, SPEC_SHADOWLORD))
 		{
 			af.location = APPLY_AGI_MAX;
-			af.modifier = GET_LEVEL(ch) / 10;
+			af.modifier = command_aura_stat_max(GET_LEVEL(ch));
 			affect_modify(af.location, af.modifier, &(af.bitvector), FALSE);
 		}
 	}
+}
+
+// What an epic stat skill adds to that stat's maximum.
+static int epic_stat_bonus(P_char ch, int skill)
+{
+	return (GET_CHAR_SKILL(ch, skill) / 10);
+}
+
+static std::string epic_stat_facts(P_char ch, int skill, const std::string &stat)
+{
+	return fact("Your maximum " + stat, "+" + std::to_string(epic_stat_bonus(ch, skill)));
+}
+
+std::string epic_strength_facts(P_char ch)
+{
+	return epic_stat_facts(ch, SKILL_EPIC_STRENGTH, "strength");
+}
+
+std::string epic_power_facts(P_char ch)
+{
+	return epic_stat_facts(ch, SKILL_EPIC_POWER, "power");
+}
+
+std::string epic_agility_facts(P_char ch)
+{
+	return epic_stat_facts(ch, SKILL_EPIC_AGILITY, "agility");
+}
+
+std::string epic_intelligence_facts(P_char ch)
+{
+	return epic_stat_facts(ch, SKILL_EPIC_INTELLIGENCE, "intelligence");
+}
+
+std::string epic_dexterity_facts(P_char ch)
+{
+	return epic_stat_facts(ch, SKILL_EPIC_DEXTERITY, "dexterity");
+}
+
+std::string epic_wisdom_facts(P_char ch)
+{
+	return epic_stat_facts(ch, SKILL_EPIC_WISDOM, "wisdom");
+}
+
+std::string epic_constitution_facts(P_char ch)
+{
+	return epic_stat_facts(ch, SKILL_EPIC_CONSTITUTION, "constitution");
+}
+
+std::string epic_charisma_facts(P_char ch)
+{
+	return epic_stat_facts(ch, SKILL_EPIC_CHARISMA, "charisma");
+}
+
+std::string epic_luck_facts(P_char ch)
+{
+	return epic_stat_facts(ch, SKILL_EPIC_LUCK, "luck");
 }
 
 void get_epic_stat_affects(P_char ch)
@@ -1435,63 +1645,63 @@ void get_epic_stat_affects(P_char ch)
 	if (GET_CHAR_SKILL(ch, SKILL_EPIC_STRENGTH) > 0)
 	{
 		af.location = APPLY_STR_MAX;
-		af.modifier = (GET_CHAR_SKILL(ch, SKILL_EPIC_STRENGTH) / 10);
+		af.modifier = epic_stat_bonus(ch, SKILL_EPIC_STRENGTH);
 		affect_modify(af.location, af.modifier, &(af.bitvector), FALSE);
 	}
 
 	if (GET_CHAR_SKILL(ch, SKILL_EPIC_POWER) > 0)
 	{
 		af.location = APPLY_POW_MAX;
-		af.modifier = (GET_CHAR_SKILL(ch, SKILL_EPIC_POWER) / 10);
+		af.modifier = epic_stat_bonus(ch, SKILL_EPIC_POWER);
 		affect_modify(af.location, af.modifier, &(af.bitvector), FALSE);
 	}
 
 	if (GET_CHAR_SKILL(ch, SKILL_EPIC_AGILITY) > 0)
 	{
 		af.location = APPLY_AGI_MAX;
-		af.modifier = (GET_CHAR_SKILL(ch, SKILL_EPIC_AGILITY) / 10);
+		af.modifier = epic_stat_bonus(ch, SKILL_EPIC_AGILITY);
 		affect_modify(af.location, af.modifier, &(af.bitvector), FALSE);
 	}
 
 	if (GET_CHAR_SKILL(ch, SKILL_EPIC_INTELLIGENCE) > 0)
 	{
 		af.location = APPLY_INT_MAX;
-		af.modifier = (GET_CHAR_SKILL(ch, SKILL_EPIC_INTELLIGENCE) / 10);
+		af.modifier = epic_stat_bonus(ch, SKILL_EPIC_INTELLIGENCE);
 		affect_modify(af.location, af.modifier, &(af.bitvector), FALSE);
 	}
 
 	if (GET_CHAR_SKILL(ch, SKILL_EPIC_DEXTERITY) > 0)
 	{
 		af.location = APPLY_DEX_MAX;
-		af.modifier = (GET_CHAR_SKILL(ch, SKILL_EPIC_DEXTERITY) / 10);
+		af.modifier = epic_stat_bonus(ch, SKILL_EPIC_DEXTERITY);
 		affect_modify(af.location, af.modifier, &(af.bitvector), FALSE);
 	}
 
 	if (GET_CHAR_SKILL(ch, SKILL_EPIC_WISDOM) > 0)
 	{
 		af.location = APPLY_WIS_MAX;
-		af.modifier = (GET_CHAR_SKILL(ch, SKILL_EPIC_WISDOM) / 10);
+		af.modifier = epic_stat_bonus(ch, SKILL_EPIC_WISDOM);
 		affect_modify(af.location, af.modifier, &(af.bitvector), FALSE);
 	}
 
 	if (GET_CHAR_SKILL(ch, SKILL_EPIC_CONSTITUTION) > 0)
 	{
 		af.location = APPLY_CON_MAX;
-		af.modifier = (GET_CHAR_SKILL(ch, SKILL_EPIC_CONSTITUTION) / 10);
+		af.modifier = epic_stat_bonus(ch, SKILL_EPIC_CONSTITUTION);
 		affect_modify(af.location, af.modifier, &(af.bitvector), FALSE);
 	}
 
 	if (GET_CHAR_SKILL(ch, SKILL_EPIC_CHARISMA) > 0)
 	{
 		af.location = APPLY_CHA_MAX;
-		af.modifier = (GET_CHAR_SKILL(ch, SKILL_EPIC_CHARISMA) / 10);
+		af.modifier = epic_stat_bonus(ch, SKILL_EPIC_CHARISMA);
 		affect_modify(af.location, af.modifier, &(af.bitvector), FALSE);
 	}
 
 	if (GET_CHAR_SKILL(ch, SKILL_EPIC_LUCK) > 0)
 	{
 		af.location = APPLY_LUCK_MAX;
-		af.modifier = (GET_CHAR_SKILL(ch, SKILL_EPIC_LUCK) / 10);
+		af.modifier = epic_stat_bonus(ch, SKILL_EPIC_LUCK);
 		affect_modify(af.location, af.modifier, &(af.bitvector), FALSE);
 	}
 }
@@ -1758,7 +1968,7 @@ char affect_total(P_char ch, int kill_ch)
 	*/
 
 	if (innate_two_daggers(ch))
-		ch->specials.base_combat_round += get_property("innate.dualDaggers.pulse", -3.0);
+		ch->specials.base_combat_round += two_daggers_pulse();
 
 	if (IS_AFFECTED2(ch, AFF2_FLURRY))
 		ch->specials.base_combat_round =
@@ -1851,10 +2061,13 @@ struct affected_type *affect_to_char(P_char ch, struct affected_type *af)
 
 	affected_alloc = (struct affected_type *)mm_get(dead_affect_pool);
 	*affected_alloc = *af;
+	named_set_grant::mark(ch, affected_alloc);
 
 	affected_alloc->next = ch->affected;
 	ch->affected = affected_alloc;
-	if (!IS_SET(af->flags, AFFTYPE_NOAPPLY))
+	update_named_set_suspension(ch);
+	gmcp_spell_preparation_affect_changed(ch, affected_alloc);
+	if (!IS_SET(affected_alloc->flags, AFFTYPE_NOAPPLY))
 	{
 		ch->specials.affected_by |= af->bitvector;
 		ch->specials.affected_by2 |= af->bitvector2;
@@ -2007,6 +2220,8 @@ void affect_to_end(P_char ch, struct affected_type *af)
 		prev->next = afp;
 	else
 		ch->affected = afp;
+	if (afp->type == TAG_MEMORIZE)
+		gmcp_spell_preparation_changed(ch);
 }
 
 void affect_remove(P_char ch, struct affected_type *af)
@@ -2064,6 +2279,8 @@ void affect_remove(P_char ch, struct affected_type *af)
 		hjp->next = af->next;
 	}
 
+	gmcp_spell_preparation_affect_changed(ch, af);
+
 	// Handle race changes.
 	if (af->type == TAG_RACE_CHANGE || af->type == SPELL_DRACONIC_APOTHEOSIS)
 	{
@@ -2115,6 +2332,7 @@ void affect_remove(P_char ch, struct affected_type *af)
 	mm_release(dead_affect_pool, af);
 
 	af = NULL;
+	update_named_set_suspension(ch);
 	all_affects(ch, TRUE);
 
 	char_light(ch);
@@ -2160,7 +2378,8 @@ struct affected_type *get_spell_from_char(P_char ch, int spell, void *context, i
 
 	for (hjp = ch->affected; hjp; hjp = hjp->next)
 	{
-		if (hjp->type == spell && (context == NULL || hjp->context == context) &&
+		if (!(hjp->flags & AFFTYPE_SET_SUSPENDED) && hjp->type == spell &&
+		    (context == NULL || hjp->context == context) &&
 		    (flagMask == 0 || (hjp->flags & flagMask) != 0))
 		{
 			return hjp;
@@ -2174,7 +2393,7 @@ bool affected_by_spell(P_char ch, int skill)
 	struct affected_type *hjp;
 
 	for (hjp = ch->affected; hjp; hjp = hjp->next)
-		if (hjp->type == skill)
+		if (hjp->type == skill && !(hjp->flags & AFFTYPE_SET_SUSPENDED))
 			return (TRUE);
 
 	return (FALSE);
@@ -2186,7 +2405,7 @@ int affected_by_spell_count(P_char ch, int skill)
 	struct affected_type *hjp;
 
 	for (hjp = ch->affected; hjp; hjp = hjp->next)
-		if (hjp->type == skill)
+		if (hjp->type == skill && !(hjp->flags & AFFTYPE_SET_SUSPENDED))
 			count++;
 
 	return count;
@@ -2208,7 +2427,7 @@ struct affected_type *get_first_affect_with_flag(P_char ch, uint flags)
 	struct affected_type *hjp;
 
 	for (hjp = ch->affected; hjp; hjp = hjp->next)
-		if ((hjp->flags & (flags)) == flags)
+		if (!(hjp->flags & AFFTYPE_SET_SUSPENDED) && (hjp->flags & (flags)) == flags)
 			return (hjp);
 
 	return (NULL);
@@ -2219,7 +2438,7 @@ bool affected_by_spell_flagged(P_char ch, int skill, uint flags)
 	struct affected_type *hjp;
 
 	for (hjp = ch->affected; hjp; hjp = hjp->next)
-		if (hjp->type == skill &&
+		if (!(hjp->flags & AFFTYPE_SET_SUSPENDED) && hjp->type == skill &&
 		    (hjp->flags & (AFFTYPE_CUSTOM1 | AFFTYPE_CUSTOM2)) == flags)
 			return (TRUE);
 
@@ -2229,13 +2448,33 @@ bool affected_by_spell_flagged(P_char ch, int skill, uint flags)
 void affect_join(P_char ch, struct affected_type *af, int avg_dur, int avg_mod)
 {
 	struct affected_type *hjp;
-	bool found = FALSE;
 
-	for (hjp = ch->affected; !found && hjp; hjp = hjp->next)
+	for (hjp = ch->affected; hjp; hjp = hjp->next)
 	{
-		if (hjp->type == af->type)
+		if (hjp->type == af->type && !(hjp->flags & AFFTYPE_SET_SUSPENDED))
 		{
-			af->duration += hjp->duration;
+			if (named_set_grant::active())
+				return;
+			if (hjp->flags & AFFTYPE_SET_AFFECT)
+				continue;
+			// A short affect keeps its original duration; its event has the time left.
+			int remaining = hjp->duration;
+			if (IS_SET(hjp->flags, AFFTYPE_SHORT))
+			{
+				P_nevent pnev;
+				LOOP_EVENTS_CH(pnev, ch->nevents)
+				{
+					if (pnev->func == event_short_affect &&
+					    pnev->data != NULL &&
+					    ((struct event_short_affect_data *)(pnev->data))->af ==
+						    hjp)
+					{
+						remaining = ne_event_time(pnev);
+						break;
+					}
+				}
+			}
+			af->duration += remaining;
 			if (avg_dur)
 				af->duration /= 2;
 
@@ -2243,13 +2482,14 @@ void affect_join(P_char ch, struct affected_type *af, int avg_dur, int avg_mod)
 			if (avg_mod)
 				af->modifier /= 2;
 
+			af->wear_off_message_index = hjp->wear_off_message_index;
 			affect_remove(ch, hjp);
 			affect_to_char(ch, af);
-			found = TRUE;
+			break;
 		}
 	}
 
-	if (!found)
+	if (!hjp)
 		affect_to_char(ch, af);
 
 	balance_affects(ch);
@@ -2258,13 +2498,17 @@ void affect_join(P_char ch, struct affected_type *af, int avg_dur, int avg_mod)
 //---------------------------------------------------------------------------------
 void wear_off_message(P_char ch, struct affected_type *af)
 {
+	update_named_set_suspension(ch, af);
+	if (af->flags & AFFTYPE_SET_SUSPENDED)
+		return;
 	if ((af->flags & AFFTYPE_NOMSG)) //|| (af->flags & AFFTYPE_SUBAFFECT))
 		return;
 
 	/* Multi-part spells use one affect per modifier.  The spell has not worn off
 	 * while another affect of the same type remains. */
 	for (struct affected_type *other = ch->affected; other; other = other->next)
-		if (other != af && other->type == af->type)
+		if (other != af && other->type == af->type &&
+		    !(other->flags & AFFTYPE_SET_SUSPENDED))
 			return;
 
 	if (af->type == TAG_INNATE_TIMER && af->location == INNATE_LAY_HANDS)
@@ -2371,6 +2615,30 @@ struct room_affect *affect_to_room(int room, struct room_affect *af)
 	affected_alloc->duration = 1 + af->duration / PULSES_IN_TICK;
 
 	return affected_alloc;
+}
+
+//---------------------------------------------------------------------------------
+// Make a room affect wear off `pulses` from now. Its wear-off event alone decides that.
+void affect_room_refresh(int room, struct room_affect *af, int pulses)
+{
+	if (pulses <= 0)
+		return;
+
+	af->duration = 1 + pulses / PULSES_IN_TICK;
+	for (int i = 0; i < PULSES_IN_TICK; i++)
+	{
+		for (P_nevent event = ne_schedule[i]; event; event = event->next_sched)
+		{
+			if (event->func != event_room_affect || !event->data)
+				continue;
+			const auto *data = static_cast<event_room_affect_data *>(event->data);
+			if (data->room == room && data->af == af)
+			{
+				nevent_reschedule_after(nevent_handle_from_event(event), pulses);
+				return;
+			}
+		}
+	}
 }
 
 //---------------------------------------------------------------------------------
@@ -3206,18 +3474,8 @@ void update_damage_data()
 	{
 		snprintf(buf, 128, "damage.pulse.racial.%s", race_names_table[i].no_spaces);
 		combat_by_race[i][0] = pulse = get_property(buf, (float)PULSE_VIOLENCE);
-		/* Disabling the totalOutput for the 2015-16 wipe.
-		 * This has the effect of setting everyone's totaloutput to 1.0, so less hidden variables.
-		 * It might have a strong mob buff (for weak) and nerf (for strong) for the various mob races.
-		 *   However, it'll be more like the zone writers intended etc.
-		 *   We can just up the damage where it should be; in the zone files / mob load.
-		    snprintf(buf, 128, "damage.totalOutput.racial.%s", race_names_table[i].no_spaces);
-		    multiplier = get_property(buf, 1.0);
-		    // Cancelling the rest of this crap. It doesn't work right anyway. - Lohrr
-		    // get_property(buf, 1.0) * melee_factor * pulse / PULSE_VIOLENCE;
-		    combat_by_race[i][1] = multiplier;
-		 */
-		combat_by_race[i][1] = 1;
+		snprintf(buf, 128, "damage.totalOutput.racial.%s", race_names_table[i].no_spaces);
+		combat_by_race[i][1] = get_property(buf, 1.0);
 		snprintf(buf, 128, "damage.damrollModifier.racial.%s",
 			 race_names_table[i].no_spaces);
 		multiplier = get_property(buf, 1.0);

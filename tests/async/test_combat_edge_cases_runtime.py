@@ -180,6 +180,7 @@ P_char get_linking_char(P_char ch, ush_int type)
 {
     return type == LNK_RIDING && ch == &victim ? rider : nullptr;
 }
+char_link_data *link_char(P_char, P_char, ush_int) { assert(false); return nullptr; }
 void unlink_char(P_char ch, P_char target, ush_int type)
 {
     assert(type == LNK_RIDING);
@@ -774,7 +775,8 @@ static void launch_message_cases()
         if (rear)
         {
             // Rearkick requires a standing victim; test the visibility predicate directly.
-            assert(!can_receive_forced_departure(&victim, &actor));
+            const auto messages = snapshot_forced_departure(&actor, &victim, DIR_NORTH, false, true);
+            for (const auto &message : messages) assert(message.first != victim.runtime_id);
         }
         else
         {
@@ -871,27 +873,66 @@ int main()
 '''
 
 functions = [
+    extract_function("utility.c", "int dice(int num, int size)"),
+    '#include "abilities/abilities.h"\nconst Rolls live_rolls = { dice, number };\n',
     extract_function("utility.c", "int is_char_in_room("),
+    extract_function("innates.c", "static int venom_bite_damage("),
+    extract_function("innates.c", "static int venom_bite_poison_tries("),
+    extract_function("innates.c", "static int venom_bite_lag("),
     extract_function("innates.c", "void event_snakebite("),
     extract_function("utility.c", "int BOUNDED("),
     extract_function("utility.c", "bool is_ansi_char("),
     extract_function("utility.c", "void CAP("),
     extract_function("comm.c", "void act_convert("),
-    "using forced_departure_message = std::pair<uint64_t, std::string>;",
     extract_function("innates.c", "P_char parse_victim("),
+    extract_function("innates.c", "static struct affected_type *find_innate_timer("),
+    extract_function("innates.c", "static int innate_rest_seconds("),
+    extract_function("innates.c", "static int innate_uses("),
     extract_function("innates.c", "bool can_use_innate("),
     extract_function("innates.c", "bool check_innate_time("),
+    extract_function("innates.c", "static int bite_innate_rest("),
     extract_function("innates.c", "void do_bite_target("),
     extract_function("innates.c", "void do_bite(P_char ch, char *arg, int /*cmd*/)"),
+    extract_function("innates.c", "static int branch_roll("),
+    extract_function("innates.c", "static int branch_chance_cap("),
+    extract_function("innates.c", "static int branch_damage("),
+    extract_function("innates.c", "static int branch_target_lag("),
+    extract_function("innates.c", "static int branch_pet_lag("),
+    extract_function("innates.c", "static int branch_lag("),
     extract_function("innates.c", "void branch("),
 ] + [
     extract_function("actoff.c", signature)
     for signature in (
+        "static int kick_base_damage(",
+        "static int kick_rolled_damage(",
+        "static int kick_scaled_damage(",
+        "static int kick_quick_damage(",
+        "static int kick_quick_lag(",
+        "static int kick_lag(",
+        "static int kick_room_lag(",
+        "static int kick_wall_lag(",
+        "static int kick_groin_lag(",
+        "static int kick_wall_stun(",
+        "static int kick_groin_stun(",
+        "static int roundkick_immaterial_lag(",
+        "static int roundkick_lag(",
+        "static int roundkick_damage(",
+        "static int roundkick_target_lag(",
+        "static int roundkick_rest(",
+        "static int tackle_body_lag(",
+        "static int tackle_size_lag(",
+        "static int tackle_lag(",
+        "static int tackle_prone_lag(",
+        "static int tackle_rest(",
+        "static int tackle_combat_pulse(",
+        "static int tackle_combat_pulse_duration(",
+        "static int tackle_self_stun(",
+        "static int tackle_carry_roll(",
+        "static int kick_stun_roll(",
+        "static int kick_low_roll(",
         "static bool kick_admitted(",
         "int chance_kick(",
-        "static bool can_receive_forced_departure(",
         "static std::vector<forced_departure_message>\nsnapshot_forced_departure(",
-        "static void deliver_forced_departure(",
         "static void forced_rebound_messages(",
         "void kick(",
         "static int roundkick_admission(",

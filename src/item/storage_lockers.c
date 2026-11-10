@@ -29,6 +29,7 @@
 #include "core/prototypes.h"
 #include "core/structs.h"
 #include "net/comm.h"
+#include "net/gmcp.h"
 #include "world/db.h"
 #include "world/events.h"
 #include "cmd/interp.h"
@@ -62,10 +63,6 @@
 #include "sql/sql_async.h"
 #include "world/vnum.room.h"
 #include "persistence/locker_async.h"
-#include "persistence/persistence_mode.h"
-#include "flatfile/flatfile_corpse_ownership.h"
-#include "flatfile/flatfile_identity_repository.h"
-#include "flatfile/flatfile_locker_repository.h"
 #include "player/player_load_items.h"
 #include "player/player_snapshot_capture.h"
 #include "player/player_snapshot_codec.h"
@@ -74,7 +71,6 @@
 #include "core/files.h"
 #include "item/private_chest_purchase.h"
 #include "item/item_movement_transaction.h"
-#include "economy/shop_trade_transaction.h"
 #include "economy/auction_transaction.h"
 #include "economy/collector_transaction.h"
 #include "player/player_save_pipeline.h"
@@ -505,6 +501,8 @@ static int locker_handle_save_hook(P_char ch, int troom)
 	ch->specials.was_in_room = (exit_room != NOWHERE) ? world[exit_room].number :
 							    world[troom].number;
 
+	locker_return_norent_items(ch);
+
 	// Return artifacts to the player's inventory BEFORE the player save so
 	// they are included in the saved record.  This was originally in the
 	// post-save hook (-81), which meant a crash between saves could lose
@@ -679,11 +677,6 @@ void locker_invalidate_chest_access(P_char actor)
 
 static bool locker_private_chests_available(P_char ch)
 {
-	if (persistence_mode_get() == PERSISTENCE_MODE_FLATFILE_PRIMARY)
-	{
-		send_to_char("Private chests and their activity log require SQL storage.\r\n", ch);
-		return false;
-	}
 	if (!DB)
 	{
 		send_to_char("Private chest storage is temporarily unavailable.\r\n", ch);
@@ -695,7 +688,7 @@ static bool locker_private_chests_available(P_char ch)
 LockerMovementAudit::LockerMovementAudit(P_char actor, P_obj source, P_obj target, P_obj item,
 					 const char *description)
 {
-	if (!actor || persistence_mode_get() == PERSISTENCE_MODE_FLATFILE_PRIMARY)
+	if (!actor)
 		return;
 	P_obj containers[] = { source, target };
 	for (size_t i = 0; i < 2; ++i)
@@ -2071,19 +2064,9 @@ static int create_new_locker(P_char ch, P_char locker, const sql_rows &rows);
 /* free memory associated with creating a new locker */
 static void free_locker(int roomNum);
 
-/* A flat-file locker's public chest: the items to restore, those no other owner holds. */
-struct flat_locker_chest
-{
-	item_owner_identity owner;
-	uint64_t owner_revision = 0;
-	std::vector<player_item_snapshot> items;
-	std::vector<player_load_item_identity> identities;
-};
-
-/* Load a locker character from its entry rows and optionally enforce entry authorization;
- * a flat-file locker's public chest comes as flat. */
+/* Load a locker character from its entry rows and optionally enforce entry authorization. */
 static P_char load_locker_char(P_char ch, char *esc_locker_name, int bValidateAccess, bool busy,
-			       const sql_rows &rows, const flat_locker_chest *flat);
+			       const sql_rows &rows);
 static P_char create_locker_char(P_char chOwner, P_char newCh, char *esc_locker_name);
 static int save_locker_char(P_char chInLocker, int bTerminal);
 
@@ -2239,7 +2222,6 @@ bool locker_shutdown_capture(std::vector<locker_recovery_entry> *entries,
 			if (IS_NPC(occupant) || GET_PID(occupant) <= 0)
 				continue;
 			if (item_movement_transaction_player_busy(occupant) ||
-			    shop_trade_transaction_player_busy(occupant) ||
 			    auction_transaction_player_busy(occupant) ||
 			    collector_transaction_player_busy(occupant) ||
 			    player_save_pipeline_world_quest_pending(GET_PID(occupant)) ||
@@ -2563,6 +2545,7 @@ static void storage_locker_entered(P_char ch, P_char chLocker, int locker_room, 
 	{
 		REMOVE_BIT(ch->specials.affected_by2, AFF2_MEMORIZING);
 		disarm_char_nevents(ch, event_memorize);
+		gmcp_spell_preparation_changed(ch);
 		send_to_char("\n\r", ch);
 		display_no_mem(ch);
 		CharWait(ch, WAIT_SEC * 3);
@@ -2718,9 +2701,7 @@ int storage_locker(int room, P_char ch, int cmd, char *arg)
 		}
 		if (!*name)
 		{
-			send_to_char(
-				"The member of the &+YStorage Locker Safety Commission&n says 'Hmm, what item should i tell you more about?'\r\n",
-				ch);
+			do_attributes(ch, arg, cmd);
 			return TRUE;
 		}
 
@@ -3368,15 +3349,16 @@ static unsigned int locker_entry_read(MYSQL *connection, const locker_entry &ent
 		     "li.description, li.action_descr, li.obj_uid, li.item_condition, li.bitvector1, "
 		     "li.bitvector2, li.bitvector3, li.bitvector4, li.bitvector5, li.item_material, "
 		     "li.chest_id, li.container_id, " SQL_ITEM_OWNER_COLUMNS
+		     ", li.extra2_flags, li.anti_flags, li.anti2_flags, li.craftsmanship "
 		     " FROM locker_items li LEFT JOIN item_current_owner current_item "
 		     "ON current_item.item_uid=li.obj_uid " SQL_ITEM_OWNER_REVISION_JOIN +
 			     of_locker + " ORDER BY li.id",
 		     rows)) ||
 	    (error_code = sql_select(
 		     connection,
-		     "SELECT 'affect', a.item_id, a.location, a.modifier "
+		     "SELECT 'affect', a.item_id, a.location, a.modifier, a.affect_slot "
 		     "FROM locker_item_affects a JOIN locker_items li ON li.id=a.item_id" +
-			     of_locker + " ORDER BY a.id",
+			     of_locker + " ORDER BY a.affect_slot IS NULL, a.id",
 		     rows)))
 		return error_code;
 	return sql_select(connection,
@@ -3395,79 +3377,9 @@ static const sql_row *locker_row(const sql_rows &rows, const char *tag)
 	return NULL;
 }
 
-/* Flat-file: the stored locker named name as an entry read gives it (no rows when there is
- * none), with its public chest. Private chests are MariaDB's. */
-static bool flat_locker_read(P_char ch, const std::string &name, sql_rows *rows,
-			     flat_locker_chest *chest)
-{
-	const char *root = persistence_mode_flatfile_root();
-	if (!root)
-		return false;
-	std::vector<flatfile_locker_record> lockers;
-	std::vector<flatfile_locker_access_record> access;
-	std::string error;
-	const auto found = flatfile_locker_list(root, &lockers, &access, &error);
-	if (found == flatfile_locker_result::not_found)
-		return true;
-	if (found != flatfile_locker_result::ok)
-	{
-		logit(LOG_FILE, "Flat locker %s could not be read: %s", name.c_str(),
-		      error.c_str());
-		return false;
-	}
-	const std::string key = locker_entry_key(name.c_str());
-	const auto target = std::find_if(lockers.begin(), lockers.end(), [&](const auto &entry)
-					 { return entry.locker_name == key; });
-	if (target == lockers.end())
-		return true;
-	const auto &locker = *target;
-	const char *account = get_account_name_safe(ch);
-	const bool granted =
-		GET_RACEWAR(ch) == locker.racewar &&
-		((locker.owner_pid == GET_PID(ch) && locker.owner_pid > 0 &&
-		  !locker.owner_assoc_id) ||
-		 (locker.account_owner && account &&
-		  !str_cmp(locker.account_owner->account_name.c_str(), account) &&
-		  locker.account_owner->racewar_side == GET_RACEWAR(ch)) ||
-		 std::any_of(access.begin(), access.end(),
-			     [&](const auto &grant)
-			     {
-				     return !str_cmp(grant.owner_name.c_str(), name.c_str()) &&
-					    (!str_cmp(grant.visitor_name.c_str(), GET_NAME(ch)) ||
-					     (account &&
-					      !str_cmp(grant.visitor_name.c_str(), account)));
-			     }));
-	rows->push_back(locker_outcome("access"));
-	rows->back().fields.emplace_back(granted ? "1" : "0");
-	const auto stored = std::find_if(locker.chests.begin(), locker.chests.end(),
-					 [](const auto &entry) { return entry.is_public; });
-	if (stored != locker.chests.end())
-	{
-		chest->owner = { item_owner_type::locker, locker.locker_id, stored->chest_id };
-		if (flatfile_world_load_item_ownership(root, chest->owner, stored->items,
-						       &chest->items, &chest->owner_revision,
-						       &chest->identities, &error) ==
-		    flatfile_corpse_ownership_result::ok)
-		{
-			sql_row row = locker_outcome("locker");
-			for (const uint64_t field : { static_cast<uint64_t>(locker.locker_id),
-						      static_cast<uint64_t>(locker.racewar),
-						      static_cast<uint64_t>(locker.race),
-						      static_cast<uint64_t>(stored->chest_id) })
-				row.fields.push_back(std::to_string(field));
-			rows->push_back(std::move(row));
-			return true;
-		}
-	}
-	logit(LOG_FILE, "Flat locker %s could not be read: %s", name.c_str(),
-	      error.empty() ? "no public chest" : error.c_str());
-	return false;
-}
-
 /* The locker's rows have arrived: enter it if ch is still at the door and may. */
 static void locker_arrive(P_char ch, const std::string &name, int bValidate, bool busy, int room,
-			  const sql_rows &rows, const locker_entered &entered,
-			  const flat_locker_chest *flat = nullptr)
+			  const sql_rows &rows, const locker_entered &entered)
 {
 	if (ch->in_room != room)
 	{
@@ -3479,7 +3391,7 @@ static void locker_arrive(P_char ch, const std::string &name, int bValidate, boo
 
 	char locker_name[500];
 	strlcpy(locker_name, name.c_str(), sizeof(locker_name));
-	P_char chLocker = load_locker_char(ch, locker_name, bValidate, busy, rows, flat);
+	P_char chLocker = load_locker_char(ch, locker_name, bValidate, busy, rows);
 	if (!chLocker)
 		return;
 
@@ -3509,19 +3421,10 @@ static void locker_enter(P_char ch, const char *locker_name, int bValidate, lock
 	// default entry, whether it came from a character name or a canonical name.
 	if (account_owner)
 		bValidate = 0;
-	// Flat-file reads the stored locker here.
 	if (!DB)
 	{
-		sql_rows rows;
-		flat_locker_chest chest;
-		if (!flat_locker_read(ch, name, &rows, &chest))
-		{
-			send_to_char(
-				"The locker could not be opened right now.  Please try later.\r\n",
-				ch);
-			return;
-		}
-		locker_arrive(ch, name, bValidate, busy, room, rows, entered, &chest);
+		send_to_char("The locker could not be opened right now.  Please try later.\r\n",
+			     ch);
 		return;
 	}
 	const bool god = GET_LEVEL(ch) >= OVERLORD || god_check(ch->player.name);
@@ -3587,30 +3490,18 @@ static void locker_enter_character(P_char ch, const char *name, locker_entered e
 	};
 	if (!DB)
 	{
-		const char *root = persistence_mode_flatfile_root();
-		flatfile_identity_record identity;
-		std::string error;
-		const auto result =
-			root ? flatfile_identity_lookup_name(root, name, &identity, &error) :
-			       flatfile_identity_result::io_error;
-		if (result != flatfile_identity_result::ok &&
-		    result != flatfile_identity_result::not_found)
-		{
-			send_to_char(
-				"The locker could not be opened right now.  Please try later.\r\n",
-				ch);
-			return;
-		}
-		sql_rows rows;
-		if (result == flatfile_identity_result::ok && identity.active && !identity.blocked)
-			rows.push_back({ { identity.account, std::to_string(identity.racewar) } });
-		resolved(ch, rows);
+		send_to_char("The locker could not be opened right now.  Please try later.\r\n",
+			     ch);
 		return;
 	}
 	if (!sql_read_for(
 		    ch,
-		    "SELECT account_name, racewar FROM account_characters WHERE LOWER(char_name)=LOWER('" +
-			    escape_str(name) + "') AND blocked=0 AND deleted_at IS NULL LIMIT 1",
+		    /* Trusted characters are stored with ACCT_IMMORTAL (0); their lockers use their real side. */
+		    "SELECT ac.account_name, IF(ac.racewar=0, COALESCE(pd.racewar, 0), ac.racewar) "
+		    "FROM account_characters ac LEFT JOIN player_data pd ON pd.pid=ac.pid "
+		    "WHERE LOWER(ac.char_name)=LOWER('" +
+			    escape_str(name) +
+			    "') AND ac.blocked=0 AND ac.deleted_at IS NULL LIMIT 1",
 		    resolved))
 		send_to_char("The locker could not be opened right now.  Please try later.\r\n",
 			     ch);
@@ -3730,22 +3621,17 @@ static int create_new_locker(P_char ch, P_char locker, const sql_rows &rows)
 		if (world[realNum].description)
 			str_free(world[realNum].description);
 		const char *description =
-			persistence_mode_get() == PERSISTENCE_MODE_FLATFILE_PRIMARY ?
-				"   You are in a private storage locker. Items dropped here will be saved.\r\n"
-				"\r\n"
-				"  eq sort <type> - sort public storage\r\n"
-				"  Private chests and their activity log require SQL storage.\r\n" :
-				"   You are in a private storage locker. Items dropped here will be saved.\r\n"
-				"\r\n"
-				"&+WCommands:&n\r\n"
-				"  eq sort <type>              - sort items\r\n"
-				"  eq chest list               - list your chests\r\n"
-				"  eq chest create <name> [pw] - create private chest (500p)\r\n"
-				"  eq chest delete <name>      - delete empty chest\r\n"
-				"  eq chest password <name> <pw|none>\r\n"
-				"  eq log                      - view activity log\r\n"
-				"  open <chest> [password]     - open a chest\r\n"
-				"  close                       - close current chest\r\n";
+			"   You are in a private storage locker. Items dropped here will be saved.\r\n"
+			"\r\n"
+			"&+WCommands:&n\r\n"
+			"  eq sort <type>              - sort items\r\n"
+			"  eq chest list               - list your chests\r\n"
+			"  eq chest create <name> [pw] - create private chest (500p)\r\n"
+			"  eq chest delete <name>      - delete empty chest\r\n"
+			"  eq chest password <name> <pw|none>\r\n"
+			"  eq log                      - view activity log\r\n"
+			"  open <chest> [password]     - open a chest\r\n"
+			"  close                       - close current chest\r\n";
 		world[realNum].description = str_dup(description);
 
 		strcpy(roomNameBuf, LOCKERS_DOORSIGN);
@@ -3821,7 +3707,7 @@ static void free_locker(int roomNum)
 /* Load a locker character from the rows its entry read, while preserving occupancy
  * privacy and access rules. `busy` says the locker was in use when they were read. */
 static P_char load_locker_char(P_char ch, char *esc_locker_name, int bValidateAccess, bool busy,
-			       const sql_rows &rows, const flat_locker_chest *flat)
+			       const sql_rows &rows)
 {
 	P_char vict = NULL;
 
@@ -3959,18 +3845,6 @@ static P_char load_locker_char(P_char ch, char *esc_locker_name, int bValidateAc
 			}
 		}
 
-		// the locker character holds the public chest's items
-		std::vector<P_obj> flat_items;
-		if (flat && !flat->items.empty() &&
-		    !player_load_item_graph_materialize_detached(flat->items, flat->identities,
-								 flat->owner, flat->owner_revision,
-								 false, true, &flat_items, nullptr))
-		{
-			send_to_char(
-				"The locker could not be opened right now.  Please try later.\r\n",
-				ch);
-			return NULL;
-		}
 		vict = (P_char)mm_get(dead_mob_pool);
 		if (!vict)
 			return NULL;
@@ -3984,15 +3858,8 @@ static P_char load_locker_char(P_char ch, char *esc_locker_name, int bValidateAc
 		// just in case their racewar side happened to change mysteriously..
 		GET_RACEWAR(vict) = bValidateAccess ? atoi((*locker)[2]) : GET_RACEWAR(ch);
 		GET_RACE(vict) = atoi((*locker)[3]);
-		if (flat)
-			for (auto item = flat_items.rbegin(); item != flat_items.rend(); ++item)
-			{
-				(*item)->next_content = vict->carrying;
-				vict->carrying = *item;
-			}
-		else
-			vict->carrying = sql_locker_items_from_rows(rows, atoi((*locker)[1]),
-								    atoi((*locker)[4]), NULL);
+		vict->carrying = sql_locker_items_from_rows(rows, atoi((*locker)[1]),
+							    atoi((*locker)[4]), NULL);
 		for (P_obj obj = vict->carrying; obj; obj = obj->next_content)
 		{
 			obj->loc_p = LOC_CARRIED;
@@ -4023,8 +3890,7 @@ static P_char load_locker_char(P_char ch, char *esc_locker_name, int bValidateAc
 	}
 
 	// insert in list
-	vict->next = character_list;
-	character_list = vict;
+	character_list_add(vict);
 
 	// saving info for teleport return command
 	vict->specials.was_in_room = vict->in_room;
@@ -4121,9 +3987,78 @@ static int save_locker_char(P_char ch, int bTerminal)
 	return 1;
 }
 
+// Give a detached no-rent item back to the visitor. What can't be carried, like a
+// blood stain, is discarded.
+static void locker_return_norent_item(P_char user, P_obj item)
+{
+	if (!IS_SET(item->wear_flags, ITEM_TAKE))
+	{
+		extract_obj(item);
+		return;
+	}
+	if (obj_to_char(item, user))
+		act("$p is no-rent and cannot stay in a locker, so it returns to you.", FALSE, user,
+		    item, 0, TO_CHAR);
+}
+
+static void locker_return_norent_contents(P_char user, P_obj container)
+{
+	P_obj next;
+	for (P_obj item = container->contains; item; item = next)
+	{
+		next = item->next_content;
+		if (!IS_SET(item->extra_flags, ITEM_NORENT))
+		{
+			locker_return_norent_contents(user, item);
+			continue;
+		}
+		LockerMovementAudit audit(user, container, NULL, item);
+		if (!audit.Ready())
+			continue;
+		obj_from_obj(item);
+		locker_return_norent_item(user, item);
+		audit.Commit();
+	}
+}
+
+// A private chest the visitor hasn't opened keeps what it holds until someone who has.
+void StorageLocker::ReturnNorentItems(void)
+{
+	if (!m_chUser || m_chUser->in_room != m_realRoom)
+		return;
+	for (P_obj object : locker_snapshot_room_contents(m_realRoom))
+	{
+		if (object->type == ITEM_CORPSE)
+			continue;
+		if (LockerChest *chest = FindChestForObject(object))
+		{
+			if (!chest->IsPrivateChest() ||
+			    m_chestsOpenedThisVisit.count(chest->GetChestId()))
+				locker_return_norent_contents(m_chUser, object);
+		}
+		else if (IS_SET(object->extra_flags, ITEM_NORENT))
+		{
+			obj_from_room(object);
+			locker_return_norent_item(m_chUser, object);
+		}
+		else
+			locker_return_norent_contents(m_chUser, object);
+	}
+}
+
+// A visitor's own save runs this first, so that save holds what was handed back.
+void locker_return_norent_items(P_char ch)
+{
+	StorageLocker *pLocker = locker_current(ch);
+	if (pLocker && pLocker->LockerUserMatches(ch))
+		pLocker->ReturnNorentItems();
+}
+
 bool StorageLocker::LockerToPFile(void)
 {
 	bool ok = true;
+
+	ReturnNorentItems();
 
 	// first, save private chest items directly to db with their chest_id
 	int private_chest_count = 0;

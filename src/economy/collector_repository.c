@@ -12,7 +12,10 @@
  *
  ****************************************************************************/
 
+#include "sql/item_affect_rows.h"
+#include "sql/item_instance_fields.h"
 #include "economy/collector_repository.h"
+#include "economy/currency_value.h"
 #include "item/item_claim.h"
 
 #include "economy/collector_custody_boundary.h"
@@ -1028,7 +1031,8 @@ bool insert_player_item(MYSQL *connection, uint32_t pid, const player_item_snaps
 	sql << "INSERT INTO player_items(pid,vnum,equip_slot,container_id,quantity,weight,cost,"
 	       "timer,extra_flags,wear_flags,item_type,value0,value1,value2,value3,value4,value5,"
 	       "value6,value7,name,short_descr,description,action_descr,bitvector1,bitvector2,"
-	       "bitvector3,bitvector4,bitvector5,item_material,obj_uid,item_condition) VALUES("
+	       "bitvector3,bitvector4,bitvector5,item_material,obj_uid,item_condition,"
+	       "extra2_flags,anti_flags,anti2_flags,craftsmanship) VALUES("
 	    << pid << ',' << item.vnum << ",0,NULL,1," << item.weight << ',' << item.cost << ','
 	    << item.timers[0] << ',' << item.extra_flags << ',' << item.wear_flags << ','
 	    << static_cast<int>(item.type);
@@ -1041,7 +1045,8 @@ bool insert_player_item(MYSQL *connection, uint32_t pid, const player_item_snaps
 	for (uint64_t bitvector : item.bitvectors)
 		sql << ',' << bitvector;
 	sql << ',' << static_cast<int>(item.material) << ',' << item.object_uid << ','
-	    << item.condition << ')';
+	    << item.condition << ',' << sql_item_permanent_extra2(item) << ',' << item.anti_flags
+	    << ',' << item.anti2_flags << ',' << item.craftsmanship << ')';
 	if (!execute(connection, sql.str()))
 		return false;
 	const uint64_t item_id = mysql_insert_id(connection);
@@ -1051,23 +1056,9 @@ bool insert_player_item(MYSQL *connection, uint32_t pid, const player_item_snaps
 		return false;
 	}
 	*database_id = static_cast<uint32_t>(item_id);
-	std::unordered_set<uint64_t> affect_keys;
-	for (const auto &affect : item.affects)
-		if (affect[0] || affect[1])
-		{
-			const uint64_t key =
-				(static_cast<uint64_t>(static_cast<uint16_t>(affect[0])) << 32) |
-				static_cast<uint32_t>(affect[1]);
-			if (!affect_keys.insert(key).second)
-				continue;
-			if (!execute(
-				    connection,
-				    "INSERT INTO player_item_affects(item_id,location,modifier) VALUES(" +
-					    std::to_string(item_id) + "," +
-					    std::to_string(affect[0]) + "," +
-					    std::to_string(affect[1]) + ")"))
-				return false;
-		}
+	if (!execute(connection,
+		     sql_item_affect_insert("player_item_affects", item_id, item.affects)))
+		return false;
 	std::unordered_set<std::string> description_keys;
 	for (const auto &description : item.extra_descriptions)
 	{
@@ -2004,8 +1995,6 @@ bool collector_repository_execute(MYSQL *connection, const critical_command &com
 		policy = collector::activate(&updated, payload.expected_listing_revision,
 					     payload.observed_at);
 	else if (payload.action == collector_action::purchase)
-		// The wallet is memory's: the submit took the price of the listing at this
-		// revision, so the buyer carries exactly that.
 		policy = collector::purchase(&updated, payload.expected_listing_revision,
 					     payload.actor_pid, updated.price_value,
 					     payload.capacity_admitted, payload.observed_at);
@@ -2025,6 +2014,49 @@ bool collector_repository_execute(MYSQL *connection, const critical_command &com
 	*result_code = outcome_code(policy);
 	if (*result_code)
 		return true;
+
+	const bool atomic_purchase = payload.action == collector_action::purchase &&
+				     command.payload_version >= 2;
+	if (atomic_purchase)
+	{
+		if (updated.price_value > INT_MAX || payload.expected_wallet_revision == UINT64_MAX)
+		{
+			*result_code = ERANGE;
+			return true;
+		}
+		if (!execute(
+			    connection,
+			    "SELECT copper,silver,gold,platinum,wallet_revision FROM player_data WHERE pid=" +
+				    std::to_string(payload.actor_pid) + " AND account_name=" +
+				    quote(connection, payload.account_name.data()) +
+				    " AND racewar=" + std::to_string(payload.racewar) +
+				    " FOR UPDATE"))
+			return false;
+		MYSQL_RES *rows = mysql_store_result(connection);
+		MYSQL_ROW row = rows ? mysql_fetch_row(rows) : nullptr;
+		uint64_t values[5] = {};
+		bool valid = row != nullptr;
+		for (size_t index = 0; valid && index < 5; ++index)
+			valid = parse_u64(row[index], &values[index]) &&
+				(index == 4 || values[index] <= INT_MAX);
+		if (rows)
+			mysql_free_result(rows);
+		if (!valid || values[4] != payload.expected_wallet_revision)
+		{
+			*result_code = ESTALE;
+			return true;
+		}
+		currency_vector before = {};
+		for (size_t index = 0; index < 4; ++index)
+			before.amount[index] = static_cast<int64_t>(values[index]);
+		if (!currency_wallet_after_value(before, -static_cast<int64_t>(updated.price_value),
+						 &result->wallet))
+		{
+			*result_code = ENOSPC;
+			return true;
+		}
+		result->wallet_revision = values[4] + 1;
+	}
 
 	if (payload.action == collector_action::collect)
 	{
@@ -2056,6 +2088,18 @@ bool collector_repository_execute(MYSQL *connection, const critical_command &com
 	uint64_t catalog_revision = 0;
 	if (!persist_listing(connection, command, payload, updated, item_blob, catalog.revision,
 			     &catalog_revision))
+		return false;
+	// Only apply the prepared debit after all business refusals have passed. The
+	// wallet, materialized UID, custody and listing then share the outer receipt commit.
+	if (atomic_purchase &&
+	    (!execute(connection,
+		      "UPDATE player_data SET copper=" + std::to_string(result->wallet.amount[0]) +
+			      ",silver=" + std::to_string(result->wallet.amount[1]) +
+			      ",gold=" + std::to_string(result->wallet.amount[2]) +
+			      ",platinum=" + std::to_string(result->wallet.amount[3]) +
+			      ",wallet_revision=wallet_revision+1 WHERE pid=" +
+			      std::to_string(payload.actor_pid)) ||
+	     mysql_affected_rows(connection) != 1))
 		return false;
 	result->record_present = true;
 	result->catalog_revision = catalog_revision;

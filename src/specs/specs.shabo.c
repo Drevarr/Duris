@@ -88,39 +88,6 @@ int pesky_imp_chest(P_obj obj, P_char ch, int cmd, char *arg)
 	return FALSE;
 }
 
-int monitor_trident(P_obj obj, P_char ch, int cmd, char *arg)
-{
-	int dam = cmd / 1000;
-	P_char kala;
-
-	/*
-	   check for periodic event calls
-	 */
-	if (cmd == CMD_SET_PERIODIC)
-		return FALSE;
-
-	if (!dam)
-		return (FALSE);
-	if (!ch)
-		return (FALSE);
-
-	if (!OBJ_WORN(obj) || (obj->loc.wearing != ch))
-		return (FALSE);
-	kala = legacy_proc_arg<P_char>(arg);
-	if (!kala)
-		return (FALSE);
-	if (number(0, 30))
-		return (FALSE);
-	act("&+G$p &+Gwielded by $n &+Wflashes &+Gand a coating of slime engulfs you!&N", TRUE, ch,
-	    obj, kala, TO_VICT);
-	act("&+G$p &+Gwielded by $n &+Wflashes &+Gand a coating of slime engulfs $N!&N", TRUE, ch,
-	    obj, kala, TO_ROOM);
-	act("&+GYour $p &+Wflashes &+Gand a coating of slime engulfs $N!&N", TRUE, ch, obj, kala,
-	    TO_CHAR);
-	spell_acidimmolate(35, ch, NULL, 0, kala, 0);
-	return (TRUE);
-}
-
 int flayed_mind_mask(P_obj obj, P_char ch, int cmd, char *argument)
 {
 	char *arg;
@@ -346,7 +313,7 @@ int tower_summoning(P_obj /*obj*/, P_char ch, int cmd, char * /*arg*/)
 	if (cmd == CMD_SET_PERIODIC)
 		return FALSE;
 
-	if (!ch || !IS_AWAKE(ch) || (GET_POS(ch) == POS_SITTING) || (GET_STAT(ch) == !STAT_NORMAL))
+	if (!ch || !IS_AWAKE(ch) || (GET_POS(ch) == POS_SITTING) || (GET_STAT(ch) != STAT_NORMAL))
 		return FALSE;
 
 	if (IS_NPC(ch) && !IS_PC_PET(ch))
@@ -428,7 +395,7 @@ int shabo_trap_north(P_obj /*obj*/, P_char ch, int cmd, char * /*arg*/)
 	if (cmd == CMD_SET_PERIODIC)
 		return FALSE;
 
-	if (!ch || !IS_AWAKE(ch) || (GET_POS(ch) == POS_SITTING) || (GET_STAT(ch) == !STAT_NORMAL))
+	if (!ch || !IS_AWAKE(ch) || (GET_POS(ch) == POS_SITTING) || (GET_STAT(ch) != STAT_NORMAL))
 		return FALSE;
 
 	if (IS_PC_PET(ch))
@@ -463,7 +430,7 @@ int shabo_trap_south(P_obj /*obj*/, P_char ch, int cmd, char * /*arg*/)
 	if (cmd == CMD_SET_PERIODIC)
 		return FALSE;
 
-	if (!ch || !IS_AWAKE(ch) || (GET_POS(ch) == POS_SITTING) || (GET_STAT(ch) == !STAT_NORMAL))
+	if (!ch || !IS_AWAKE(ch) || (GET_POS(ch) == POS_SITTING) || (GET_STAT(ch) != STAT_NORMAL))
 		return FALSE;
 
 	if (IS_NPC(ch) && !IS_PC_PET(ch))
@@ -487,8 +454,8 @@ int shabo_trap_south(P_obj /*obj*/, P_char ch, int cmd, char * /*arg*/)
 				act("&+LYou hear a soft click.", TRUE, ch, 0, 0, TO_CHAR);
 				if (number(0, 20) < 5)
 				{
-					act("&+LYou get hit with a stunning force!.", TRUE, ch, 0,
-					    0, TO_CHAR);
+					act("&+LYou get hit with a stunning force!", TRUE, ch, 0, 0,
+					    TO_CHAR);
 					act("&+L$n gets hit with a stunning force!", TRUE, ch, 0, 0,
 					    TO_NOTVICT);
 					Stun(ch, ch, (dice(1, 3) * PULSE_VIOLENCE), TRUE);
@@ -507,7 +474,7 @@ int shabo_trap_south_two(P_obj /*obj*/, P_char ch, int cmd, char * /*arg*/)
 	if (cmd == CMD_SET_PERIODIC)
 		return FALSE;
 
-	if (!ch || !IS_AWAKE(ch) || (GET_POS(ch) == POS_SITTING) || (GET_STAT(ch) == !STAT_NORMAL))
+	if (!ch || !IS_AWAKE(ch) || (GET_POS(ch) == POS_SITTING) || (GET_STAT(ch) != STAT_NORMAL))
 		return FALSE;
 
 	if (IS_NPC(ch) && !IS_PC_PET(ch))
@@ -542,7 +509,7 @@ int shabo_trap_down(P_obj /*obj*/, P_char ch, int cmd, char * /*arg*/)
 	if (cmd == CMD_SET_PERIODIC)
 		return FALSE;
 
-	if (!ch || !IS_AWAKE(ch) || (GET_POS(ch) == POS_SITTING) || (GET_STAT(ch) == !STAT_NORMAL))
+	if (!ch || !IS_AWAKE(ch) || (GET_POS(ch) == POS_SITTING) || (GET_STAT(ch) != STAT_NORMAL))
 		return FALSE;
 
 	if (IS_NPC(ch) && !IS_PC_PET(ch))
@@ -577,7 +544,7 @@ int shabo_trap_up(P_obj obj, P_char ch, int cmd, char * /*arg*/)
 	if (cmd == CMD_SET_PERIODIC)
 		return FALSE;
 
-	if (!ch || !IS_AWAKE(ch) || (GET_POS(ch) == POS_SITTING) || (GET_STAT(ch) == !STAT_NORMAL))
+	if (!ch || !IS_AWAKE(ch) || (GET_POS(ch) == POS_SITTING) || (GET_STAT(ch) != STAT_NORMAL))
 		return FALSE;
 
 	if (IS_NPC(ch) && !IS_PC_PET(ch))
@@ -622,7 +589,7 @@ int shabo_trap_up_two(P_obj /*obj*/, P_char ch, int cmd, char * /*arg*/)
 	if (cmd == CMD_SET_PERIODIC)
 		return FALSE;
 
-	if (!ch || !IS_AWAKE(ch) || (GET_POS(ch) == POS_SITTING) || (GET_STAT(ch) == !STAT_NORMAL))
+	if (!ch || !IS_AWAKE(ch) || (GET_POS(ch) == POS_SITTING) || (GET_STAT(ch) != STAT_NORMAL))
 		return FALSE;
 
 	if (IS_NPC(ch) && !IS_PC_PET(ch))
@@ -668,7 +635,7 @@ int shabo_trap_north_two(P_obj /*obj*/, P_char ch, int cmd, char * /*arg*/)
 	if (cmd == CMD_SET_PERIODIC)
 		return FALSE;
 
-	if (!ch || !IS_AWAKE(ch) || (GET_POS(ch) == POS_SITTING) || (GET_STAT(ch) == !STAT_NORMAL))
+	if (!ch || !IS_AWAKE(ch) || (GET_POS(ch) == POS_SITTING) || (GET_STAT(ch) != STAT_NORMAL))
 		return FALSE;
 
 	if (IS_NPC(ch) && !IS_PC_PET(ch))
@@ -689,7 +656,6 @@ int shabo_trap_north_two(P_obj /*obj*/, P_char ch, int cmd, char * /*arg*/)
 				return FALSE;
 			else
 			{
-				act("&+LYou hear a soft click.", TRUE, ch, 0, 0, TO_CHAR);
 				trapmob = read_mobile(14, VIRTUAL); // load a temporary mob
 				if (!trapmob)
 				{
@@ -772,34 +738,32 @@ int mox_totem(P_obj obj, P_char ch, int cmd, char * /*argument*/)
 		switch (rand)
 		{
 		case 0:
-			act("&+LYou point your $p &+Lat &+W$N&+L.&N", TRUE, ch, obj, kala, TO_CHAR);
-			act("&+L$n points $p &+Lat &+W$N&+L.&N", TRUE, ch, obj, kala, TO_NOTVICT);
-			act("&+L$n points $p &+Lat &+Wyou&+L!&N", TRUE, ch, obj, kala, TO_VICT);
+			act_trio("&+LYou point your $p &+Lat &+W$N&+L.&N",
+				 "&+L$n points $p &+Lat &+Wyou&+L!&N",
+				 "&+L$n points $p &+Lat &+W$N&+L.&N", TRUE, ch, obj, kala);
 			spell_snailspeed(60, ch, NULL, SPELL_TYPE_SPELL, kala, 0);
 			break;
 		case 1:
-			act("&+LYou point your $p &+Lat &+W$N&+L.&N", TRUE, ch, obj, kala, TO_CHAR);
-			act("&+L$n points $p &+Lat &+W$N&+L.&N", TRUE, ch, obj, kala, TO_NOTVICT);
-			act("&+L$n points $p &+Lat &+Wyou&+L!&N", TRUE, ch, obj, kala, TO_VICT);
+			act_trio("&+LYou point your $p &+Lat &+W$N&+L.&N",
+				 "&+L$n points $p &+Lat &+Wyou&+L!&N",
+				 "&+L$n points $p &+Lat &+W$N&+L.&N", TRUE, ch, obj, kala);
 			spell_molevision(60, ch, NULL, SPELL_TYPE_SPELL, kala, 0);
 			break;
 		case 2:
-			act("&+LYou point your $p &+Lat &+W$N&+L.&N", TRUE, ch, obj, kala, TO_CHAR);
-			act("&+L$n points $p &+Lat &+W$N&+L.&N", TRUE, ch, obj, kala, TO_NOTVICT);
-			act("&+L$n points $p &+Lat &+Wyou&+L!&N", TRUE, ch, obj, kala, TO_VICT);
+			act_trio("&+LYou point your $p &+Lat &+W$N&+L.&N",
+				 "&+L$n points $p &+Lat &+Wyou&+L!&N",
+				 "&+L$n points $p &+Lat &+W$N&+L.&N", TRUE, ch, obj, kala);
 			spell_malison(60, ch, NULL, SPELL_TYPE_SPELL, kala, 0);
 			break;
 		case 3:
-			act("&+LYou point your $p &+Lat &+W$N&+L.&N", TRUE, ch, obj, kala, TO_CHAR);
-			act("&+L$n points $p &+Lat &+W$N&+L.&N", TRUE, ch, obj, kala, TO_NOTVICT);
-			act("&+L$n points $p &+Lat &+Wyou&+L!&N", TRUE, ch, obj, kala, TO_VICT);
+			act_trio("&+LYou point your $p &+Lat &+W$N&+L.&N",
+				 "&+L$n points $p &+Lat &+Wyou&+L!&N",
+				 "&+L$n points $p &+Lat &+W$N&+L.&N", TRUE, ch, obj, kala);
 			spell_soul_disturbance(60, ch, NULL, SPELL_TYPE_SPELL, kala, 0);
 			break;
 			/* Call of the wild isn't in game right now..
 				    case 4:
-				      act("&+LYou point your $p &+Lat &+W$N&+L.&N", TRUE, ch, obj, kala, TO_CHAR);
-				      act("&+L$n points $p &+Lat &+W$N&+L.&N", TRUE, ch, obj, kala, TO_NOTVICT);
-				      act("&+L$n points $p &+Lat &+Wyou&+L!&N", TRUE, ch, obj, kala, TO_VICT);
+				      act_trio("&+LYou point your $p &+Lat &+W$N&+L.&N", "&+L$n points $p &+Lat &+Wyou&+L!&N", "&+L$n points $p &+Lat &+W$N&+L.&N", TRUE, ch, obj, kala);
 				      spell_call_of_the_wild(60, ch, NULL, SPELL_TYPE_SPELL, kala, 0);
 				      break;
 				*/

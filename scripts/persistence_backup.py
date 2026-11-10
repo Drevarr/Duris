@@ -30,9 +30,8 @@ if __name__ == "__main__":
     sys.modules["persistence_backup"] = sys.modules[__name__]
 
 ROOT = Path(__file__).resolve().parents[1]
-MODES = {"flatfile-primary", "mariadb-primary"}
+MODES = {"mariadb-primary"}
 GENERATION = re.compile(r"[0-9]{20}-[0-9a-f]{32}")
-LOCKS = {".identity.lock", ".critical-authority.lock", ".accounts.lock", ".artifact-mana.lock"}
 # Locker receipts and durable combat outcomes share the critical journal root.
 JOURNAL_ROOTS = {"critical"}
 # The journal an older server kept in that directory. Nothing reads it any more; a backup
@@ -222,7 +221,7 @@ def policy_load(path):
         for ancestor in [path, *path.parents]:
             require(not ancestor.is_symlink(), "authority_symlink_rejected")
     # A DB datadir may belong to the database service UID; it is only a
-    # forbidden destination, never a file source. Flatfile/journal sources
+    # forbidden destination, never a file source. Journal sources
     # independently require custodian ownership before reading.
     require(isinstance(p["journal_roots"], dict) and set(p["journal_roots"]) == JOURNAL_ROOTS,
             "invalid_journal_roots")
@@ -268,9 +267,9 @@ def walk(root):
                 yield path
 
 
-def inventory(root, exclude_locks=False):
+def inventory(root):
     return {path.relative_to(root).as_posix(): {"sha256": digest(path), "bytes": path.stat().st_size}
-            for path in walk(root) if not (exclude_locks and path.name in LOCKS)}
+            for path in walk(root)}
 
 
 def sync_tree(root):
@@ -285,8 +284,9 @@ def sync_tree(root):
         sync_dir(base)
 
 
-def journal_capture(stage, p, capacity_base=None, *, combat=False):
-    """Combat evidence precedes the authority snapshot; locker receipts follow it."""
+def journal_capture(stage, p, capacity_base=None, *, combat=False, starter=False):
+    """Grant/combat evidence precedes authority; locker receipts follow it."""
+    evidence = combat or starter
     target = stage / "journals"
     target.mkdir(mode=0o700, exist_ok=True)
     used = (total_size(p["root"]) if capacity_base is None else capacity_base) + total_size(stage)
@@ -296,7 +296,7 @@ def journal_capture(stage, p, capacity_base=None, *, combat=False):
         nonlocal used
         source = secure_path(Path(source), False)
         size = source.stat().st_size
-        if combat and source.name != ".service-lock":
+        if evidence and source.name != ".service-lock":
             require(32 < size <= COMBAT_MAX_BYTES, "journal_combat_size")
         used += size
         require(used < p["max_bytes"], "capacity_headroom_required")
@@ -309,39 +309,45 @@ def journal_capture(stage, p, capacity_base=None, *, combat=False):
         require(name in JOURNAL_ROOTS, "invalid_journal_roots")
         destination = target / name
         destination.mkdir(mode=0o700, exist_ok=True)
-        if combat:
-            source = source / "combat-intents"
+        if evidence:
+            source = source / ("starter-kits" if starter else "combat-intents")
             if not source.exists() and not source.is_symlink():
-                continue  # Also support generations made before combat intents existed.
+                continue  # Also support generations made before these intents existed.
             secure_path(source, True)
-            destination = destination / "combat-intents"
+            destination = destination / ("starter-kits" if starter else "combat-intents")
 
         def ignore(directory, names):
             relative = Path(directory).relative_to(source)
-            require(relative in ({Path(".")} if combat else
+            require(relative in ({Path(".")} if evidence else
                                  {Path("."), Path("locker-identification")}),
                     "journal_filename")
             temporary = {x for x in names if
                          (combat and COMBAT_WRITE.fullmatch(x)) or
-                         (not combat and relative == Path("locker-identification") and
+                         (starter and re.fullmatch(r"\.\d+\.kit\.tmp\..+", x)) or
+                         (not evidence and relative == Path("locker-identification") and
                           RECEIPT_WRITE.fullmatch(x))}
             for entry in temporary:
                 secure_path(Path(directory) / entry, False)
-            return temporary | ({"combat-intents"} if not combat and relative == Path(".") else set())
+            return temporary | ({"combat-intents", "starter-kits"} if not evidence and relative == Path(".") else set())
 
         # A rename replaces a receipt whole, so the copy holds one whole version of each. It
         # is checked on its own: the directory may have moved on since.
         shutil.copytree(source, destination, symlinks=True, copy_function=copy,
-                        dirs_exist_ok=not combat, ignore=ignore)
+                        dirs_exist_ok=not evidence, ignore=ignore)
         for relative, metadata in inventory(target / name).items():
             receipt = RECEIPT.fullmatch(relative)
             intent = COMBAT_INTENT.fullmatch(relative)
             service_lock = relative in {"locker-identification/.service-lock",
-                                        "combat-intents/.service-lock"}
+                                        "combat-intents/.service-lock", "starter-kits/.service-lock"}
             if receipt:
                 require(int(receipt[1]) <= 2147483647, "journal_receipt_pid")
                 # The restore qualifier validates the checksum, payment and filename identity.
                 require(0 < metadata["bytes"] <= RECEIPT_MAX_BYTES, "journal_receipt_size")
+            elif re.fullmatch(r"starter-kits/[1-9][0-9]*\.kit", relative):
+                require(33 < metadata["bytes"] <= COMBAT_MAX_BYTES, "journal_starter_size")
+                data = (target / name / relative).read_bytes()
+                require(data[0] <= 2 and hashlib.sha256(data[:-32]).digest() == data[-32:],
+                        "journal_starter_checksum")
             elif intent:
                 require(int(intent[1], 16) != 0, "journal_combat_operation")
                 require(32 < metadata["bytes"] <= COMBAT_MAX_BYTES, "journal_combat_size")
@@ -367,33 +373,6 @@ def waiting_receipts(root):
             if not (data[:5] == b"LIDR\x01" and data[5:6] in (b"\x01", b"\x02", b"\x03")):
                 result[relative] = data
     return result
-
-
-def flatfile_capture(stage, p, capacity_base=None):
-    source = secure_path(Path(os.environ.get("FLATFILE_STATE_DIR", "")), True)
-    require(source.is_dir() and source in p["live_roots"], "flatfile_authority_not_configured")
-    target = stage / "state"
-    with contextlib.ExitStack() as stack:
-        for relative in ("identities/names/.identity.lock", "domains/.critical-authority.lock",
-                         "identities/accounts/.accounts.lock", "domains/.artifact-mana.lock"):
-            path = source / relative
-            if path.parent.is_dir():
-                stack.enter_context(lock(path, wait=120))
-        before = inventory(source, exclude_locks=True)
-        require(before, "empty_flatfile_authority")
-        needed = sum(x["bytes"] for x in before.values())
-        existing = total_size(p["root"]) if capacity_base is None else capacity_base
-        require(needed + existing + total_size(stage) < p["max_bytes"], "capacity_headroom_required")
-        require(shutil.disk_usage(stage).free >= needed + p["min_free_bytes"], "low_free_capacity")
-        shutil.copytree(source, target)
-        for base, dirs, files in os.walk(target):
-            for name in files:
-                if name in LOCKS:
-                    (Path(base) / name).unlink()
-        require(before == inventory(target) == inventory(source, exclude_locks=True),
-                "flatfile_generation_changed")
-    return {"pending_transaction": any((target / "domains" / name).exists() for name in
-                                       (".critical-authority-transaction", ".player-domain-transaction"))}
 
 
 def db_connection():
@@ -570,8 +549,7 @@ def verify(generation):
     require(actual == manifest.get("files") and actual, "generation_checksum_mismatch")
     require(digest(generation / "runtime-schema.json") == manifest.get("runtime_schema_sha256"),
             "schema_manifest_mismatch")
-    if manifest["mode"] == "mariadb-primary":
-        validate_dump(generation / "database.sql.gz", generation / "runtime-schema.json")
+    validate_dump(generation / "database.sql.gz", generation / "runtime-schema.json")
     return manifest
 
 
@@ -704,19 +682,37 @@ def complete_generation(root, p, destination, event):
             "replica": replica}
 
 
+def verify_starter_capture(stage, p):
+    """No binding may cross the early evidence copy and authority snapshot."""
+    for name, root in p["journal_roots"].items():
+        source = Path(root) / "starter-kits"
+        captured = stage / "journals" / name / "starter-kits"
+        expected = {path.name for path in captured.glob("*.kit")}
+        seen = set()
+        if source.exists() or source.is_symlink():
+            secure_path(source, True)
+            for path in source.iterdir():
+                if path.name == ".service-lock" or re.fullmatch(r"\.\d+\.kit\.tmp\..+", path.name):
+                    continue
+                secure_path(path, False)
+                require(re.fullmatch(r"[1-9][0-9]*\.kit", path.name) and
+                        33 < path.stat().st_size <= COMBAT_MAX_BYTES, "journal_starter_changed")
+                data = path.read_bytes()
+                require(data[0] <= 2 and hashlib.sha256(data[:-32]).digest() == data[-32:],
+                        "journal_starter_checksum")
+                require(path.name in expected and
+                        data == (captured / path.name).read_bytes(),
+                        "journal_starter_changed")
+                seen.add(path.name)
+        require(seen == expected, "journal_starter_changed")
+
+
 def backup(p, mode):
-    if mode == "mariadb-primary-flatfile-fallback":
-        mode = "mariadb-primary"
     require(mode in MODES, "invalid_persistence_mode")
     root = p["root"]
     mkdir(root)
     with lock(root / ".job.lock", wait=LOCK_WAIT_SECONDS):
         items = generations(root)
-        if mode == "flatfile-primary":
-            source = secure_path(Path(os.environ.get("FLATFILE_STATE_DIR", "")), True)
-            require(source in p["live_roots"], "flatfile_authority_not_configured")
-            if not source.exists() and not items:
-                return {"event": "backup", "result": "authority_not_initialized"}
         require(not any(x.name.startswith((".staging-", ".trash-")) for x in root.iterdir()),
                 "interrupted_job_requires_inspection")
         if items:
@@ -746,33 +742,32 @@ def backup(p, mode):
             if os.environ.get("CRITICAL_COMMAND_JOURNAL_DIR"):
                 require(p["journal_roots"]["critical"] == Path(os.environ["CRITICAL_COMMAND_JOURNAL_DIR"]),
                         "journal_policy_mismatch")
-            if mode == "mariadb-primary":
-                try:
-                    verify_database_schema(stage / "runtime-schema.json")
-                except BackupError as error:
-                    if (os.environ.get("RUNTIME_COMPATIBILITY_MANIFEST") or not items or
-                            items[0][1]["mode"] != "mariadb-primary" or
-                            str(error) != "subprocess_failed" or
-                            error.detail.get("phase") != "schema_check" or
-                            error.detail.get("exit_status") != 1):
-                        raise
-                    # A checkout can advance before the live database. Reuse its last
-                    # captured contract only if it still verifies against the database.
-                    previous = secure_path(items[0][0] / "runtime-schema.json", False)
-                    previous_digest = digest(previous)
-                    require(previous_digest == items[0][1]["runtime_schema_sha256"],
-                            "schema_manifest_mismatch")
-                    if previous_digest == digest(stage / "runtime-schema.json"):
-                        raise
-                    shutil.copyfile(previous, stage / "runtime-schema.json")
-                    verify_database_schema(stage / "runtime-schema.json")
+            try:
+                verify_database_schema(stage / "runtime-schema.json")
+            except BackupError as error:
+                if (os.environ.get("RUNTIME_COMPATIBILITY_MANIFEST") or not items or
+                        str(error) != "subprocess_failed" or
+                        error.detail.get("phase") != "schema_check" or
+                        error.detail.get("exit_status") != 1):
+                    raise
+                # A checkout can advance before the live database. Reuse its last
+                # captured contract only if it still verifies against the database.
+                previous = secure_path(items[0][0] / "runtime-schema.json", False)
+                previous_digest = digest(previous)
+                require(previous_digest == items[0][1]["runtime_schema_sha256"],
+                        "schema_manifest_mismatch")
+                if previous_digest == digest(stage / "runtime-schema.json"):
+                    raise
+                shutil.copyfile(previous, stage / "runtime-schema.json")
+                verify_database_schema(stage / "runtime-schema.json")
             waiting = {name: waiting_receipts(source) for name, source in p["journal_roots"].items()}
             # A completed marker suppresses replay. Freeze it before the authority so its
             # commit cannot be newer than the snapshot; an active intent remains replayable
             # whether its idempotent command commits before or after the snapshot.
             journal_capture(stage, p, capacity_base, combat=True)
-            detail = (flatfile_capture(stage, p, capacity_base) if mode == "flatfile-primary"
-                      else mariadb_capture(stage, p, capacity_base))
+            journal_capture(stage, p, capacity_base, starter=True)
+            detail = mariadb_capture(stage, p, capacity_base)
+            verify_starter_capture(stage, p)
             # The receipts come after the authority, so a paid, failed or delivered one is at
             # least as new as the database it is restored with. One still waiting on its payment
             # may have its charge in the snapshot but not its paid marker, which a restore would
@@ -783,8 +778,7 @@ def backup(p, mode):
             journal_capture(stage, p, capacity_base)
             require(all(waiting_receipts(stage / "journals" / name).items() <= waiting[name].items()
                         for name in waiting), "receipt_payment_in_flight")
-            if mode == "mariadb-primary":
-                verify_database_schema(stage / "runtime-schema.json")
+            verify_database_schema(stage / "runtime-schema.json")
             checkpoint("after_capture")
             meta = {"version": 1, "generation": name, "created": capture_started, "mode": mode,
                     "runtime_schema_sha256": digest(stage / "runtime-schema.json"),

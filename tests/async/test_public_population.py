@@ -29,6 +29,7 @@ harness = r'''
 #include "core/mm.h"
 #include "net/ttype.h"
 #include "net/gmcp.h"
+#include "net/mxp.h"
 #include <cassert>
 #include <climits>
 #include <cstring>
@@ -46,6 +47,7 @@ int curr_ingame_good = 0, curr_ingame_evil = 0;
 int max_ingame_good = 0, max_ingame_evil = 0;
 P_desc descriptor_list = nullptr;
 P_char character_list = nullptr;
+void character_list_add(P_char ch) { ch->next = character_list; character_list = ch; }
 mm_ds *dead_desc_pool = nullptr;
 int used_descs = 0, top_of_world = 0;
 char_data restored[6] = {};
@@ -63,17 +65,24 @@ void account_read(P_desc d, const char *, account_read_done done) { done(d, true
 bool char_to_room(P_char ch, int room, int) { ch->in_room = room; return true; }
 void player_load_pets_place(P_char) {}
 void epic_bonus_hydrate(P_char) {}
-bool start_hatred_check(P_char) { return true; }
+void schedule_pc_events(P_char) {}
 void raw_write_to_fd(int, const char *) {}
-P_char copyover_load_player(const char *name, P_desc, std::string *) {
+P_char copyover_load_player(const copyover_desc &entry, int version, P_desc, std::string *) {
+    assert(version == COPYOVER_VERSION);
     for (auto &ch : restored)
-        if (!strcmp(GET_NAME(&ch), name)) return &ch;
+        if (!strcmp(GET_NAME(&ch), entry.player_name)) return &ch;
     return nullptr;
+}
+bool copyover_restores_world() { return true; }
+int copyover_player_room(const copyover_desc &, int version, bool preserve_world, P_char) {
+    assert(version == COPYOVER_VERSION && preserve_world);
+    return 0;
 }
 
 @UPDATE_POPULATION@
 
 void gmcp_session_restored(P_desc) {}
+void mxp_negotiate(P_desc) {}
 @DESC_BYTES@
 bool restore_descriptors(FILE *fp, int count) {
     copyover_header header = {};

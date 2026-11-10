@@ -18,11 +18,11 @@ bool divine_boon_cargo_eligible(const divine_boon_slot &)
 #include "persistence/persistence_mode.h"
 #include "player/player_save_pipeline.h"
 #include "player/player_snapshot_repository.h"
-#include "flatfile/flatfile_player_repository.h"
 #include "sql/sql_player.h"
 #include "ships/ship_npc_ai.h"
 
 #include <cassert>
+#include <charconv>
 #include <cerrno>
 #include <cstdlib>
 #include <string>
@@ -111,21 +111,6 @@ void mark_player_dirty_components(int, player_component_mask_t)
 const char *get_account_name_safe(P_char ch)
 {
 	return ch && GET_PID(ch) == 45 ? "other_account" : "money_account";
-}
-static persistence_mode fixture_mode = PERSISTENCE_MODE_MARIADB_PRIMARY;
-persistence_mode persistence_mode_get(void)
-{
-	return fixture_mode;
-}
-const char *persistence_mode_flatfile_root(void)
-{
-	return "fixture";
-}
-player_save_apply_result flatfile_bank_delta_apply(const std::string &, const std::string &, int8_t,
-						   const std::array<int64_t, 4> &,
-						   flatfile_authority_operation *, std::string *)
-{
-	return { player_save_apply_outcome::applied, 0, 0 };
 }
 player_save_apply_result bank_delta_repository_apply_from_pool(const bank_delta_snapshot &)
 {
@@ -244,32 +229,37 @@ void sql_reserve_ship_ids(uint32_t id)
 {
 	reserved_ship_id = id;
 }
-flatfile_ship_result flatfile_ship_list(const std::string &,
-					std::vector<flatfile_ship_record> *ships, std::string *)
-{
-	ships->clear();
-	for (uint32_t id : durable_ship_ids)
-	{
-		flatfile_ship_record s;
-		s.ship_id = id;
-		ships->push_back(s);
-	}
-	return flatfile_ship_result::ok;
-}
-flatfile_ship_result flatfile_ship_reserve_ids(const std::string &, uint32_t id, std::string *)
-{
-	reserved_ship_id = id;
-	return flatfile_ship_result::ok;
-}
-bool divine_trade_sql_books(MYSQL *, uint64_t, std::vector<divine_trade_book> *)
-{
-	return true;
-}
-bool divine_trade_flatfile_books(const std::string &, uint64_t,
-				 std::vector<divine_trade_book> *books)
+bool divine_trade_sql_books(MYSQL *, uint64_t, std::vector<divine_trade_book> *books)
 {
 	*books = boot_books;
 	return true;
+}
+// The boot's SELECT id FROM ships, answered from durable_ship_ids.
+static std::vector<std::string> ship_id_rows;
+static size_t next_ship_id_row;
+static char *ship_id_row[1];
+extern "C"
+{
+	int STDCALL mysql_query(MYSQL *, const char *)
+	{
+		ship_id_rows.clear();
+		for (const uint32_t id : durable_ship_ids)
+			ship_id_rows.push_back(std::to_string(id));
+		next_ship_id_row = 0;
+		return 0;
+	}
+	MYSQL_RES *STDCALL mysql_store_result(MYSQL *)
+	{
+		return reinterpret_cast<MYSQL_RES *>(&ship_id_rows);
+	}
+	MYSQL_ROW STDCALL mysql_fetch_row(MYSQL_RES *)
+	{
+		if (next_ship_id_row == ship_id_rows.size())
+			return nullptr;
+		ship_id_row[0] = ship_id_rows[next_ship_id_row++].data();
+		return ship_id_row;
+	}
+	void STDCALL mysql_free_result(MYSQL_RES *) {}
 }
 critical_submit_result critical_command_coordinator_submit(critical_command command)
 {
@@ -311,11 +301,6 @@ critical_apply_result critical_command_repository_apply_from_pool(const critical
 	       command.payload == retained.payload);
 	++reconciled_commands;
 	return { critical_apply_outcome::already_applied, 0, 0 };
-}
-critical_apply_result divine_trade_flatfile_apply(const std::string &,
-						  const critical_command &command)
-{
-	return critical_command_repository_apply_from_pool(command, nullptr);
 }
 
 static bool physical_ship_exists = true;
@@ -429,8 +414,12 @@ affected_type *affect_to_char(P_char ch, affected_type *af)
 	ch->affected = copy;
 	return copy;
 }
-int jettison_crates(P_ship, int, int, int)
+static int jettison_calls = 0, jettisoned_crates = 0;
+int jettison_crates(P_ship, int crates, int, int)
 {
+	assert(crates > 0);
+	++jettison_calls;
+	jettisoned_crates += crates;
 	return TRUE;
 }
 void queue_ship_save(P_ship ship, const char *)
@@ -548,6 +537,81 @@ static void split_reservation_case()
 
 int main()
 {
+	// Both command overloads and integer workers must reject invalid counts,
+	// including ships that bypass trade accounting (unsaved players and NPCs).
+	struct player captain(44);
+	for (int kind = 0; kind < 3; ++kind)
+		for (int type : { SLOT_CARGO, SLOT_CONTRABAND })
+		{
+			ShipData fixture{};
+			fixture.db_id = kind == 1 ? 0 : 100;
+			fixture.race = kind == 2 ? NPCSHIP : GOODIESHIP;
+			fixture.slot[0].type = type;
+			fixture.slot[0].index = 2;
+			fixture.slot[0].val0 = 3;
+			fixture.slot[0].val1 = 300;
+			int (*worker)(P_char, P_ship, int) = jettison_cargo;
+			int (*command)(P_char, P_ship, char *) = jettison_cargo;
+			if (type == SLOT_CONTRABAND)
+			{
+				worker = jettison_contraband;
+				command = jettison_contraband;
+			}
+			jettison_calls = jettisoned_crates = 0;
+			for (int count : { INT_MIN, -1000, -1, 0 })
+				for (P_char actor : { &captain.ch, static_cast<P_char>(nullptr) })
+				{
+					assert(worker(actor, &fixture, count) == TRUE);
+					assert(fixture.slot[0].type == type &&
+					       fixture.slot[0].index == 2 &&
+					       fixture.slot[0].val0 == 3 &&
+					       fixture.slot[0].val1 == 300 &&
+					       !fixture.save_pending && jettison_calls == 0);
+				}
+			const std::string overflow =
+				std::to_string(static_cast<int64_t>(INT_MAX) + 1);
+			for (const char *input :
+			     { "-1000", "-1", "0", "-", "+", "garbage", "2x", "1 2", " 2", "2 ",
+			       overflow.c_str(), "999999999999999999999999999999999999" })
+			{
+				char argument[80];
+				strcpy(argument, input);
+				trade_messages.clear();
+				assert(command(&captain.ch, &fixture, argument) == TRUE);
+				assert(!trade_messages.empty() && fixture.slot[0].type == type &&
+				       fixture.slot[0].index == 2 && fixture.slot[0].val0 == 3 &&
+				       fixture.slot[0].val1 == 300 && !fixture.save_pending &&
+				       jettison_calls == 0);
+			}
+			char partial[] = "2";
+			assert(command(&captain.ch, &fixture, partial) == TRUE);
+			assert(fixture.slot[0].val0 == 1 && fixture.save_pending &&
+			       jettisoned_crates == 2);
+			fixture.save_pending = false;
+			assert(worker(nullptr, &fixture, 1) == TRUE);
+			assert(fixture.slot[0].type == SLOT_EMPTY && fixture.save_pending &&
+			       jettisoned_crates == 3);
+			// Omission, INT_MAX and counts exceeding stock all empty the hold.
+			const std::string maximum = std::to_string(INT_MAX);
+			for (const char *input : { "", maximum.c_str(), "1000" })
+			{
+				for (int slot : { 0, 1 })
+				{
+					fixture.slot[slot].type = type;
+					fixture.slot[slot].index = 2;
+					fixture.slot[slot].val0 = 3;
+					fixture.slot[slot].val1 = 300;
+				}
+				fixture.save_pending = false;
+				jettisoned_crates = 0;
+				char argument[32];
+				strcpy(argument, input);
+				assert(command(&captain.ch, &fixture, argument) == TRUE);
+				assert(fixture.slot[0].type == SLOT_EMPTY &&
+				       fixture.slot[1].type == SLOT_EMPTY && fixture.save_pending &&
+				       jettisoned_crates == 6);
+			}
+		}
 	split_reservation_case();
 	struct player alice(44);
 	character_list = &alice.ch;
@@ -852,7 +916,6 @@ int main()
 
 	// Ownership transfer cannot merge a new account's paid lot into an old
 	// account's proof. The old proof is saved away before any new charge.
-	fixture_mode = PERSISTENCE_MODE_FLATFILE_PRIMARY;
 	boon.id = 17;
 	auto transferred = buy.book_after;
 	transferred.account += 1;
@@ -879,7 +942,6 @@ int main()
 	assert(divine_trade_runtime_book(transferred.account, 17).consumed == 5 &&
 	       divine_trade_runtime_book(buy.book_after.account, 17).lots.size() == 1);
 
-	fixture_mode = PERSISTENCE_MODE_FLATFILE_PRIMARY;
 	boon.id = 17;
 	auto mixed_a = buy.book_after;
 	auto mixed_b = mixed_a;

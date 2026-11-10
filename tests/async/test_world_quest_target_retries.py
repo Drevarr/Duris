@@ -7,6 +7,7 @@ import subprocess
 import tempfile
 
 from _paths import ROOT, HARNESS_STUBS, extract_function, source as repo_source
+from _innate_numbers import with_innate_numbers
 
 
 (ROOT / "bin/tests").mkdir(parents=True, exist_ok=True)
@@ -18,32 +19,29 @@ with tempfile.TemporaryDirectory(prefix="quest-live-targets-", dir=ROOT / "bin/t
     mobile = repo_source("specs.mobile.c").read_text()
     payment_context = mobile[mobile.index("enum class world_quest_payment_action"):
                              mobile.index("static void world_quest_report_creation_failure")]
-    objects = repo_source("specs.object.c").read_text()
+    objects = repo_source("specs.set.c").read_text()
     set_context = objects[objects.index("typedef int (*set_func)"):
                           objects.index("void event_random_set_proc(")]
     set_table = objects[objects.index("struct set_data\n"):
                         objects.index("int set_proc(")]
-    assignments = repo_source("specs.assign.c").read_text()
-    for vnum, proc in ((67262, "mace_of_sea"), (67237, "serpent_blade"),
-                       (67242, "lich_spine"), (67276, "sword_whirlwinds"),
-                       (36884, "kvasir_dagger"), (22962, "hammer_titans"),
-                       (32862, "aboleth_pendant")):
-        assert re.search(rf"obj_index\[real_object0\({vnum}\)\]\.func\.obj\s*=\s*{proc};",
-                         assignments)
+    # The native object-binding catalog regression executes the eight target
+    # vnum/callback identities used by this journey.
+    # special() keeps using ch after an object proc returns, so these burns cannot kill.
+    object_procs = repo_source("specs.object.c").read_text()
+    for damage in (r"number\(120, 240\), SPLDAM_HOLY,\s+SPLDAM_NOSHRUG \| RAWDAM_NOKILL",
+                   r"4, SPLDAM_GENERIC, RAWDAM_NOKILL"):
+        assert re.search(rf"spell_damage\(ch, ch, {damage}", object_procs)
     # Identity-only dependencies must never be invoked by target validation.
     # The reported weapons and their neighbors below use full production bodies.
     policy = repo_source("world/world_quest_policy.c").read_text()
     object_audit = policy[policy.index("auto object_handler ="):
                           policy.index("for (P_obj object = actor->carrying;")]
     safe_procs = re.findall(r"proc == (\w+)", object_audit)
-    linked_procs = {"board", "artifact_hide", "ring_of_regeneration", "tracks",
-                    "blood_stains", "set_proc", "master_set", "mace_of_sea",
-                    "serpent_blade", "lich_spine", "sword_whirlwinds", "kvasir_dagger",
-                    "hammer_titans", "aboleth_pendant"}
+    linked_procs = {"board", "artifact_hide", "tracks", "blood_stains", "set_proc"}
     identity_stubs = "\n".join(
         f"int {name}(P_obj, P_char, int, char *) {{ std::abort(); }}"
         for name in safe_procs if name not in linked_procs)
-    adapters.write_text(
+    adapters.write_text(with_innate_numbers(
         '#include "core/prototypes.h"\n#include "core/utils.h"\n'
         '#include "magic/spells.h"\n#include "world/map.h"\n'
         '#include "world/weather.h"\n#include "combat/justice.h"\n'
@@ -59,14 +57,26 @@ with tempfile.TemporaryDirectory(prefix="quest-live-targets-", dir=ROOT / "bin/t
         'bool aggressive_to_race(P_char, P_char);\nbool aggressive_to_class(P_char, P_char);\n'
         '#include "world/specs.prototypes.h"\n#include "world/vnum.obj.h"\n'
         '#include <cassert>\n'
+        '#include "item/named_set_origin.h"\n'
         'extern int top_of_zone_table;\n'
+        # ASK returns before these set consequences; asking must never reach them.
+        'void check_zone_spells(P_char, P_obj, int, int, const char *) { std::abort(); }\n'
+        'nevent_handle nevent_handle_from_event(P_nevent) { std::abort(); }\n'
+        'bool nevent_reschedule_after(nevent_handle, unsigned long long) { std::abort(); }\n'
+        'void *__malloc(size_t, const char *, const char *, int) { std::abort(); }\n'
+        'char *str_dup(const char *) { std::abort(); }\n'
+        + extract_function("utility.c", "string strip_ansi(") +
         'void event_random_set_proc(P_char, P_char, P_obj, void *);\n'
         'void event_balance_affects(P_char, P_char, P_obj, void *);\n'
         'void event_object_proc(P_char, P_char, P_obj, void *);\n'
-        + set_context + extract_function("specs.object.c", "int random_set(")
-        + set_table + extract_function("specs.object.c", "int set_proc(")
+        + set_context + extract_function("specs.set.c", "int random_set(")
+        + objects[objects.index("const int set_master_vnum[]"):objects.index("int master_set(")]
+        + extract_function("specs.set.c", "int master_set(")
+        + set_table + extract_function("specs.set.c", "int set_proc(")
         + identity_stubs
         + payment_context + "\n".join(extract_function(file, signature) for file, signature in (
+            ("comm.c", "void act_trio("),
+            ("specs.object.c", "P_char melee_proc_target("),
             ("specs.object.c", "int mace_of_sea("),
             ("specs.object.c", "int serpent_blade("),
             ("specs.object.c", "int lich_spine("),
@@ -80,6 +90,7 @@ with tempfile.TemporaryDirectory(prefix="quest-live-targets-", dir=ROOT / "bin/t
             ("world/handler.c", "bool isname(const char *str, const char *namelist)"),
             ("world/outposts.c", "bool check_castle_walls("),
             ("combat/range.c", "int check_wall("),
+            ("core/utility.c", "int is_char_in_room("),
             ("core/utility.c", "bool ac_can_see_from("),
             ("core/utility.c", "bool has_native_planar_affinity_at("),
             ("core/utility.c", "bool aggressive_to_at("),
@@ -137,7 +148,7 @@ void run_map_payment(P_char player, int fee)
         reinterpret_cast<const uint8_t *>(&payment), sizeof(payment));
 }
 '''
-    )
+    ))
     binary = work / "targets"
     compile_command = [
         "g++", "-std=c++20", "-g", "-O1", "-Wall", "-Wextra", "-Wpedantic", "-Werror",
@@ -146,7 +157,8 @@ void run_map_payment(P_char player, int fee)
         "tests/async/world_quest_live_targets_harness.cpp", str(HARNESS_STUBS),
         "src/world/world_quest_policy.c", "src/combat/forced_movement.c", "src/combat/trap.c",
         "src/core/safe_format.c",
-        "src/specs/specs.set.c",
+        "src/item/named_set_origin.c", "src/item/named_sets.c",
+        "src/item/random_equipment_tables.c",
         "-Wl,--gc-sections",
     ]
     subprocess.run([*compile_command, str(adapters), "-o", str(binary)], cwd=ROOT, check=True)
@@ -215,7 +227,7 @@ void run_map_payment(P_char player, int fee)
     finish = sql[sql.index("bool sql_world_quest_finish_async("):]
     history += "\n#undef __NO_MYSQL__\n" + publication + finish + "\n#define __NO_MYSQL__\n"
     sql_adapters = work / "sql_history_adapters.cpp"
-    sql_adapters.write_text(adapters.read_text() + r'''
+    sql_adapters.write_text(with_innate_numbers(adapters.read_text() + r'''
 #include "sql/sql_async.h"
 #include "net/unicode.h"
 #include "player/player_snapshot_capture.h"
@@ -383,7 +395,7 @@ void quest_test_history_publish(int seconds, bool ok)
     history_clock += seconds;
     publish_history(ok);
 }
-''')
+'''))
     sql_binary = work / "sql-history-targets"
     subprocess.run([*compile_command, "-DWORLD_QUEST_SQL_HISTORY", str(sql_adapters),
                     "-o", str(sql_binary)], cwd=ROOT, check=True)

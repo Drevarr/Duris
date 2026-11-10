@@ -10,6 +10,7 @@
 #include "world/difficulty.h"
 #include "core/structs.h"
 #include "net/comm.h"
+#include "net/gmcp.h"
 #include "world/events.h"
 #include "cmd/interp.h"
 #include "core/utility.h"
@@ -21,6 +22,7 @@
 #include <string.h>
 #include "guild/guildhall.h"
 #include "persistence/persistence_checkpoint.h"
+#include "abilities/abilities.h"
 #include "core/profile.h"
 #include "magic/spells.h"
 
@@ -86,7 +88,8 @@ float fake_sqrt_table[] = { .3311,  .3467,  .3631,  .3802,  .3981,  .4169,  .436
 double lfactor[MAX_CIRCLE] = { 400.0000,  565.6854,  692.8203,	800.0000,  894.4272,  979.7959,
 			       1058.3005, 1131.3708, 1200.0000, 1264.9110, 1324.0000, 1370.1234 };
 
-static int get_circle_memtime(P_char ch, int circle, bool bStatOnly = false);
+static int get_circle_memtime(P_char ch, int circle, bool bStatOnly = false,
+			      bool roll_nature_bonus = true);
 static int calculate_harpy_time(P_char ch, int circle, bool bStatOnly = false);
 static int calculate_undead_time(P_char ch, int circle, bool bStatOnly = false);
 
@@ -120,6 +123,59 @@ bool meming_class(P_char ch)
 	return IS_MEMING_CLASS(ch->player.m_class) ||
 	       (!IS_CASTER_CLASS(ch->player.m_class) && !USES_MANA(ch) &&
 		IS_MEMING_CLASS(ch->player.secondary_class));
+}
+
+static bool can_assimilate(P_char ch)
+{
+	return IS_PUNDEAD(ch) || IS_NPC(ch) || IS_ANGEL(ch) || IS_UNDEADRACE(ch) ||
+	       is_wearing_necroplasm(ch) || GET_CLASS(ch, CLASS_WARLOCK);
+}
+
+const char *spell_interface_command(P_char ch)
+{
+	// Mana takes precedence over spell slots in the casting path.
+	if (USES_MANA(ch))
+		return "will";
+	if (USES_FOCUS(ch))
+		return "focus";
+	if (USES_COMMUNE(ch))
+		return "commune";
+	if (USES_DEFOREST(ch))
+		return "deforest";
+	if (USES_TUPOR(ch))
+		return "tupor";
+	if (can_assimilate(ch))
+		return "assimilate";
+	if (praying_class(ch))
+		return "pray";
+	if (meming_class(ch))
+		return "memorize";
+	return nullptr;
+}
+
+const char *default_spell_interface_command(unsigned int cls)
+{
+	switch (cls)
+	{
+	case CLASS_PSIONICIST:
+	case CLASS_MINDFLAYER:
+		return "will";
+	case CLASS_DRUID:
+	case CLASS_RANGER:
+	case CLASS_DRAGOON:
+		return "commune";
+	case CLASS_BLIGHTER:
+		return "deforest";
+	case CLASS_ETHERMANCER:
+		return "tupor";
+	case CLASS_WARLOCK:
+		return "assimilate";
+	}
+	if (IS_PRAYING_CLASS(cls))
+		return "pray";
+	if (IS_MEMING_CLASS(cls))
+		return "memorize";
+	return nullptr;
 }
 
 int IS_SEMI_CASTER(P_char ch)
@@ -307,6 +363,12 @@ P_obj SpellInSpellBook(P_char ch, int spl, int mode)
 	return FindSpellBookWithSpell(ch, spl, mode);
 }
 
+// Epic scribing takes this many pages off a spell.
+static int scribe_mastery_pages(int skill)
+{
+	return MAX(1, (int)(skill / 5));
+}
+
 int GetSpellPages(P_char ch, int spl)
 {
 	int pages;
@@ -321,7 +383,7 @@ int GetSpellPages(P_char ch, int spl)
 	if (GET_CHAR_SKILL(ch, SKILL_SCRIBE_MASTERY))
 	{
 		int skill = GET_CHAR_SKILL(ch, SKILL_SCRIBE_MASTERY);
-		int mod = MAX(1, (int)(skill / 5));
+		int mod = scribe_mastery_pages(skill);
 		pages -= mod;
 	}
 
@@ -554,12 +616,14 @@ void stop_memorizing(P_char ch, memorization_stop_reason reason)
 	{
 		show_stop_memorizing(ch, reason);
 		disarm_char_nevents(ch, event_memorize);
+		gmcp_spell_preparation_changed(ch);
 	}
 }
 
 // Keep pending spell choices intact so the player can resume after a rejection.
 static bool schedule_memorize(P_char ch, int delay, const int *time = nullptr)
 {
+	gmcp_spell_preparation_changed(ch);
 	if (add_event(event_memorize, delay, ch, 0, 0, 0, time, time ? sizeof(*time) : 0))
 		return true;
 
@@ -660,7 +724,7 @@ int calculate_harpy_time(P_char ch, int circle, bool bStatOnly)
 
 	if (!bStatOnly && IS_AFFECTED(ch, AFF_MEDITATE) &&
 	    (notch_skill(ch, SKILL_MEDITATE, (int)get_property("skill.notch.meditate", 3)) ||
-	     GET_CHAR_SKILL(ch, SKILL_MEDITATE) < number(0, 100)))
+	     GET_CHAR_SKILL(ch, SKILL_MEDITATE) > number(0, 100)))
 	{
 		remem_time /= 2;
 	}
@@ -674,7 +738,18 @@ int calculate_harpy_time(P_char ch, int circle, bool bStatOnly)
 	return (int)remem_time;
 }
 
-int get_circle_memtime(P_char ch, int circle, bool bStatOnly)
+// What the nature epics multiply a recovery by when they fire.
+double natures_sanctity_recovery_factor()
+{
+	return .65;
+}
+
+double natures_ruin_recovery_factor()
+{
+	return .65;
+}
+
+int get_circle_memtime(P_char ch, int circle, bool bStatOnly, bool roll_nature_bonus)
 {
 	float time_mult, time;
 	P_nevent e;
@@ -806,9 +881,10 @@ int get_circle_memtime(P_char ch, int circle, bool bStatOnly)
 		time = time * modifier;
 
 		// reduction in time if you have the epic skill
-		if (OUTSIDE(ch) && GET_CHAR_SKILL(ch, SKILL_NATURES_SANCTITY) > number(1, 100))
+		if (roll_nature_bonus && OUTSIDE(ch) &&
+		    GET_CHAR_SKILL(ch, SKILL_NATURES_SANCTITY) > number(1, 100))
 		{
-			time = time * .65;
+			time = time * natures_sanctity_recovery_factor();
 		}
 
 		// randomly reduce the time by 33% based on level of caster
@@ -861,9 +937,10 @@ int get_circle_memtime(P_char ch, int circle, bool bStatOnly)
 		}
 
 		// reduction in time if you have the epic skill
-		if (OUTSIDE(ch) && GET_CHAR_SKILL(ch, SKILL_NATURES_RUIN) > number(1, 100))
+		if (roll_nature_bonus && OUTSIDE(ch) &&
+		    GET_CHAR_SKILL(ch, SKILL_NATURES_RUIN) > number(1, 100))
 		{
-			time = time * .65;
+			time = time * natures_ruin_recovery_factor();
 		}
 
 		// cant commune while in command lag, this makes sure they will
@@ -1244,14 +1321,106 @@ int memorize_last_spell(P_char ch)
 	if (last_spell)
 	{
 		last_spell->flags |= MEMTYPE_FULL;
+		gmcp_spell_preparation_changed(ch);
 		return last_spell->modifier;
 	}
 
 	return FALSE;
 }
 
+static bool uses_slot_recovery(P_char ch)
+{
+	return GET_CLASS(ch, CLASS_WARLOCK) || IS_PUNDEAD(ch) || USES_COMMUNE(ch) ||
+	       USES_DEFOREST(ch) || USES_TUPOR(ch) || IS_UNDEADRACE(ch) ||
+	       is_wearing_necroplasm(ch) || USES_FOCUS(ch) || IS_ANGEL(ch);
+}
+
+static int64_t spell_preparation_by_circle(P_char ch, bool &active, int64_t *by_circle)
+{
+	active = false;
+	if (!ch || IS_NPC(ch) || ch->in_room == NOWHERE || !IS_ALIVE(ch) || USES_MANA(ch))
+		return 0;
+
+	int pending[MAX_CIRCLE + 1] = {};
+	int first = 0;
+	const bool slot_recovery = uses_slot_recovery(ch);
+	if (slot_recovery)
+	{
+		const int max_circle = get_max_circle(ch);
+		for (int circle = max_circle; circle > 0; --circle)
+		{
+			pending[circle] = max_spells_in_circle(ch, circle, max_circle) -
+					  ch->specials.undead_spell_slots[circle];
+			if (!first && pending[circle] > 0)
+				first = circle;
+		}
+	}
+	else
+	{
+		for (const affected_type *af = ch->affected; af; af = af->next)
+		{
+			if (af->type != TAG_MEMORIZE || (af->flags & MEMTYPE_FULL))
+				continue;
+			const int circle = get_spell_circle(ch, af->modifier);
+			if (circle <= 0 || circle > MAX_CIRCLE)
+				continue;
+			++pending[circle];
+			if (!first)
+				first = circle;
+		}
+	}
+	if (!first)
+		return 0;
+
+	const P_nevent event = get_scheduled(ch, event_memorize);
+	if (event)
+	{
+		active = true;
+		by_circle[first] = std::max(1, ne_event_time(event));
+		// The meditation check may schedule the second half of this interval.
+		if (event->data)
+			by_circle[first] += *static_cast<const int *>(event->data) / 2;
+		--pending[first];
+	}
+	// Future steps are estimates. Reading them must never roll a proc or train a skill.
+	int64_t pulses = 0;
+	for (int circle = 1; circle <= MAX_CIRCLE; ++circle)
+	{
+		if (pending[circle] <= 0)
+		{
+			pulses += by_circle[circle];
+			continue;
+		}
+		int64_t interval = get_circle_memtime(ch, circle, true, false);
+		if (slot_recovery)
+		{
+			if (!event && circle == first)
+			{
+				// The recovery command starts the first slot without a meditation check.
+				const bool full_interval = USES_COMMUNE(ch) || USES_FOCUS(ch) ||
+							   USES_DEFOREST(ch);
+				by_circle[circle] += std::max<int64_t>(
+					1, full_interval ? interval : interval / 2);
+				--pending[circle];
+			}
+			// Each subsequent slot can take another half-interval after meditation.
+			interval += interval / 2;
+		}
+		by_circle[circle] += pending[circle] * std::max<int64_t>(1, interval);
+		pulses += by_circle[circle];
+	}
+	return pulses;
+}
+
+int64_t spell_preparation_estimate(P_char ch, bool &active)
+{
+	int64_t by_circle[MAX_CIRCLE + 1] = {};
+	return spell_preparation_by_circle(ch, active, by_circle);
+}
+
 void event_memorize(P_char ch, P_char /*victim*/, P_obj /*obj*/, void *data)
 {
+	gmcp_spell_preparation_changed(ch);
 	int time = 0;
 
 	if (data)
@@ -1266,9 +1435,7 @@ void event_memorize(P_char ch, P_char /*victim*/, P_obj /*obj*/, void *data)
 		return;
 	}
 
-	if (GET_CLASS(ch, CLASS_WARLOCK) || IS_PUNDEAD(ch) || USES_COMMUNE(ch) ||
-	    USES_DEFOREST(ch) || USES_TUPOR(ch) || IS_UNDEADRACE(ch) || is_wearing_necroplasm(ch) ||
-	    USES_FOCUS(ch) || IS_ANGEL(ch))
+	if (uses_slot_recovery(ch))
 	{
 		handle_undead_mem(ch);
 	}
@@ -1282,9 +1449,7 @@ void do_assimilate(P_char ch, char *argument, int cmd)
 {
 	int circle, available, need_mem = 0;
 
-	if (cmd == CMD_ASSIMILATE &&
-	    !(IS_PUNDEAD(ch) || IS_NPC(ch) || IS_ANGEL(ch) || IS_UNDEADRACE(ch) ||
-	      is_wearing_necroplasm(ch) || GET_CLASS(ch, CLASS_WARLOCK)))
+	if (cmd == CMD_ASSIMILATE && !can_assimilate(ch))
 	{
 		send_to_char("&+LThe powers of the dark ignore you...\n", ch);
 		return;
@@ -1310,6 +1475,11 @@ void do_assimilate(P_char ch, char *argument, int cmd)
 		return;
 	}
 
+	bool active = false;
+	int64_t circle_pulses[MAX_CIRCLE + 1] = {};
+	const int64_t total_pulses =
+		cmd == CMD_TUPOR ? spell_preparation_by_circle(ch, active, circle_pulses) : 0;
+
 	snprintf(Gbuf1, MAX_STRING_LENGTH,
 		 "You currently have the following spell slots available:\n");
 	for (circle = 1; circle <= get_max_circle(ch); circle++)
@@ -1322,16 +1492,26 @@ void do_assimilate(P_char ch, char *argument, int cmd)
 				 circle == 3 ? "rd" :
 					       "th",
 				 available, max_spells_in_circle(ch, circle));
-		if (available != max_spells_in_circle(ch, circle))
+		if (available < max_spells_in_circle(ch, circle))
 		{
 			need_mem = circle;
+			const int seconds =
+				cmd == CMD_TUPOR ?
+					(circle_pulses[circle] + WAIT_SEC - 1) / WAIT_SEC :
+					(get_circle_memtime(ch, circle, true) *
+					 (max_spells_in_circle(ch, circle) - available)) /
+						WAIT_SEC;
 			checked_snprintf(Gbuf1 + strlen(Gbuf1), MAX_STRING_LENGTH - strlen(Gbuf1),
-					 "   (%4d seconds)",
-					 (get_circle_memtime(ch, circle, true) *
-					  (max_spells_in_circle(ch, circle) - available)) /
-						 WAIT_SEC);
+					 "   (%4d seconds)", seconds);
 		}
 		strcat(Gbuf1, "\n");
+	}
+	if (cmd == CMD_TUPOR && need_mem)
+	{
+		checked_snprintf(Gbuf1 + strlen(Gbuf1), MAX_STRING_LENGTH - strlen(Gbuf1),
+				 "Estimated total recovery %s: %lld seconds.\n",
+				 active ? "remaining" : "if started now",
+				 static_cast<long long>((total_pulses + WAIT_SEC - 1) / WAIT_SEC));
 	}
 
 	if (IS_DRAGOON(ch))
@@ -1388,10 +1568,7 @@ void do_assimilate(P_char ch, char *argument, int cmd)
 		}
 
 		if (IS_AFFECTED2(ch, AFF2_MEMORIZING))
-		{
-			send_to_char("You are already recovering your spell power.\n", ch);
 			return;
-		}
 
 		send_to_char("\n&+cYour mind dr&+Cifts int&+Wo a deep meditat&+cion and "
 			     "th&+Ce spirits of sto&+Wrms and i&+cce spe&+Cak to yo&+cu.&n\n",
@@ -1436,7 +1613,7 @@ void do_npc_commune(P_char ch)
 	for (circle = max_circle; circle > 0; circle--)
 	{
 		available = ch->specials.undead_spell_slots[circle];
-		if (available != max_spells_in_circle(ch, circle, max_circle))
+		if (available < max_spells_in_circle(ch, circle, max_circle))
 		{
 			need_mem = circle;
 			break;
@@ -2007,6 +2184,55 @@ void *has_memorized(P_char ch, int spell)
 	return NULL;
 }
 
+// The chance threshold, rolled 0-100, of keeping a spell as you cast it.
+static int devotion_keep_spell_threshold(P_char ch)
+{
+	return MIN(GET_CHAR_SKILL(ch, SKILL_DEVOTION) / 10, 5) + 4;
+}
+
+extern int devotion_zealot_bonus(int devotion);
+extern int zealot_regain_threshold(int bonus1);
+extern int devotion_power_score(P_char ch);
+extern int devotion_power_roll(const Rolls &rolls);
+extern int devotion_power_level(int dev_power);
+
+std::string devotion_facts(P_char ch)
+{
+	const int rating = GET_CHAR_SKILL(ch, SKILL_DEVOTION);
+	if (!rating)
+		return "  You need this skill to be devoted.\n";
+	const int top = devotion_power_score(ch) - devotion_power_roll(lowest_rolls);
+	std::string text;
+	if (!USES_MANA(ch))
+		text = fact("Chance a cast spell stays ready for you",
+			    chance_under(devotion_keep_spell_threshold(ch), 0, 100));
+	if (top > 0)
+		text += fact("Chance a harming or holy attack spell casts twice",
+			     chance_under(devotion_power_score(ch), 0, 50)) +
+			fact("The extra cast's level",
+			     show({ devotion_power_level(1), devotion_power_level(top) }));
+	if (GET_SPEC(ch, CLASS_CLERIC, SPEC_ZEALOT))
+		text += fact(
+			"Chance on a hit to regain a spell",
+			chance_under(zealot_regain_threshold(devotion_zealot_bonus(rating)) + 1, 1,
+				     100));
+	return text + "  The extra cast's level is 10 times its positive devotion power.\n"
+		      "  This includes cause light, cause serious, cause critical, holy word,\n"
+		      "  unholy word and turn undead.\n"
+		      "  Many healing and holy spells count it too: see their pages.\n";
+}
+
+// Spatial focus: its chance threshold, rolled 1-100, and the mana it charges then.
+int spatial_focus_mana_threshold(int spatial)
+{
+	return (int)(spatial / 2);
+}
+
+int spatial_focus_mana_cost(int circle)
+{
+	return (int)(circle * 35 / 10);
+}
+
 void use_spell(P_char ch, int spell)
 {
 	struct affected_type *af;
@@ -2022,12 +2248,12 @@ void use_spell(P_char ch, int spell)
 	}
 	else if (USES_MANA(ch))
 	{
-		if ((int)(spatial / 2) > number(1, 100))
+		if (spatial_focus_mana_threshold(spatial) > number(1, 100))
 		{
 			send_to_char(
 				"&+MFocusing your mind, you bend reality a bit more easily...&n\n",
 				ch);
-			GET_MANA(ch) -= (int)(get_spell_circle(ch, spell) * 35 / 10);
+			GET_MANA(ch) -= spatial_focus_mana_cost(get_spell_circle(ch, spell));
 			StartRegen(ch, regen_resource::mana);
 		}
 		else
@@ -2046,7 +2272,7 @@ void use_spell(P_char ch, int spell)
 
 		if (GET_CHAR_SKILL(ch, SKILL_DEVOTION))
 		{
-			if (MIN(GET_CHAR_SKILL(ch, SKILL_DEVOTION) / 10, 5) + 4 > number(0, 100))
+			if (devotion_keep_spell_threshold(ch) > number(0, 100))
 			{
 				snprintf(
 					buf, 128,
@@ -2059,6 +2285,7 @@ void use_spell(P_char ch, int spell)
 		if (ch->specials.undead_spell_slots[get_spell_circle(ch, spell)] > 0)
 		{
 			ch->specials.undead_spell_slots[get_spell_circle(ch, spell)] -= 1;
+			gmcp_spell_preparation_changed(ch);
 		}
 
 		if ((USES_COMMUNE(ch) || USES_FOCUS(ch) || USES_DEFOREST(ch)) &&
@@ -2077,7 +2304,7 @@ void use_spell(P_char ch, int spell)
 
 		if (GET_CHAR_SKILL(ch, SKILL_DEVOTION))
 		{
-			if (MIN(GET_CHAR_SKILL(ch, SKILL_DEVOTION) / 10, 5) + 4 > number(0, 100))
+			if (devotion_keep_spell_threshold(ch) > number(0, 100))
 			{
 				snprintf(
 					buf, 128,
@@ -2329,14 +2556,75 @@ int FillMasterSpellBook(P_obj obj)
 
 struct scribing_data_type *scribing_base, *scribing_free_base = NULL;
 
-void AddScribingAffect(P_char ch)
+static int scribe_first_page_wait(P_char ch)
+{
+	return 4 - GET_CHAR_SKILL(ch, SKILL_SCRIBE) / 33;
+}
+
+static int scribe_page_wait(P_char ch)
+{
+	return MAX(1, (int)4 - (GET_CHAR_SKILL(ch, SKILL_SCRIBE) / 33) -
+			      (GET_CHAR_SKILL(ch, SKILL_SCRIBE_MASTERY) / 20));
+}
+
+static int scribe_affect_lag(P_char ch)
 {
 	int wait_rounds = 2;
 
 	if (GET_CHAR_SKILL(ch, SKILL_SCRIBE_MASTERY))
 		wait_rounds--;
 
-	CharWait(ch, MAX(1, wait_rounds * PULSE_VIOLENCE));
+	return MAX(1, wait_rounds * PULSE_VIOLENCE);
+}
+
+static int scribe_start_lag(P_char ch)
+{
+	int wait_rounds = 3;
+	wait_rounds -= (int)(GET_CHAR_SKILL(ch, SKILL_SCRIBE) / 45);
+	wait_rounds -= (int)(GET_CHAR_SKILL(ch, SKILL_SCRIBE_MASTERY) / 20);
+	return MAX(1, wait_rounds * PULSE_VIOLENCE);
+}
+
+static int scribe_taught_lag(P_char ch)
+{
+	int wait_rounds = 3;
+	wait_rounds -= (int)(GET_CHAR_SKILL(ch, SKILL_SCRIBE_MASTERY) / 20);
+	return MAX(1, wait_rounds * PULSE_VIOLENCE);
+}
+
+// CharWait keeps the longest wait, so each path's lag is the longest of its waits.
+static std::string scribe_lag_lines(P_char ch)
+{
+	return fact("Your lag starting a spell",
+		    seconds(MAX(scribe_affect_lag(ch), scribe_start_lag(ch)))) +
+	       fact("Your lag starting one from a teacher",
+		    seconds(MAX(MAX(scribe_affect_lag(ch), scribe_start_lag(ch)),
+				scribe_taught_lag(ch))));
+}
+
+std::string scribe_facts(P_char ch)
+{
+	if (!GET_CHAR_SKILL(ch, SKILL_SCRIBE))
+		return "  You have not learned to scribe.\n";
+	return fact("Time for the first page", seconds(scribe_first_page_wait(ch))) +
+	       fact("Time for each later page", seconds(scribe_page_wait(ch))) +
+	       scribe_lag_lines(ch);
+}
+
+std::string scribe_mastery_facts(P_char ch)
+{
+	const int skill = GET_CHAR_SKILL(ch, SKILL_SCRIBE_MASTERY);
+	if (!skill)
+		return "  You have not learned scribe mastery.\n";
+	return fact("Pages each spell takes",
+		    "-" + std::to_string(scribe_mastery_pages(skill)) + ", but at least 1") +
+	       fact("Time for each later page", seconds(scribe_page_wait(ch))) +
+	       scribe_lag_lines(ch);
+}
+
+void AddScribingAffect(P_char ch)
+{
+	CharWait(ch, scribe_affect_lag(ch));
 
 	SET_BIT(ch->specials.affected_by2, AFF2_SCRIBING);
 }
@@ -2377,8 +2665,7 @@ void add_scribe_data(int spl, P_char ch, P_obj book, int flag, P_obj obj, P_char
 	if (!flag)
 		if (teacher)
 			AddScribingAffect(teacher);
-	add_event(event_scribe, 4 - GET_CHAR_SKILL(ch, SKILL_SCRIBE) / 33, ch, 0, 0, 0, &tmp,
-		  sizeof(tmp));
+	add_event(event_scribe, scribe_first_page_wait(ch), ch, 0, 0, 0, &tmp, sizeof(tmp));
 }
 
 /*
@@ -2403,18 +2690,11 @@ void add_scribing(P_char ch, int spl, P_obj book, int flag, P_obj obj, P_char te
 	}
 	add_scribe_data(spl, ch, book, flag, obj, teacher);
 
-	int wait_rounds = 3;
-	wait_rounds -= (int)(GET_CHAR_SKILL(ch, SKILL_SCRIBE) / 45);
-	wait_rounds -= (int)(GET_CHAR_SKILL(ch, SKILL_SCRIBE_MASTERY) / 20);
-	//  debug("wait_rounds: %d", wait_rounds);
-	CharWait(ch, MAX(1, wait_rounds * PULSE_VIOLENCE));
+	CharWait(ch, scribe_start_lag(ch));
 
 	if (!flag)
 	{
-		wait_rounds = 3;
-		wait_rounds -= (int)(GET_CHAR_SKILL(ch, SKILL_SCRIBE_MASTERY) / 20);
-		//    debug("wait_rounds: %d", wait_rounds);
-		CharWait(ch, MAX(1, wait_rounds * PULSE_VIOLENCE));
+		CharWait(ch, scribe_taught_lag(ch));
 	}
 }
 
@@ -2780,20 +3060,38 @@ void event_scribe(P_char ch, P_char /*victim*/, [[maybe_unused]] P_obj obj, void
 		/*
 		   ok, let's schedule next event:
 		 */
-		add_event(event_scribe,
-			  MAX(1, (int)4 - (GET_CHAR_SKILL(ch, SKILL_SCRIBE) / 33) -
-					 (GET_CHAR_SKILL(ch, SKILL_SCRIBE_MASTERY) / 20)),
-			  ch, 0, 0, 0, s_data, sizeof(*s_data));
+		add_event(event_scribe, scribe_page_wait(ch), ch, 0, 0, 0, s_data, sizeof(*s_data));
 		return;
 	}
 	if (s_data->done_func)
 		s_data->done_func(ch);
 }
 
+// Each spent spell or spell slot comes back on a roll below the chance.
+static int lucubration_roll(const Rolls &rolls)
+{
+	return rolls.number(0, 100);
+}
+
+static int lucubration_chance()
+{
+	return (int)get_property("spell.mordenkainensLucubration.spellMemChance", 80);
+}
+
+std::string mordenkainens_lucubration_facts(P_char /*ch*/)
+{
+	return fact("Chance to regain each spent spell or slot",
+		    std::to_string(lucubration_chance()) + " in " +
+			    std::to_string(lucubration_roll(highest_rolls) -
+					   lucubration_roll(lowest_rolls) + 1)) +
+	       "  Among memorized spells, it does not regain itself.\n"
+	       "  Slot casters regain only circles below their highest.\n";
+}
+
 void spell_mordenkainens_lucubration(int /*level*/, P_char ch, char * /*arg*/,
 				     [[maybe_unused]] int type, P_char /*victim*/, P_obj /*obj*/)
 {
-	if (!ch)
+	if (!ch || USES_MANA(ch))
 		return;
 
 	char buff[MAX_STRING_LENGTH];
@@ -2806,10 +3104,7 @@ void spell_mordenkainens_lucubration(int /*level*/, P_char ch, char * /*arg*/,
 		"&+CYour spell releases a &+Ymassive&+C cloud of energy which you instantly focus into your &+mmind&+C...\n");
 	send_to_char(buff, ch);
 
-	if ((!USES_COMMUNE(ch) && !GET_CLASS(ch, CLASS_WARLOCK) &&
-	     !(IS_PUNDEAD(ch) || USES_TUPOR(ch) || IS_UNDEADRACE(ch) ||
-	       is_wearing_necroplasm(ch))) ||
-	    !USES_FOCUS(ch))
+	if (!uses_slot_recovery(ch))
 	{
 		// normal casters
 
@@ -2818,11 +3113,10 @@ void spell_mordenkainens_lucubration(int /*level*/, P_char ch, char * /*arg*/,
 		{
 			if (af->type == TAG_MEMORIZE && !IS_SET(af->flags, MEMTYPE_FULL) &&
 			    af->modifier != SPELL_MORDENKAINENS_LUCUBRATION &&
-			    number(0, 100) <
-				    (int)get_property(
-					    "spell.mordenkainensLucubration.spellMemChance", 80))
+			    lucubration_roll(live_rolls) < lucubration_chance())
 			{
 				af->flags |= MEMTYPE_FULL;
+				gmcp_spell_preparation_changed(ch);
 				snprintf(buff, MAX_STRING_LENGTH,
 					 "&+WYou regain the power of %s!\n", spells[af->modifier]);
 				send_to_char(buff, ch);
@@ -2841,11 +3135,10 @@ void spell_mordenkainens_lucubration(int /*level*/, P_char ch, char * /*arg*/,
 			for (int j = ch->specials.undead_spell_slots[i];
 			     j < max_spells_in_circle(ch, i); j++)
 			{
-				if (number(0, 100) <
-				    (int)get_property(
-					    "spell.mordenkainensLucubration.spellMemChance", 80))
+				if (lucubration_roll(live_rolls) < lucubration_chance())
 				{
 					ch->specials.undead_spell_slots[i]++;
+					gmcp_spell_preparation_changed(ch);
 					snprintf(
 						buff, MAX_STRING_LENGTH,
 						"&+WYou regain power in the %d%s circle of magic!\n",

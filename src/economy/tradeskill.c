@@ -46,8 +46,14 @@
 #include "sql/sql_player.h"
 #include "world/vnum.obj.h"
 #include "economy/crafting.h"
+#include "economy/currency_transaction.h"
+#include "core/files.h"
+#include "net/gmcp.h"
+#include "persistence/persistence_checkpoint.h"
+#include "player/player_save_pipeline.h"
 #include "world/weather.h"
 #include "core/safe_format.h"
+#include "abilities/abilities.h"
 
 #define SMITH_MAX_ITEMS 20
 
@@ -162,7 +168,6 @@ extern const char *race_types[];
 extern const char *rude_ass[];
 
 // extern const int material_absorbtion[][];
-extern const struct stat_data stat_factor[];
 extern float fake_sqrt_table[];
 extern int pulse;
 extern int arena_hometown_location[];
@@ -577,6 +582,75 @@ P_obj get_pole(P_char ch)
 	return NULL;
 }
 
+// What a round of tradeskill work takes from your vitality, at your rating.
+int tradeskill_vitality_cost(const Rolls &rolls, int rating)
+{
+	return (rolls.number(0, 100) > rating) ? 3 : 2;
+}
+
+static int fishing_rounds(P_char ch)
+{
+	return IS_TRUSTED(ch) ? 2 : (140 - GET_CHAR_SKILL(ch, SKILL_FISHING)) / 4;
+}
+
+static int fishing_interval()
+{
+	return PULSE_VIOLENCE;
+}
+
+// The share of your rating a catch pays in experience, in percent, and how it falls.
+static int fishing_exp_share()
+{
+	return 500;
+}
+
+static int fishing_exp_step()
+{
+	return 10;
+}
+
+static int fishing_exp_floor()
+{
+	return 20;
+}
+
+static int fishing_exp(int rating, int share)
+{
+	return (rating * share) / 100;
+}
+
+static int fishing_exp_memory()
+{
+	return 10;
+}
+
+// A roll of 0 damages the pole on a catch.
+static int fishing_pole_damage_roll(const Rolls &rolls)
+{
+	return rolls.number(0, 2);
+}
+
+std::string fishing_facts(P_char ch)
+{
+	const int rating = GET_CHAR_SKILL(ch, SKILL_FISHING);
+	if (!rating)
+		return "  You have not learned to fish.\n";
+	return fact("Wait for a bite", real_time((fishing_rounds(ch) + 1) * fishing_interval())) +
+	       fact("Chance you catch something", chance_under(rating + 1, 1, 125)) +
+	       fact("Experience for a catch",
+		    std::to_string(fishing_exp(rating, fishing_exp_share())) + ", falling to " +
+			    std::to_string(fishing_exp(rating, fishing_exp_floor()))) +
+	       fact("  It recovers after no catch for", game_hours(fishing_exp_memory())) +
+	       fact("Vitality each round",
+		    show({ tradeskill_vitality_cost(lowest_rolls, rating),
+			   tradeskill_vitality_cost(highest_rolls, rating) })) +
+	       "    (you stop below 10)\n"
+	       "  A catch damages the pole " +
+	       one_in(fishing_pole_damage_roll) +
+	       " times.\n"
+	       "  It takes a pole and water, and it ruins a disguise.\n";
+}
+
 void do_fish(P_char ch, char *, int /*cmd*/)
 {
 	P_obj pole;
@@ -631,9 +705,9 @@ void do_fish(P_char ch, char *, int /*cmd*/)
 
 	data.room = ch->in_room;
 	// Two ticks for Immortals.. for testing
-	data.counter = IS_TRUSTED(ch) ? 2 : (140 - GET_CHAR_SKILL(ch, SKILL_FISHING)) / 4;
+	data.counter = fishing_rounds(ch);
 
-	add_event(event_fish_check, PULSE_VIOLENCE, ch, 0, 0, 0, &data,
+	add_event(event_fish_check, fishing_interval(), ch, 0, 0, 0, &data,
 		  sizeof(struct fishing_data));
 }
 
@@ -689,7 +763,7 @@ void event_fish_check(P_char ch, P_char /*victim*/, P_obj, void *data)
 			return;
 		}
 
-		if (!number(0, 2))
+		if (!fishing_pole_damage_roll(live_rolls))
 		{
 			DamageOneItem(ch, 9, pole, FALSE);
 		}
@@ -702,20 +776,20 @@ void event_fish_check(P_char ch, P_char /*victim*/, P_obj, void *data)
 		{
 			bzero(&af, sizeof(af));
 			af.type = SKILL_FISHING;
-			af.modifier = 500;
-			af.duration = 10;
+			af.modifier = fishing_exp_share();
+			af.duration = fishing_exp_memory();
 			af.flags = AFFTYPE_NOSHOW | AFFTYPE_NODISPEL | AFFTYPE_NOMSG |
 				   AFFTYPE_OFFLINE;
 			afp = affect_to_char(ch, &af);
 		}
 		else
 		{
-			afp->modifier -= 10;
-			afp->modifier = MAX(afp->modifier, 20);
-			afp->duration = 10;
+			afp->modifier -= fishing_exp_step();
+			afp->modifier = MAX(afp->modifier, fishing_exp_floor());
+			afp->duration = fishing_exp_memory();
 		}
 
-		gain_exp(ch, NULL, (GET_CHAR_SKILL(ch, SKILL_FISHING) * afp->modifier) / 100,
+		gain_exp(ch, NULL, fishing_exp(GET_CHAR_SKILL(ch, SKILL_FISHING), afp->modifier),
 			 EXP_BOON);
 
 		// fish->timer[0] = time(NULL); Fish no longer decay - drannak 5/13/13
@@ -731,10 +805,10 @@ void event_fish_check(P_char ch, P_char /*victim*/, P_obj, void *data)
 
 	send_to_char("You continue fishing...\n", ch);
 	notch_skill(ch, SKILL_FISHING, 10);
-	GET_VITALITY(ch) -= (number(0, 100) > GET_CHAR_SKILL(ch, SKILL_FISHING)) ? 3 : 2;
+	GET_VITALITY(ch) -= tradeskill_vitality_cost(live_rolls, GET_CHAR_SKILL(ch, SKILL_FISHING));
 
 	fdata->counter--;
-	add_event(event_fish_check, PULSE_VIOLENCE, ch, 0, 0, 0, fdata,
+	add_event(event_fish_check, fishing_interval(), ch, 0, 0, 0, fdata,
 		  sizeof(struct fishing_data));
 
 	// noise distance calc
@@ -817,9 +891,12 @@ int smith(P_char ch, P_char pl, int cmd, char *arg)
 	}
 
 	choice = atoi(arg);
+	int menu_items = 0;
+	while (menu_items < SMITH_MAX_ITEMS && sdata->items[menu_items] != -1)
+		++menu_items;
 
 	// Can't 'forge 0' or 'forge -1'.  Also, can't 'forge <num>' where <num> goes off the list.
-	if (choice < 1 || choice > i)
+	if (choice < 1 || choice > menu_items)
 		return FALSE;
 
 	// Convert from list item to forge_item_list entry.
@@ -833,7 +910,7 @@ int smith(P_char ch, P_char pl, int cmd, char *arg)
 	// Look through inventory for each needed ore.
 	for (i = 0, j = 0; i < 5 && forge_item_list[choice].ore_needed[i]; i++)
 	{
-		for (tobj = ch->carrying; tobj; tobj = tobj->next_content)
+		for (tobj = pl->carrying; tobj; tobj = tobj->next_content)
 		{
 			// If we found a needed ore.
 			if (forge_item_list[choice].ore_needed[i] == OBJ_VNUM(tobj))
@@ -867,7 +944,9 @@ int smith(P_char ch, P_char pl, int cmd, char *arg)
 			obj_to_char(needed_ore[j], pl);
 		return TRUE;
 	}
-	if (GET_MONEY(pl) < forge_prices[i - 1])
+	if (GET_COPPER(pl) + 10LL * GET_SILVER(pl) + 100LL * GET_GOLD(pl) +
+		    1000LL * GET_PLATINUM(pl) <
+	    forge_prices[i - 1])
 	{
 		forge_describe(choice, pl);
 		while (j-- > 0)
@@ -890,10 +969,52 @@ int smith(P_char ch, P_char pl, int cmd, char *arg)
 		return TRUE;
 	}
 
-	// Take their money.
+	// Like enhancement, prepare delivery before charging or consuming either input.
+	if (!obj_to_char(tobj, pl))
+	{
+		while (j-- > 0)
+			obj_to_char(needed_ore[j], pl);
+		send_to_char("The forged item could not be delivered.\r\n", pl);
+		return TRUE;
+	}
+	const int wallet_before[] = { GET_COPPER(pl), GET_SILVER(pl), GET_GOLD(pl),
+				      GET_PLATINUM(pl) };
+	const uint64_t wallet_revision_before = pl->only.pc->wallet_revision;
+	if (SUB_MONEY(pl, forge_prices[i - 1], 0) != 0)
+	{
+		extract_obj(tobj, FALSE);
+		while (j-- > 0)
+			obj_to_char(needed_ore[j], pl);
+		send_to_char("The forge payment could not be completed.\r\n", pl);
+		return TRUE;
+	}
+
+	// Capture the debit, detached inputs and replacement together. Do not destroy
+	// the inputs until that complete after-image has entered the writer.
+	const int room = pl->in_room == NOWHERE ? NOWHERE : world[pl->in_room].number;
+	const auto checkpoint =
+		player_save_pipeline_request(pl, PLAYER_CHECKPOINT_COMPONENT_ALL, RENT_CRASH, room);
+	if (checkpoint != player_save_pipeline_result::queued &&
+	    checkpoint != player_save_pipeline_result::coalesced)
+	{
+		GET_COPPER(pl) = wallet_before[0];
+		GET_SILVER(pl) = wallet_before[1];
+		GET_GOLD(pl) = wallet_before[2];
+		GET_PLATINUM(pl) = wallet_before[3];
+		pl->only.pc->wallet_revision = wallet_revision_before;
+		extract_obj(tobj, FALSE);
+		while (j-- > 0)
+			obj_to_char(needed_ore[j], pl);
+		mark_player_dirty_components(GET_PID(pl), PLAYER_COMPONENT_STATUS |
+								  PLAYER_COMPONENT_EQUIPMENT |
+								  PLAYER_COMPONENT_INVENTORY);
+		gmcp_char_vitals(pl);
+		send_to_char("The forge checkpoint could not be started; nothing changed.\r\n", pl);
+		return TRUE;
+	}
+
 	snprintf(buffer, sizeof buffer, "You hand $N %s.", coin_stringv(forge_prices[i - 1]));
 	act(buffer, FALSE, pl, 0, ch, TO_CHAR);
-	SUB_MONEY(pl, forge_prices[i - 1], 0);
 
 	// And their ore.
 	while (j-- > 0)
@@ -914,8 +1035,6 @@ int smith(P_char ch, P_char pl, int cmd, char *arg)
 	    "'&+WThere you go!&n', $n gives $N $p.",
 	    FALSE, ch, tobj, pl, TO_NOTVICT);
 
-	if (!grant_tradeskill_item(pl, tobj))
-		return TRUE;
 	return TRUE;
 }
 
@@ -956,6 +1075,68 @@ struct bandage_data
 	int maxheal;
 };
 
+// Zero, after notching, destroys the bandage: a low first roll lets the second reach zero.
+static int bandage_fumble_roll(const Rolls &rolls, int rating)
+{
+	return rolls.number(rolls.number(0, 3), rating);
+}
+
+static int bandage_heal(int maxheal, int rating)
+{
+	return (maxheal / 20 + rating / 7);
+}
+
+// Zero lets a further roll neutralize the target's poison.
+static int bandage_poison_roll(const Rolls &rolls)
+{
+	return rolls.number(0, 4);
+}
+
+static int bandage_interval()
+{
+	return PULSE_VIOLENCE;
+}
+
+static int bandage_duration()
+{
+	return 3;
+}
+
+static int bandage_lag()
+{
+	return 2 * PULSE_VIOLENCE;
+}
+
+std::string battlefield_aid_innate_facts(P_char /*ch*/)
+{
+	return "  Successful bandaging stabilizes a dying target still below positive HP\n"
+	       "  to 1 hit point. Normal bandaging requirements and costs apply.\n";
+}
+
+std::string bandage_facts(P_char ch)
+{
+	const int rating = GET_CHAR_SKILL(ch, SKILL_BANDAGE);
+	if (!rating)
+		return "  You have not learned to bandage.\n";
+	return fact("Healing every " + seconds(bandage_interval()),
+		    std::to_string(bandage_heal(0, rating)) +
+			    ", plus 1/20 of the bandage's strength") +
+	       "    (up to its strength in all, and to 7/8 of the target's maximum)\n" +
+	       fact("Chance each round destroys the bandage",
+		    "1 in " + std::to_string(4 * (rating + 1))) +
+	       fact("Chance each round cures poison",
+		    one_in(bandage_poison_roll) + ", then " + chance_under(rating, 0, 100)) +
+	       fact("Vitality each round",
+		    show({ tradeskill_vitality_cost(lowest_rolls, rating),
+			   tradeskill_vitality_cost(highest_rolls, rating) })) +
+	       "    (you stop below 10)\n" + fact("Your lag", seconds(bandage_lag())) +
+	       fact("Before the same target can be bandaged again",
+		    game_hours(bandage_duration())) +
+	       "    (unless it is dying)\n"
+	       "  It takes a bandage and a target at or below 7/8 of its maximum, with nobody\n"
+	       "  fighting you or it.\n";
+}
+
 void event_bandage_check(P_char ch, P_char victim, P_obj, void *data)
 {
 	struct bandage_data *mdata = (struct bandage_data *)data;
@@ -993,7 +1174,7 @@ void event_bandage_check(P_char ch, P_char victim, P_obj, void *data)
 	}
 
 	if (!notch_skill(ch, SKILL_BANDAGE, get_property("skill.notch.bandage", 3)) &&
-	    !number(number(0, 3), (GET_CHAR_SKILL(ch, SKILL_BANDAGE))))
+	    !bandage_fumble_roll(live_rolls, (GET_CHAR_SKILL(ch, SKILL_BANDAGE))))
 	{
 		send_to_char("You are not focused enough, you destroy the &+Wbandage&n.\n", ch);
 		send_to_char("You are no longer being &+Wbandaged&n.\n", victim);
@@ -1008,13 +1189,15 @@ void event_bandage_check(P_char ch, P_char victim, P_obj, void *data)
 	act("$n continues to &+Wbandage&n you.", FALSE, ch, 0, victim, TO_VICT);
 	act("$n continues to &+Wbandage&n $N", FALSE, ch, 0, victim, TO_NOTVICT);
 
-	healed = (mdata->maxheal / 20 + GET_CHAR_SKILL(ch, SKILL_BANDAGE) / 7);
+	healed = bandage_heal(mdata->maxheal, GET_CHAR_SKILL(ch, SKILL_BANDAGE));
 	healed = MIN(healed, mdata->maxheal - mdata->healed);
 	mdata->healed = mdata->healed + healed;
 	healed = vamp(victim, healed, GET_MAX_HIT(victim) * 0.875);
+	if (healed > 0 && has_innate(ch, INNATE_BATTLEAID) && GET_HIT(victim) <= 0)
+		GET_HIT(victim) = 1;
 	update_pos(victim);
 
-	if (IS_AFFECTED2(victim, AFF2_POISONED) && !number(0, 4) &&
+	if (IS_AFFECTED2(victim, AFF2_POISONED) && !bandage_poison_roll(live_rolls) &&
 	    (number(0, 100) < GET_CHAR_SKILL(ch, SKILL_BANDAGE)))
 	{
 		send_to_char("&+WThe poison in your bloodstream is neutralized!\n", victim);
@@ -1028,8 +1211,8 @@ void event_bandage_check(P_char ch, P_char victim, P_obj, void *data)
 		return;
 	}
 
-	GET_VITALITY(ch) -= (number(0, 100) > GET_CHAR_SKILL(ch, SKILL_BANDAGE)) ? 3 : 2;
-	add_event(event_bandage_check, PULSE_VIOLENCE, ch, victim, 0, 0, mdata,
+	GET_VITALITY(ch) -= tradeskill_vitality_cost(live_rolls, GET_CHAR_SKILL(ch, SKILL_BANDAGE));
+	add_event(event_bandage_check, bandage_interval(), ch, victim, 0, 0, mdata,
 		  sizeof(struct bandage_data));
 }
 
@@ -1120,16 +1303,16 @@ void do_bandage(P_char ch, char *arg, int /*cmd*/)
 	data.room = ch->in_room;
 	data.healed = 0;
 
-	add_event(event_bandage_check, PULSE_VIOLENCE, ch, victim, 0, 0, &data,
+	add_event(event_bandage_check, bandage_interval(), ch, victim, 0, 0, &data,
 		  sizeof(struct bandage_data));
 
 	bzero(&af, sizeof(af));
-	af.duration = 3;
+	af.duration = bandage_duration();
 	af.type = SKILL_BANDAGE;
 	af.flags = AFFTYPE_NOSHOW | AFFTYPE_NODISPEL;
 	affect_to_char(victim, &af);
 
-	CharWait(ch, 2 * PULSE_VIOLENCE);
+	CharWait(ch, bandage_lag());
 	return;
 }
 
@@ -1664,536 +1847,6 @@ int learn_tradeskill(P_char ch, P_char pl, int cmd, char *arg)
 	return FALSE;
 }
 
-int itemvalue(P_obj obj)
-{
-	double workingvalue = 0;
-	double multiplier = 1;
-	double mod;
-
-	if (!obj)
-	{
-		return 0;
-	}
-
-	if (IS_SET(obj->wear_flags, ITEM_WEAR_EYES))
-		multiplier *= 1.3;
-
-	if (IS_SET(obj->wear_flags, ITEM_WEAR_EARRING))
-		multiplier *= 1.2;
-
-	if (IS_SET(obj->wear_flags, ITEM_WEAR_FACE))
-		multiplier *= 1.3;
-
-	if (IS_SET(obj->wear_flags, ITEM_WEAR_QUIVER))
-		multiplier *= 1.1;
-
-	if (IS_SET(obj->wear_flags, ITEM_WEAR_FINGER))
-		multiplier *= 1.2;
-
-	if (IS_SET(obj->wear_flags, ITEM_GUILD_INSIGNIA))
-		multiplier *= 1.5;
-
-	if (IS_SET(obj->wear_flags, ITEM_WEAR_NECK))
-		multiplier *= 1.2;
-
-	if (IS_SET(obj->wear_flags, ITEM_WEAR_WAIST))
-		multiplier *= 1.1;
-
-	if (IS_SET(obj->wear_flags, ITEM_WEAR_WRIST))
-		multiplier *= 1.1;
-
-	// Aff's add to the base value.
-	if (IS_SET(obj->bitvector, AFF_STONE_SKIN))
-		workingvalue += 125;
-
-	if (IS_SET(obj->bitvector, AFF_BIOFEEDBACK))
-		workingvalue += 110;
-
-	if (IS_SET(obj->bitvector, AFF_FARSEE))
-		workingvalue += 45;
-
-	if (IS_SET(obj->bitvector, AFF_DETECT_INVISIBLE))
-		workingvalue += 90;
-
-	if (IS_SET(obj->bitvector, AFF_HASTE))
-		workingvalue += 75;
-
-	if (IS_SET(obj->bitvector, AFF_INVISIBLE))
-		workingvalue += 35;
-
-	if (IS_SET(obj->bitvector, AFF_SENSE_LIFE))
-		workingvalue += 45;
-
-	if (IS_SET(obj->bitvector, AFF_MINOR_GLOBE))
-		workingvalue += 28;
-
-	if (IS_SET(obj->bitvector, AFF_UD_VISION))
-		workingvalue += 40;
-
-	if (IS_SET(obj->bitvector, AFF_WATERBREATH))
-		workingvalue += 45;
-
-	if (IS_SET(obj->bitvector, AFF_PROTECT_EVIL))
-		workingvalue += 35;
-
-	if (IS_SET(obj->bitvector, AFF_PROTECT_GOOD))
-		workingvalue += 35;
-
-	if (IS_SET(obj->bitvector, AFF_SLOW_POISON))
-		workingvalue += 20;
-
-	if (IS_SET(obj->bitvector, AFF_SNEAK))
-		workingvalue += 125;
-
-	if (IS_SET(obj->bitvector, AFF_BARKSKIN))
-		workingvalue += 25;
-
-	if (IS_SET(obj->bitvector, AFF_INFRAVISION))
-		workingvalue += 7;
-
-	if (IS_SET(obj->bitvector, AFF_LEVITATE))
-		workingvalue += 13;
-
-	if (IS_SET(obj->bitvector, AFF_HIDE))
-		workingvalue += 85;
-
-	if (IS_SET(obj->bitvector, AFF_FLY))
-		workingvalue += 75;
-
-	if (IS_SET(obj->bitvector, AFF_AWARE))
-		workingvalue += 75;
-
-	if (IS_SET(obj->bitvector, AFF_PROT_FIRE))
-		workingvalue += 20;
-
-	if (IS_SET(obj->bitvector2, AFF2_FIRESHIELD))
-		workingvalue += 45;
-
-	if (IS_SET(obj->bitvector2, AFF2_ULTRAVISION))
-		workingvalue += 80;
-
-	if (IS_SET(obj->bitvector2, AFF2_DETECT_EVIL))
-		workingvalue += 5;
-
-	if (IS_SET(obj->bitvector2, AFF2_DETECT_GOOD))
-		workingvalue += 5;
-
-	if (IS_SET(obj->bitvector2, AFF2_DETECT_MAGIC))
-		workingvalue += 10;
-
-	if (IS_SET(obj->bitvector2, AFF2_PROT_COLD))
-		workingvalue += 20;
-
-	if (IS_SET(obj->bitvector2, AFF2_PROT_LIGHTNING))
-		workingvalue += 30;
-
-	if (IS_SET(obj->bitvector2, AFF2_GLOBE))
-		workingvalue += 80;
-
-	if (IS_SET(obj->bitvector2, AFF2_PROT_GAS))
-		workingvalue += 30;
-
-	if (IS_SET(obj->bitvector2, AFF2_PROT_ACID))
-		workingvalue += 30;
-
-	if (IS_SET(obj->bitvector2, AFF2_SOULSHIELD))
-		workingvalue += 45;
-
-	if (IS_SET(obj->bitvector2, AFF2_CONCEALMENT))
-		workingvalue += 15;
-
-	if (IS_SET(obj->bitvector2, AFF2_VAMPIRIC_TOUCH))
-		workingvalue += 65;
-
-	if (IS_SET(obj->bitvector2, AFF2_EARTH_AURA))
-		workingvalue += 110;
-
-	if (IS_SET(obj->bitvector2, AFF2_WATER_AURA))
-		workingvalue += 115;
-
-	if (IS_SET(obj->bitvector2, AFF2_FIRE_AURA))
-		workingvalue += 120;
-
-	if (IS_SET(obj->bitvector2, AFF2_AIR_AURA))
-		workingvalue += 130;
-
-	if (IS_SET(obj->bitvector2, AFF2_PASSDOOR))
-		workingvalue += 80;
-
-	if (IS_SET(obj->bitvector2, AFF2_FLURRY))
-		workingvalue += 150;
-
-	if (IS_SET(obj->bitvector3, AFF3_PROT_ANIMAL))
-		workingvalue += 20;
-
-	if (IS_SET(obj->bitvector3, AFF3_SPIRIT_WARD))
-		workingvalue += 35;
-
-	if (IS_SET(obj->bitvector3, AFF3_GR_SPIRIT_WARD))
-	{
-		workingvalue += 25;
-		multiplier += 1.20;
-	}
-
-	if (IS_SET(obj->bitvector3, AFF3_ENLARGE))
-		workingvalue += 120;
-
-	if (IS_SET(obj->bitvector3, AFF3_REDUCE))
-		workingvalue += 120;
-
-	if (IS_SET(obj->bitvector3, AFF3_INERTIAL_BARRIER))
-		workingvalue += 135;
-
-	if (IS_SET(obj->bitvector3, AFF3_COLDSHIELD))
-		workingvalue += 45;
-
-	if (IS_SET(obj->bitvector3, AFF3_TOWER_IRON_WILL))
-		workingvalue += 45;
-
-	if (IS_SET(obj->bitvector3, AFF3_BLUR))
-		workingvalue += 65;
-
-	if (IS_SET(obj->bitvector3, AFF3_PASS_WITHOUT_TRACE))
-		workingvalue += 45;
-
-	if (IS_SET(obj->bitvector4, AFF4_VAMPIRE_FORM))
-		workingvalue += 90;
-
-	if (IS_SET(obj->bitvector4, AFF4_HOLY_SACRIFICE))
-		workingvalue += 105;
-
-	if (IS_SET(obj->bitvector4, AFF4_BATTLE_ECSTASY))
-		workingvalue += 105;
-
-	if (IS_SET(obj->bitvector4, AFF4_DAZZLER))
-		workingvalue += 45;
-
-	if (IS_SET(obj->bitvector4, AFF4_PHANTASMAL_FORM))
-		workingvalue += 105;
-
-	if (IS_SET(obj->bitvector4, AFF4_NOFEAR))
-		workingvalue += 40;
-
-	if (IS_SET(obj->bitvector4, AFF4_REGENERATION))
-		workingvalue += 60;
-
-	if (IS_SET(obj->bitvector4, AFF4_GLOBE_OF_DARKNESS))
-		workingvalue += 15;
-
-	if (IS_SET(obj->bitvector4, AFF4_HAWKVISION))
-		workingvalue += 20;
-
-	if (IS_SET(obj->bitvector4, AFF4_SANCTUARY))
-		workingvalue += 105;
-
-	if (IS_SET(obj->bitvector4, AFF4_HELLFIRE))
-		workingvalue += 110;
-
-	if (IS_SET(obj->bitvector4, AFF4_SENSE_HOLINESS))
-		workingvalue += 15;
-
-	if (IS_SET(obj->bitvector4, AFF4_PROT_LIVING))
-		workingvalue += 45;
-
-	if (IS_SET(obj->bitvector4, AFF4_DETECT_ILLUSION))
-		workingvalue += 40;
-
-	if (IS_SET(obj->bitvector4, AFF4_ICE_AURA))
-		workingvalue += 90;
-
-	if (IS_SET(obj->bitvector4, AFF4_NEG_SHIELD))
-		workingvalue += 45;
-
-	if (IS_SET(obj->bitvector4, AFF4_WILDMAGIC))
-		workingvalue += 240;
-
-	// Has a old school proc (Up to three spells).
-	// Can un-comment the debug stuff if you want to modify this.
-	if (IS_SET(obj->wear_flags, ITEM_WIELD) && (obj->value[5] > 0))
-	{
-		int spells[3];
-		int spellcirclesum, numspells;
-
-		// val5 : 3 spells + all or one.
-		spells[0] = obj->value[5] % 1000;
-		spells[1] = obj->value[5] % 1000000 / 1000;
-		spells[2] = obj->value[5] % 1000000000 / 1000000;
-		//    debug( "Spells0: %d, Spells1: %d, Spells2: %d.", spells[0], spells[1], spells[2] );
-
-		// val6 = level * val7 = chance -> 1/30 chance = 1, 1/60 chance = .5, 1/15 chance = 2, etc.
-		mod = ((obj->value[6] > 19) ? obj->value[6] / 10.0 : 1) * (30.0 / obj->value[7]);
-		//    debug( "mod: %f, objval6/10: %f, 30/objval7: %f", mod, (obj->value[6] > 19) ? obj->value[6] / 10.0 : 1, (30.0 / obj->value[7]) );
-
-		spellcirclesum = get_mincircle(spells[0]);
-		spellcirclesum += get_mincircle(spells[1]);
-		spellcirclesum += get_mincircle(spells[2]);
-		//    debug( "spellcirclesum: %d, circle0: %d, circle1: %d, circle2: %d.", spellcirclesum, get_mincircle(spells[0]), get_mincircle(spells[1]), get_mincircle(spells[2]) );
-
-		// 1 lvl 10 spell  2nd circle 1/60 chance = 1*1* 2*.5 =  1
-		// 1 lvl 60 spell  1st circle 1/30 chance = 1*6* 1*1  =  6
-		// 1 lvl 40 spell  3rd circle 1/30 chance = 1*4* 3*1  = 12
-		// 1 lvl 60 spell 12th circle 1/30 chance = 1*6*12*1  = 72 etc.
-		// val5 / 1000000000 -> 1, otherwise casts all.
-		if (obj->value[5] / 1000000000)
-		{
-			// Add up number of spells
-			numspells = ((spells[0]) ? 1 : 0) + ((spells[1]) ? 1 : 0) +
-				    ((spells[2]) ? 1 : 0);
-			// If there are none?!, set to 1 anyway.
-			numspells = numspells ? numspells : 1;
-			// Compute average circle.
-			//      debug( "mod * spellcirclesum / numspells: %d.",(int) (mod * (spellcirclesum / numspells)) );
-			workingvalue += (int)(mod * (spellcirclesum / numspells));
-		}
-		else
-		{
-			//      debug( "spellcirclesum * mod: %d.", (int) (spellcirclesum * mod) );
-			workingvalue += mod * spellcirclesum;
-		}
-	}
-
-	// Real Obj procs
-	if (obj_index[obj->R_num].func.obj)
-	{
-		workingvalue += get_ival_from_proc(obj_index[obj->R_num].func.obj);
-	}
-
-	//------- A0/A1/A2 -------------
-	int i = 0;
-	while (i < MAX_OBJ_AFFECT)
-	{
-		mod = obj->affected[i].modifier;
-		// dam/hitroll are normal values
-		if ((obj->affected[i].location == APPLY_DAMROLL) ||
-		    (obj->affected[i].location == APPLY_HITROLL))
-		{
-			if (obj->type == ITEM_WEAPON)
-			{
-				// 1:1, 2:2, 3:6, 4:12, 5:20, 6:30, 7:42, 8:56, 9:72, 10:90, 11: 110..
-				workingvalue += (mod <= 2) ? mod : mod * (mod - 1);
-			}
-			else
-			{
-				// 1:2, 2:5, 3:30, 4:51, 5:78, 6:111
-				// 1:2, 2:6, 3:37, 4:63, 5:97 after multiplier (note: wear flag will raise 5 over 100).
-				workingvalue += (mod <= 2) ? (3 * mod - 1) : 3 * mod * mod + 3;
-			}
-			// Translates to 1:1, 2:2, 3:7, 4:15, 5:25, 6:37, 7:52, 8:70, 9:90, 10:112
-			multiplier *= 1.25;
-			// So a 5/5 weapon is essentially 40 * 1.25 * 1.25 = 62.5 (before adding other stats).
-			// A 6/6 item (no other stats) is 93, a 2d2 6/6 sword would be 62 * 1.25^2 = 96, and 5d5 6/6 = 112.
-		}
-
-		// Regular stats can be high numbers - half them
-		if ((obj->affected[i].location == APPLY_STR) ||
-		    (obj->affected[i].location == APPLY_DEX) ||
-		    (obj->affected[i].location == APPLY_INT) ||
-		    (obj->affected[i].location == APPLY_WIS) ||
-		    (obj->affected[i].location == APPLY_CON) ||
-		    (obj->affected[i].location == APPLY_AGI))
-		{
-			// 1:2, 2:4, 3:6, 4:9, 5:16, 6:25, 7:36, 8:49, 9:64, 10:81, 11:100
-			workingvalue += (mod <= 3) ? 2 * mod : (mod - 1) * (mod - 1);
-		}
-
-		// These are used a little less
-		if ((obj->affected[i].location == APPLY_POW) ||
-		    (obj->affected[i].location == APPLY_CHA) ||
-		    (obj->affected[i].location == APPLY_LUCK))
-		{
-			// 1:2, 2:4, 3:6, 4:8, 5:10, 6:12, 7:15, 8:26, 9:39, 10:54, 11:71, 12:90, 13: 111
-			workingvalue += (mod <= 6) ? 2 * mod : (mod - 2) * (mod - 2) - 10;
-		}
-
-		// Hitpoints.
-		if (obj->affected[i].location == APPLY_HIT)
-		{
-			// 1 : 2, 4 : 8, 5 : 11, 10 : 29, 20 : 65, 30 : 101 (can't be crafted), 32 : 108 (can't be enhanced).
-			workingvalue += (mod <= 4) ? 2 * mod : (18 * mod) / 5 - 7;
-		}
-
-		// Moves and mana are generally large #'s
-		if ((obj->affected[i].location == APPLY_MOVE) ||
-		    (obj->affected[i].location == APPLY_MANA))
-		{
-			// Right now, 25 : 25, 35 : 65, 44 : 101, 45 : 105 - not enhanceable.
-			workingvalue += (mod <= 25) ? mod : 4 * mod - 75;
-		}
-
-		// Hit, move, mana, regen are generally large #'s, but we don't want above 9.
-		if ((obj->affected[i].location == APPLY_HIT_REG) ||
-		    (obj->affected[i].location == APPLY_MOVE_REG) ||
-		    (obj->affected[i].location == APPLY_MANA_REG))
-		{
-			// 1:1, 2:2, 3:3, 4:5, 5:8, 6:12, 7:16, 8:21, 9:27, 10:33
-			// 11:40, 12:48, 13:56, 14:65, 15:75, 16:85, 17:96, 18:108
-			workingvalue += (mod < 4) ? mod : (mod * mod) / 3;
-		}
-
-		// Racial attributes #'s - Do we still have these?
-		if ((obj->affected[i].location == APPLY_AGI_RACE) ||
-		    (obj->affected[i].location == APPLY_STR_RACE) ||
-		    (obj->affected[i].location == APPLY_CON_RACE) ||
-		    (obj->affected[i].location == APPLY_INT_RACE) ||
-		    (obj->affected[i].location == APPLY_WIS_RACE) ||
-		    (obj->affected[i].location == APPLY_CHA_RACE) ||
-		    (obj->affected[i].location == APPLY_DEX_RACE))
-		{
-			if (mod < 1 || mod > LAST_RACE)
-			{
-				debug("itemvalue: obj '%s' %d has APPLY_..._RACE %d and bad modifier %g.",
-				      obj->short_description, OBJ_VNUM(obj),
-				      obj->affected[i].location, mod);
-				workingvalue += 100;
-			}
-			else
-			{
-				switch (obj->affected[i].location)
-				{
-				// We're looking for the stat vs 100. 75->0pts, 100->50pts, 150->150pts, 200->250pts
-				case APPLY_AGI_RACE:
-					workingvalue += 2 * stat_factor[(int)mod].Agi - 150;
-					break;
-				case APPLY_STR_RACE:
-					workingvalue += 2 * stat_factor[(int)mod].Str - 150;
-					break;
-				case APPLY_CON_RACE:
-					workingvalue += 2 * stat_factor[(int)mod].Con - 150;
-					break;
-				case APPLY_INT_RACE:
-					workingvalue += 2 * stat_factor[(int)mod].Int - 150;
-					break;
-				case APPLY_WIS_RACE:
-					workingvalue += 2 * stat_factor[(int)mod].Wis - 150;
-					break;
-				case APPLY_CHA_RACE:
-					workingvalue += 2 * stat_factor[(int)mod].Cha - 150;
-					break;
-				case APPLY_DEX_RACE:
-					workingvalue += 2 * stat_factor[(int)mod].Dex - 150;
-					break;
-				// Should never be the case but..
-				default:
-					debug("itemvalue: obj '%s' %d has 'bad' APPLY_..._RACE %d, modifier %g.",
-					      obj->short_description, OBJ_VNUM(obj),
-					      obj->affected[i].location, mod);
-					workingvalue += 100;
-					break;
-				}
-			}
-		}
-
-		// AC negative is good, not reducing itemvalue for items that make ac worse.
-		if ((obj->affected[i].location == APPLY_AC) && mod != 0)
-		{
-			// 1.5 points for each point of armor class.
-			// 1 : 1, 2 : 3, 3 : 4, 5 : 7, ... 50 : 75, 67 : 100, 68 : 102 (!craft), 70 : 105 (!enhance).
-			if (mod < 0)
-			{
-				mod *= -1;
-			}
-			workingvalue += (3 * mod) / 2;
-			// +10% at 50ac.
-			multiplier += mod / 500.;
-		}
-
-		// saving throw values (good) are negative
-		if ((obj->affected[i].location == APPLY_SAVING_PARA) ||
-		    (obj->affected[i].location == APPLY_SAVING_ROD) ||
-		    (obj->affected[i].location == APPLY_SAVING_FEAR) ||
-		    (obj->affected[i].location == APPLY_SAVING_BREATH) ||
-		    (obj->affected[i].location == APPLY_SAVING_SPELL))
-		{
-			// -1:2, -2:8, -3:18, -4:32, -5:50, -6:72, -7:98, -8:128
-			workingvalue += mod * mod * ((mod <= 0) ? 2 : -2);
-		}
-
-		// pulse is quite valuable and negative is good
-		if ((obj->affected[i].location == APPLY_COMBAT_PULSE) ||
-		    (obj->affected[i].location == APPLY_SPELL_PULSE))
-		{
-			multiplier *= 2;
-			workingvalue += mod * -75;
-		}
-
-		// Max_stats double points
-		if ((obj->affected[i].location == APPLY_STR_MAX) ||
-		    (obj->affected[i].location == APPLY_DEX_MAX) ||
-		    (obj->affected[i].location == APPLY_INT_MAX) ||
-		    (obj->affected[i].location == APPLY_WIS_MAX) ||
-		    (obj->affected[i].location == APPLY_CON_MAX) ||
-		    (obj->affected[i].location == APPLY_CHA_MAX) ||
-		    (obj->affected[i].location == APPLY_AGI_MAX) ||
-		    (obj->affected[i].location == APPLY_POW_MAX) ||
-		    (obj->affected[i].location == APPLY_LUCK_MAX))
-		{
-			// 1:3, 2:13, 3:24, 4:36, 5:51, 6:66, 7:83, 8:100
-			workingvalue += (mod < 2) ? 3.0 * mod : 3.52 * mod * sqrt(mod) + mod;
-			multiplier += .15;
-		}
-		i++;
-	}
-
-	if (obj->type == ITEM_WEAPON)
-	{
-		// Add avg damage.
-		workingvalue += (obj->value[1] * obj->value[2]);
-		// 1d1 = .7%, 5d5 = 17.5%, 10d10 = 70%.
-		multiplier += obj->value[1] * obj->value[2] * .005;
-		// Backstabbing weapons get a big ival for big dice.
-		if (IS_BACKSTABBER(obj))
-		{
-			mod = obj->value[2];
-			// workingvalue increases quadratic for every die roll and cubic for dice size.
-			// For number of dice: 1:1, 2:1.15, 3:1.4, 4:1.75, 5:2.2, 6:2.75, 7:3.4, 8:4.15, 9:5, 10:5.95
-			// For number of die sides: 1:0, 2:1, 3:5, 4:12, 5:25, 6:43, 7: 68, 8:102, 9:145, 10: 200
-			// So, 1d8 / 3d7 stabber is !forge and !enhance (115 ival when combined with above).
-			workingvalue += ((obj->value[1] * obj->value[1] + 19.) / 20.) *
-					(mod * mod * mod) / 5.;
-		}
-	}
-	if (obj->type == ITEM_ARMOR)
-	{
-		mod = obj->value[0];
-		// Same as APPLY_AC.  1.5 points for each point of armor class.
-		if (mod < 0)
-		{
-			mod *= -1;
-		}
-		workingvalue += (3 * mod) / 2;
-		// +10% at 50ac.
-		multiplier += mod / 500.;
-	}
-
-	// Two handed items have less ival.
-	if (IS_SET(obj->extra_flags, ITEM_TWOHANDS))
-	{
-		multiplier *= .80;
-	}
-
-	workingvalue *= multiplier;
-
-	if (workingvalue < 1)
-	{
-		workingvalue = 1;
-	}
-
-	if ((!CAN_WEAR(obj, ITEM_TAKE) && obj->type == ITEM_TELEPORT) || obj->type == ITEM_KEY ||
-	    obj->type == ITEM_SWITCH || obj->type == ITEM_VEHICLE || obj->type == ITEM_SHIP ||
-	    obj->type == ITEM_STORAGE)
-	{
-		if (workingvalue != 1)
-		{
-			debug("Always load obj '%s' %d has stats giving ival %.3lf.",
-			      OBJ_SHORT(obj), OBJ_VNUM(obj), workingvalue);
-		}
-		return 1;
-	}
-
-	// debug("&+YItem value is: &n%d", workingvalue);
-	return workingvalue;
-}
-
 void do_salvation(P_char ch, char * /*arg*/, int /*cmd*/)
 {
 	struct affected_type af;
@@ -2230,17 +1883,9 @@ void do_salvation(P_char ch, char * /*arg*/, int /*cmd*/)
 // Returns the lowest material vnum (lowest quality) for material with the same type as obj->material.
 // I.e. for a material type FEATHER -> returns 400000 (vnum for a small feather).
 //   Material range for FEATHER is 400000 (lowest quality) - 400004 (highest quality).
-int get_matstart(P_obj obj)
+int material_start_vnum(int objmat)
 {
 	int matstart;
-	::byte objmat;
-
-	if (!obj)
-	{
-		return 0;
-	}
-
-	objmat = obj->material;
 
 	switch (objmat)
 	{
@@ -2395,6 +2040,11 @@ int get_matstart(P_obj obj)
 		break;
 	}
 	return matstart;
+}
+
+int get_matstart(P_obj obj)
+{
+	return obj ? material_start_vnum(obj->material) : 0;
 }
 
 void do_refine(P_char ch, char *arg, int /*cmd*/)
@@ -2689,7 +2339,7 @@ int assoc_founder(P_char mob, P_char pl, int cmd, char *arg)
 
 int get_mincircle(int spell)
 {
-	int i, j;
+	// Valid spells without a positive registration retain the legacy circle 13.
 	int lowest = 13;
 
 	// If not a spell, return 0.
@@ -2698,18 +2348,11 @@ int get_mincircle(int spell)
 		return 0;
 	}
 
-	// Skip CLASS_NONE..
-	for (i = 1; i < CLASS_COUNT; i++)
-	{
-		for (j = 0; j < MAX_SPEC; j++)
-		{
-			if ((skills[spell].m_class[i].rlevel[j] > 0) &&
-			    (skills[spell].m_class[i].rlevel[j] <= lowest))
-			{
-				lowest = skills[spell].m_class[i].rlevel[j];
-			}
-		}
-	}
+	// Classes are zero-based; MAX_SPEC is the last index, not the array size.
+	for (const auto &class_info : skills[spell].m_class)
+		for (const auto circle : class_info.rlevel)
+			if (circle > 0 && circle < lowest)
+				lowest = circle;
 
 	return lowest;
 }
@@ -2906,11 +2549,6 @@ int get_ival_from_proc(obj_proc_type proc)
 	if (proc == pathfinder)
 	{
 		return 85;
-	}
-	// 1/16 chance on hit to proc disintegrate.
-	if (proc == orb_of_destruction)
-	{
-		return 115;
 	}
 	// armor/bless invoke proc every 5 min.
 	if (proc == sanguine)
@@ -3362,11 +3000,6 @@ int get_ival_from_proc(obj_proc_type proc)
 	{
 		return 225;
 	}
-	// Procs coldshield/fireshield on invoke when lit.
-	if (proc == frost_elb_dagger)
-	{
-		return 85;
-	}
 	// Procs feeblemind on backstab.
 	if (proc == dagger_submission)
 	{
@@ -3486,11 +3119,6 @@ int get_ival_from_proc(obj_proc_type proc)
 	if (proc == barb)
 	{
 		return 550;
-	}
-	// 1/10 chance to proc harm.
-	if (proc == gesen)
-	{
-		return 85;
 	}
 	// Labelas god proc.
 	if (proc == labelas)

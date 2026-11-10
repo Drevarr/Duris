@@ -807,7 +807,6 @@ Aggr - Last Edited: 2007-04-19 19:17:09 by Unknown
 *aggr          : Check aggressiveness
 *aggr off      : Turn off aggressiveness
 *aggr 120      : You will only be aggressive to monsters when your hitpoints >=120
-NOTE: Paladins may *not* have this option set to ON, as it goes against all their training and principles.
 
 ==See also==
 
@@ -1732,6 +1731,12 @@ imbalance after Discord playerbase consultation. See &+Yhelp rules&n.
 ==See also==
 
 Unique
+
+You may hold one major artifact, one unique and one ioun at a time. If you
+hold two or more of any one type, the periodic artifact check makes all
+artifacts you wear or carry fall to the ground, including other types.
+Inventory counts as well as equipment, and even a brief overlap can trigger
+the check. The forced drop causes no damage or loss of remaining feeding time.
 
 #0
 
@@ -2812,17 +2817,16 @@ Bark (target name) = *WOOOOF*  You bark at Colean.
 #0
 
 Barkskin
-Barkskin - Last Edited: 2007-04-19 19:17:09 by Unknown
+Barkskin - Last Edited: 2026-11-07
 ======================================================
 * Area of effect: <victim>
 * Aggressive:     No
 * Cumulative:     No
 * Duration:       Dependent on proficiency of caster
 * Type of spell:  Protection
-This spell causes the victim"s skin to toughen and harden to the consistency
-of bark, granting a significant armor class improvement and slight
-protection from melee damage. This also means there is a somewhat higher
-increase in damage from fire.
+Barkskin toughens the victim's skin and improves armor class. It does not
+reduce melee damage directly. It increases damage taken from fire; the
+fire penalties from Barkskin and Ironwood combine when both are active.
 
 ==See also==
 
@@ -2889,7 +2893,7 @@ warrior, paladin, bodyslam, kneel, shieldless bash
 Battle-Forger
 Battle-Forger - Last Edited: 2026-10-18
 ============================================================
-Battle-Forger is a Alchemist specialization. Selection requires level 30, an eligible race, an appropriate teacher, no existing specialization or secondary class, and an expired respecialization timer.
+Battle-Forger is an Alchemist specialization. Selection requires level 30, an eligible race, an appropriate teacher, no existing specialization or secondary class, and an expired respecialization timer.
 
 ==Allowed races==
 
@@ -3300,7 +3304,7 @@ acquire/pray/cast your spells when you multiclass.
 Blacksmith
 Blacksmith - Last Edited: 2026-10-18
 ============================================================
-Blacksmith is a Alchemist specialization. Selection requires level 30, an eligible race, an appropriate teacher, no existing specialization or secondary class, and an expired respecialization timer.
+Blacksmith is an Alchemist specialization. Selection requires level 30, an eligible race, an appropriate teacher, no existing specialization or secondary class, and an expired respecialization timer.
 
 ==Allowed races==
 
@@ -3628,6 +3632,7 @@ Syntax:         bodyslam <victim>
 This command is very similar to "Bash", except that it requires no shield
 and can only be used to start a fight. A successful bodyslam will send the
 victim sprawling, leaving them sitting on the ground.
+Its configured base success chance is 60% before combat modifiers.
 
 ==See also==
 
@@ -4160,7 +4165,7 @@ place to camp for the night and then type "camp". You must then wait a
 period of time before you can exit the game. If you leave the room in which
 you are trying to set up camp or if you fight, camping will automatically
 cancel. Once you fully camp, you will be sent to the main menu, just as
-when you rent.
+when you rent. Items flagged no rent fall to the floor when you finish.
 Should you choose to 'camp abort', 'camp stop' or 'camp off', you will stop attempting to set up camp.
 Warning: If you go link-dead, camping will stop
 (linkdead rent does *not* reset your homeroom).
@@ -4895,7 +4900,8 @@ use skills <class or specialization> and spells <class or specialization>.
 
 Use specialize at level 30. See help specialization for requirements.
 Class innates lists inherited abilities, unlock levels, and active/passive
-markers. Use help <ability name> for usage, or race innates <race> for racial
+markers. Nonzero melee and archery damage bonuses or penalties are also
+shown; see help attack damage modifiers. Use help <ability name> for usage, or race innates <race> for racial
 abilities.
 
 Names accept case-insensitive full names, spaces/hyphens and unique prefixes.
@@ -5841,7 +5847,7 @@ defense.
 Star Magus
 Star Magus - Last Edited: 2026-10-18
 ============================================================
-Star Magus is a Ethermancer specialization. Selection requires level 30, an eligible race, an appropriate teacher, no existing specialization or secondary class, and an expired respecialization timer.
+Star Magus is an Ethermancer specialization. Selection requires level 30, an eligible race, an appropriate teacher, no existing specialization or secondary class, and an expired respecialization timer.
 
 ==Allowed races==
 
@@ -6409,7 +6415,7 @@ lands of the living. It has been known to fail however...
 Dark Dreamer
 Dark Dreamer - Last Edited: 2026-10-18
 ============================================================
-Dark Dreamer is a Illusionist specialization. Selection requires level 30, an eligible race, an appropriate teacher, no existing specialization or secondary class, and an expired respecialization timer.
+Dark Dreamer is an Illusionist specialization. Selection requires level 30, an eligible race, an appropriate teacher, no existing specialization or secondary class, and an expired respecialization timer.
 
 ==Allowed races==
 
@@ -6444,7 +6450,7 @@ Requirements are registration values, not automatic learning or preparation. Bas
 Dark Knight
 Dark Knight - Last Edited: 2026-10-18
 ============================================================
-Dark Knight is a Anti-Paladin specialization. Selection requires level 30, an eligible race, an appropriate teacher, no existing specialization or secondary class, and an expired respecialization timer.
+Dark Knight is an Anti-Paladin specialization. Selection requires level 30, an eligible race, an appropriate teacher, no existing specialization or secondary class, and an expired respecialization timer.
 
 ==Allowed races==
 
@@ -6557,15 +6563,15 @@ also lose "Frags".
 #0
 
 Death Blessing
-Death Blessing - Last Edited: 2007-04-20 14:02:09 by Unknown
+Death Blessing - Last Edited: 2026-11-07
 ============================================================
 * Area of effect: <group>
 * Aggressive:     No
 * Cumulative:     No
 * Duration:       Dependent on proficiency of caster
 * Type of spell:  Enchantment
-This potent spell grants all those grouped with the caster "Vitality" and
-"Protection from Living" spells.
+This spell grants Vitalize Undead and Protection from Living to the caster's
+group members in the caster's room. Groupmates elsewhere are unaffected.
 	See also:protectionfromliving ,vitality
 
 #0
@@ -6701,9 +6707,11 @@ after a successful attack from an offensive spell.
 Delete
 Delete - Last Edited: 2007-04-22 22:12:53 by Unknown
 ====================================================
-Player files can be deleted at the login menu. Once a character is deleted,
-you can NOT get it back. You may have several characters and often times
-people reroll their stats until they end up with stats that please them.
+Delete a character with account-menu option 3. After selecting the
+character, type its full name at the final warning to confirm permanent
+deletion; capitalization does not matter. Any other answer cancels.
+A deleted character cannot be recovered. An online character cannot be
+deleted while it is still in play.
 	See also:stats ,classes ,races ,reimbursement
 
 #0
@@ -6722,7 +6730,7 @@ deal with the simple reality of direction is lost.
 Demonic Rider
 Demonic Rider - Last Edited: 2026-10-18
 ============================================================
-Demonic Rider is a Anti-Paladin specialization. Selection requires level 30, an eligible race, an appropriate teacher, no existing specialization or secondary class, and an expired respecialization timer.
+Demonic Rider is an Anti-Paladin specialization. Selection requires level 30, an eligible race, an appropriate teacher, no existing specialization or secondary class, and an expired respecialization timer.
 
 ==Allowed races==
 
@@ -7471,7 +7479,7 @@ Doom Blade - Last Edited: 2014-07-26 01:08:54 by ashyel
 * Area of effect: <caster>
 * Aggressive:     No
 * Cumulative:     No
-* Duration:       Permanent
+* Duration:       Until you leave the game
 * Type of spell:  Summoning
 Doomblade conjures a death sickle for the use of the
 Reaper, an extremely powerful and potent weapon that
@@ -8733,12 +8741,12 @@ thrown at them, thus nullifying the full potential of that energy.
 #0
 
 Energy Drain
-Energy Drain - Last Edited: 2015-07-16 00:53:27 by ashyel
+Energy Drain - Last Edited: 2026-11-07
 =========================================================
 * Area of effect: <victim>
 * Aggressive:     Yes
 * Cumulative:     Yes
-* Duration:       Permanent
+* Duration:       Immediate damage; lingering recovery penalty up to 5 seconds
 * Type of spell:  Negative
 "Energy Drain" literally drains the lifeblood from the victim, as it feeds
 on the energy for itself. Although it does not do much damage to the
@@ -9809,6 +9817,12 @@ On Duris, artifacts, uniques, and iouns are in need of "feeding", which can be d
 Artifacts come with an initial timer which can be supplemented by epic zoning or fragging enemies.  If you fail to feed, your artifact will be removed and placed back into the game where it loads when the timer counts down.
 See also:  artifact ,unique ,ioun
 
+You may hold one major artifact, one unique and one ioun at a time. If you
+hold two or more of any one type, the periodic artifact check makes all
+artifacts you wear or carry fall to the ground, including other types.
+Inventory counts as well as equipment, and even a brief overlap can trigger
+the check. The forced drop causes no damage or loss of remaining feeding time.
+
 #0
 
 Feign death
@@ -10144,7 +10158,7 @@ Flame Blade - Last Edited: 2017-09-17 05:14:30 by lohrr
 * Area of effect: <caster>
 * Aggressive:     No
 * Cumulative:     No
-* Duration:       Forever
+* Duration:       Until you leave the game
 * Type of spell:  Summoning
 This spell summons a blade of pure flame to appear for the Druid to wield.  The statistics on the blade increase based on the level of the caster at the time of casting, including a possible proc at higher levels.
 
@@ -10820,7 +10834,7 @@ chills them to the bone.
 Frost Magus
 Frost Magus - Last Edited: 2026-10-18
 ============================================================
-Frost Magus is a Ethermancer specialization. Selection requires level 30, an eligible race, an appropriate teacher, no existing specialization or secondary class, and an expired respecialization timer.
+Frost Magus is an Ethermancer specialization. Selection requires level 30, an eligible race, an appropriate teacher, no existing specialization or secondary class, and an expired respecialization timer.
 
 ==Allowed races==
 
@@ -11077,6 +11091,12 @@ If you wished to get the second box, you would type:
 If you wish to get all of a single type of item:
         "get all.box"
        See also:drop ,put
+
+Join full object keywords with hyphens: "get fire-sword" matches an object
+with both fire and sword keywords. "get 2.fire-sword" picks the second match,
+and "get all.fire-sword" takes all matching objects. Existing keywords such
+as two-handed still work. Use full keywords in each combined part; leading,
+trailing or doubled hyphens do not form a combination.
 
 #0
 
@@ -12622,12 +12642,10 @@ Grouping offers important benefits like the following:
    zone trophy experienced by the group will be the average of your trophy, and
    your friends.  It's a good idea to group with those who haven't done the zone
    your in as it will increase the XP you gain.
-3. Experience is not shared when you and your friends kill a monster.  In other words,
-   if you kill a monster on your own and receive 1000 xp, you still receive 1000 xp
-   if you kill the same monster with five other group members.  However, if there are
-   too many people in your group and you exceed the "group cap," you will not
-   receive this favourable arrangement.  Note that grouped pets do not add to the
-   group cap.
+3. Kill experience is shared according to group size and relative levels
+   among eligible players in the same room, with other modifiers afterward.
+   You need not land the killing blow to receive your group share.
+   The group-size limit is separate; read 'help group cap'.
 If you find yourself in need of a group, you may implement the "Group Needed" toggle.
 There is also a way to split coins within the group.
 The social command Beckon is sometimes used by players to request a person to
@@ -13127,14 +13145,15 @@ lost by the death.
 #0
 
 Hardcore
-Hardcore - Last Edited: 2026-11-03
+Hardcore - Last Edited: 2026-11-05
 ====================================================
 Hardcore characters receive their configured combat and hitpoint bonuses.
 Their XP path can continue beyond the ordinary level-50 XP ceiling, up to their
 chosen faction cap plus two, bounded by level 56. This allowance is separate
 from the normal one-level Good/Evil cap gap. Read HELP LEVEL CAP for the race.
-Hardcore characters have five lives. Deaths one through four follow the ordinary
-death rules; the fifth counted death permanently deletes the character.
+Hardcore characters have three lives. Deaths one and two follow the ordinary
+death rules; the third counted death permanently deletes the character.
+This test policy remains open to balance discussion.
 Arena deaths do not consume a life.
 
 #0
@@ -13254,6 +13273,7 @@ Spell Pulse  : excellent
 ==Innate abilities==
 
 *ultravision
+*leap
 *fly
 *dayvision
 *perception
@@ -14613,12 +14633,12 @@ spell wears off or the victim is awakened by battle.
 #0
 
 Inertial Barrier
-Inertial Barrier - Last Edited: 2007-04-20 14:02:09 by Unknown
+Inertial Barrier - Last Edited: 2026-11-07
 ==============================================================
 * Area of effect: <caster>
 * Aggressive:     N/A
 * Cumulative:     No
-* Duration:       3 hours
+* Duration:       30 game hours; casting again renews the duration
 * Type of spell:  Enchantment
 "Inertial Barrier" causes the caster to be enveloped in a low powered
 gravitational field that significantly reduces the effectiveness of
@@ -14895,6 +14915,12 @@ nature, but they can be worn with other types of artifacts.  No ioun stone
 is alike, and they all bestow different powers.
 For a list of iouns, type "arti ioun".
 	See also:artifact ,unique ,feeding
+
+You may hold one major artifact, one unique and one ioun at a time. If you
+hold two or more of any one type, the periodic artifact check makes all
+artifacts you wear or carry fall to the ground, including other types.
+Inventory counts as well as equipment, and even a brief overlap can trigger
+the check. The forced drop causes no damage or loss of remaining feeding time.
 
 #0
 
@@ -15757,8 +15783,9 @@ for the protection of these lockers -any illegal entry or attempts at
 subterfuge will be punished.
 Anything you drop in a locker room will be stored and saved as if you were
 carrying it on your person and rented. This means items that are transient
-will crumble and items flagged no rent will disappear. Anyone who is on
-your grant list will be able to access your locker as well. Please see
+will crumble, and items flagged no rent can't be stored and are handed back
+to you. Anyone who is on your grant list will be able to access your locker
+as well. Please see
 "help grant" for information on giving others access to your locker!
 To help with sorting and finding eq stored in a locker the command "equip
 sort" can be used. Typing that while in the locker will show a long list
@@ -16055,7 +16082,7 @@ chart.
 Magician
 Magician - Last Edited: 2026-10-18
 ============================================================
-Magician is a Illusionist specialization. Selection requires level 30, an eligible race, an appropriate teacher, no existing specialization or secondary class, and an expired respecialization timer.
+Magician is an Illusionist specialization. Selection requires level 30, an eligible race, an appropriate teacher, no existing specialization or secondary class, and an expired respecialization timer.
 
 ==Allowed races==
 
@@ -16327,13 +16354,57 @@ Requirements are registration values, not automatic learning or preparation. Bas
 #0
 
 Martial Arts
-Martial Arts - Last Edited: 2007-04-22 22:12:53 by Unknown
+Martial Arts - Last Edited: 2026-11-07
 ==========================================================
-This skill measures how adept a monk is at using his body as a weapon. Until his martial arts skill is well practiced, he will not be able to deal out as much damage with his bare hands and feet.
+Martial arts improves a monk's bare-hand damage, armor class and base
+attacks. Your level and martial-arts rating determine the base attack range;
+weight and other combat effects can change the final number of attacks.
+
+==Hands==
+
+An item in your wield, secondary weapon, hold, shield or light slot limits
+you to one base monk attack. For bare-hand damage, occupying wield,
+secondary weapon, hold or shield also reduces your monk damage dice to 1d1.
+An equipped light limits attacks but does not reduce those damage dice.
+
+==Weight==
+
+These monk penalties use equipped items, not loose inventory. A worn
+container includes its effective contents weight, after any bag weight
+reduction. Normal carrying limits and general encumbrance still apply.
+STR means your current Strength. Divisions below discard fractions.
+
+Armor class: start with -4 times your level, minus your martial-arts rating.
+Your free full-weight allowance is (60 - level) / 6 pounds. Every pound
+above it adds 3 to this AC adjustment, making your AC worse. The monk
+adjustment is limited to -400 through +50. Strength does not increase
+this AC weight allowance.
+
+Bare-hand damage: your free full-weight allowance is level * STR / 100
+pounds. Every pound above it subtracts 1 from rolled monk damage after
+the martial-arts damage bonus. This cannot reduce that base damage below
+1; damroll and other combat adjustments apply afterward.
+
+Attacks: add half of each equipped item's weight, rounding each item down
+before adding. Your free allowance is STR / 2 pounds. Every full 10 pounds
+above it costs one base monk attack. Weight cannot add attacks or reduce
+you below one base monk attack. The weight warning reports this base loss,
+before slow and other combat modifiers, which can hide the final swing loss.
+NPC monks and trusted staff are exempt from this attack-weight penalty.
+
+At 100 STR with no other equipped weight, a 119-pound worn back container
+counts as 59 for attacks: no loss. At 120 pounds it counts as 60 and costs
+one base monk attack.
+A separate 1-pound equipped item counts as zero. Inventory does not change
+these results; putting that inventory inside a worn bag can change them.
+Other combat modifiers and bonus attacks still apply afterward.
+
+Most items also have a per-item equip weight limit; see Monk.
 
 ==See also==
 
-Monk, Monk Skills
+* Monk
+* Monk Skills
 
 #0
 
@@ -16515,16 +16586,16 @@ Meditate
 Meditate - Last Edited: 2007-04-19 19:17:13 by Unknown
 ======================================================
 Syntax:         meditate (while resting)
-"Meditate" allows the player to memorize/pray for spells with a chance of
-halving the time. A single proficiency check is made at the half way point
-for each spell. If successful, the spell will be memorized/prayed for at
-that time. If unsuccessful, the spell will take the normal time before it
-is memorized/prayed. Because meditate is the focusing of the mind, most
-actions will stop the meditation.
+"Meditate" can shorten spell preparation by skipping an additional wait.
+For Tupor, it can also halve a newly calculated recovery interval. These
+are separate checks, so it does not guarantee that the entire recovery
+will take half the time. It can help later slots as well as the first.
+Tupor estimates allow for the remaining scheduled wait, but do not predict
+future Meditation successes. Most actions will stop the meditation.
 
 ==See also==
 
-pray, memorize, commune, spells, forget
+pray, memorize, commune, spells, forget, tupor
 
 #0
 
@@ -16572,12 +16643,15 @@ mob, tracking, Dimension Door
 #0
 
 Memory block
-Memory block - Last Edited: 2008-11-16 03:10:03 by Blaize
+Memory block - Last Edited: 2026-11-07
 =========================================================
 * Area of effect:	<victim>
 * Aggressive:	Yes
 * Cumulative:	N/A
-"Memory block" causes the victim to occasionally forget how to cast.
+Memory Block gives a victim who fails the power save a 50% chance to
+fail each cast. It lasts half the caster's level in real seconds,
+rounded down, with a minimum of one second. It does not erase learned
+spells. The casting restriction ends when the effect expires.
 
 ==See Also==
 
@@ -16944,7 +17018,7 @@ Image:mirforrest.jpg
 #0
 
 Miracle
-Miracle - Last Edited: 2007-04-19 19:17:13 by Unknown
+Miracle - Last Edited: 2026-11-07
 =====================================================
 * Area of effect: <group>
 * Aggressive:     No
@@ -16952,7 +17026,8 @@ Miracle - Last Edited: 2007-04-19 19:17:13 by Unknown
 * Duration:       Dependent on proficiency of caster
 * Type of spell:  Enchantment
 "Miracle" is just that, a miracle. Casting this potent spell grants
-everyone in the Cleric"s group the spells "Vitality", "Armor", and "Bless".
+the Cleric's groupmates in the same room Vitality, Armor and Bless.
+Groupmates elsewhere are unaffected.
 	See also:vitality ,armor ,bless
 
 Clerics receive Miracle at level 36 (eighth circle).
@@ -17135,7 +17210,7 @@ against undead.
 #0
 
 Monk
-Monk - Last Edited: 2026-10-18
+Monk - Last Edited: 2026-11-08
 ============================================================
 Unarmed martial arts and disciplined physical combat.
 
@@ -17145,6 +17220,39 @@ alignment.
 Equipment follows each item's class/race restrictions and the character's body
 slots. There is no blanket permission to equip every item of a weapon or armor
 type.
+
+==Equipment and weight==
+
+Monk weight rules use your current Strength (STR). Each item is normally
+limited to STR / 10 pounds, rounded down, when equipping it. The back slot
+is exempt from that item limit, but still counts toward worn weight.
+
+Armor class and bare-hand damage use the full weight of equipped items.
+For attacks, add half of each equipped item's weight, rounding each item
+down first. The free attack allowance is STR / 2, rounded down. Every full
+10 pounds above that allowance costs one base monk attack, leaving at least
+one. The weight warning reports lost base attacks before slow or other
+combat modifiers; the final swing count can be unchanged after rounding.
+
+Loose inventory does not count toward these monk weight penalties. Worn
+containers include their effective contents weight, after any bag weight
+reduction. Normal carrying limits and general encumbrance still apply.
+
+Keep your wield, secondary weapon, hold, shield and light slots free for
+your normal martial-arts attacks. See Martial Arts for the AC and damage
+allowances and the full combat rules.
+
+==Glove magic==
+
+Some gloves activate magic on a monk's barehand strikes when worn on the
+primary hands. Only gloves made for this purpose do so; wearing any other
+pair does not add an offensive proc. All monk specializations and secondary
+monks follow the same rule. A weapon strike uses its weapon's magic.
+
+A resolved punch, barehand counterattack or pressure-point strike can give
+one opportunity. Misses and blows that already kill the victim give none.
+The second pair of gloves gives no extra opportunity. Removing or changing
+the selected gloves cancels their unfinished magic.
 
 ==Allowed races==
 
@@ -17167,6 +17275,7 @@ specialization/multiclass state. Type specialize to see personal choices.
 ==See also==
 
 * Monk Skills
+* Martial Arts
 * Classes
 * Specialization
 * Multiclass
@@ -17174,7 +17283,7 @@ specialization/multiclass state. Type specialize to see personal choices.
 #0
 
 Monk Skills
-Monk Skills - Last Edited: 2026-10-18
+Monk Skills - Last Edited: 2026-11-07
 ============================================================
 The following is a list of all skills and spells available to the Monk class:
 These are base-class grants before specialization changes.
@@ -17203,6 +17312,7 @@ None.
 ==See also==
 
 * Monk
+* Martial Arts
 * Specialization
 * Spell circle
 
@@ -18751,6 +18861,8 @@ type.
 These are normal-roster matrix choices; alignment and server creation switches
 still apply. Other forms and event settings may differ.
 
+Holy Combat is a legacy label with no separate implemented combat bonus.
+
 ==Innate abilities==
 
 *&+canti-evil&n
@@ -18786,6 +18898,8 @@ Paladin Skills - Last Edited: 2026-10-18
 The following is a list of all skills and spells available to the Paladin class:
 These are base-class grants before specialization changes.
 Learning, preparation, equipment, and current ability conditions still apply.
+
+Holy Combat is a legacy label with no separate implemented combat bonus.
 
 ==Innate abilities==
 
@@ -20085,6 +20199,9 @@ Protection From Evil - Last Edited: 2015-07-13 19:50:04 by lohrr
 * Type of spell:  Protection
 This spell will create a magical armor on the recipient that will make the
 target less prone to attacks from evilly aligned monsters and characters.
+Against an evil attacker, a non-evil recipient lowers the attacker's hit
+score by the recipient's level / 4 (12 points at level 50). This is an
+accuracy penalty, not an additional damage reduction.
 This spell will only show on score if those affected have detect magic up.
 
 ==See also==
@@ -20135,6 +20252,9 @@ Protection From Good - Last Edited: 2015-07-13 19:52:04 by lohrr
 * Type of spell:  Protection
 This spell will create a magical armor on the recipient that will make the
 target less prone to attacks from good aligned monsters and characters.
+Against a good attacker, a non-good recipient lowers the attacker's hit
+score by the recipient's level / 4 (12 points at level 50). This is an
+accuracy penalty, not an additional damage reduction.
 This spell will only show on score if those affected have detect magic up.
 
 ==See also==
@@ -21803,6 +21923,7 @@ Syntax:         rent
 This command is for use in a reception or inn, which appear throughout the
 world. "Rent" will store your items and make you leave the game. The next
 time you enter the game, you'll start out at the inn where you rented.
+Items flagged no rent can't be stored and fall to the floor when you leave.
 Warning: Players who have been recently attacked by another player may
 have to wait a few minutes before being allowed to rent at an inn.
 
@@ -25066,7 +25187,7 @@ Song of Discord, Dispel Evil, instrument, Bard Skills, bard
 #0
 
 Song of healing
-Song of healing - Last Edited: 2008-11-24 17:43:44 by Blaize
+Song of healing - Last Edited: 2026-11-05
 ============================================================
 * Area of effect:	Room
 * Aggressive:	No
@@ -25076,6 +25197,7 @@ Song of healing - Last Edited: 2008-11-24 17:43:44 by Blaize
 This song restores the life force of those in the room, including those not
 in the singer's group. The amount it heals is highly dependent on level and
 skill in the song.
+Higher Charisma increases the healing restored each verse.
 Powerful minstrels are able to heal many afflictions.
 Powerful disharmonists may break the affect of the silence spell.
 
@@ -27716,7 +27838,7 @@ Requirements are registration values, not automatic learning or preparation. Bas
 Violator
 Violator - Last Edited: 2026-10-18
 ============================================================
-Violator is a Anti-Paladin specialization. Selection requires level 30, an eligible race, an appropriate teacher, no existing specialization or secondary class, and an expired respecialization timer.
+Violator is an Anti-Paladin specialization. Selection requires level 30, an eligible race, an appropriate teacher, no existing specialization or secondary class, and an expired respecialization timer.
 
 ==Allowed races==
 
@@ -28239,9 +28361,25 @@ Requirements are registration values, not automatic learning or preparation. Bas
 #0
 
 Scourge
-Scourge - Last Edited: 2026-10-18
+Scourge - Last Edited: 2026-11-05
 ============================================================
 Scourge is a Blighter specialization. Selection requires level 30, an eligible race, an appropriate teacher, no existing specialization or secondary class, and an expired respecialization timer.
+
+==Specialization bonuses==
+
+* Blight: 12% more damage, rounded down before the saving throw and later
+  damage modifiers. It only works on plants and slimes.
+* Drain nature: adds 50 to the first healing wave before terrain adjustments.
+  Each later wave halves the previous wave's base amount, rounding down. Waves
+  continue while the next wave exceeds 1. Each wave uses the recipient's terrain
+  and cannot heal beyond maximum hit points. At casting level 56 on ordinary
+  terrain, the total rises from 96 to 196 before other healing modifiers and
+  the missing-health limit.
+  This is not a flat +50 total or a fixed percentage bonus to all healing.
+* Sap nature: a fresh effect gains +5 movement regeneration and +5 ticks of
+  duration. If the caster already has Sap nature, recasting only renews that
+  caster's duration; it neither recalculates the movement bonus nor applies
+  a fresh effect to another recipient. The spell's normal restrictions apply.
 
 ==Allowed races==
 
@@ -28273,9 +28411,19 @@ Requirements are registration values, not automatic learning or preparation. Bas
 #0
 
 Ruiner
-Ruiner - Last Edited: 2026-10-18
+Ruiner - Last Edited: 2026-11-05
 ============================================================
 Ruiner is a Blighter specialization. Selection requires level 30, an eligible race, an appropriate teacher, no existing specialization or secondary class, and an expired respecialization timer.
+
+==Specialization bonuses==
+
+Flame sphere, Blight, Horrid wilting, Implosion and Firelance gain a 12% damage
+step: multiply damage by 112, divide by 100 and round down. This step comes
+before the saving throw for Blight and Firelance, and after it for Flame sphere,
+Horrid wilting and Implosion. Blight only works on plants and slimes. Each
+spell keeps its normal target rules, saves and subsequent damage modifiers;
+the final hit need not be exactly 12% larger. Other damage spells do not
+receive this specialization bonus.
 
 ==Allowed races==
 
@@ -28342,7 +28490,7 @@ Requirements are registration values, not automatic learning or preparation. Bas
 Tempest Magus
 Tempest Magus - Last Edited: 2026-10-18
 ============================================================
-Tempest Magus is a Ethermancer specialization. Selection requires level 30, an eligible race, an appropriate teacher, no existing specialization or secondary class, and an expired respecialization timer.
+Tempest Magus is an Ethermancer specialization. Selection requires level 30, an eligible race, an appropriate teacher, no existing specialization or secondary class, and an expired respecialization timer.
 
 ==Allowed races==
 
@@ -29247,7 +29395,7 @@ no new dedicated cooldown. Its existing target restrictions remain.
 #0
 
 Spells
-Spells - Last Edited: 2026-11-02
+Spells - Last Edited: 2026-11-04
 ============================================================
 Browse your spells, class spell circles, and individual spell details.
 
@@ -29258,14 +29406,16 @@ spells <class or specialization>
 spells info <spell name>
 
 Bare spells shows your own spells, including for staff. Spells are grouped by
-Circle and name; future circles are labeled. Your class, specialization,
-secondary class and current maximum Circle describe whose access is shown.
+circle and name. Spells above your maximum circle are dimmed. The header shows
+your class, specialization, secondary class and maximum circle.
+Your spell interface command appears below the list when applicable.
 Book markers check inventory, hands and belt only for spellbook users.
 Circle access and book presence do not mean a spell is prepared or ready to cast.
 
 Use spells cleric for base grants or spells fire magus for a complete effective
-specialization catalog, including inherited spells and changes. Lost base
-spells are listed separately. Bard songs and instruments remain in skills.
+specialization catalog. An asterisk marks spells gained from the specialization.
+Lost base spells are listed separately. Bard songs and instruments use skills.
+The catalog shows the class's default spell interface when applicable.
 Catalogs are reference information, independent of your race, class and level.
 
 Use spells info fireball for registered aggression, class/spec circles and
@@ -29289,5 +29439,30 @@ legend. Use info or a specialization catalog for specialization access.
 
 Skills, Race, Classes, Specialization, Multiclass, Spell circle, Cast,
 Memorize, Pray, Scribe
+
+#0
+
+Attack damage modifiers
+Attack damage modifiers - Last Edited: 2026-11-09
+============================================================
+Race innates and class innates show a passive melee and archery damage bonus
+or penalty when it differs from zero. For example, +15% multiplies that
+attack's damage by 1.15; -17.5% multiplies it by 0.825. Neutral modifiers
+are omitted. These features are always applied when their attack qualifies;
+you do not need to activate or train them.
+
+They affect ordinary melee attacks, including unarmed attacks, and archery.
+Spells and special attacks have their own rules: backstab and the Monk's
+HP-based special hit do not use this modifier. It does not increase your
+accuracy, attack count or attack speed, and later defenses still apply.
+
+Racial and class modifiers multiply: +15% from both gives +32.25%, not +30%.
+Multiclass characters use the higher of their two class multipliers.
+Specializations use their base class modifier: Thief and Assassin use Rogue.
+
+Use race innates <race> or class innates <class or specialization> to view
+the current values. These modifiers are separate from your damroll limit.
+===========================================================================
+See also: RACE, CLASS, INNATE, MULTICLASS
 
 #0

@@ -62,11 +62,8 @@ static inline int get_db_port(void)
 #define DB_NAME get_db_name()
 #define DB_PORT get_db_port()
 
-#ifdef __NO_MYSQL__
-#include "no_mysql/mysql.h"
-#else
+#include "sql/item_owner_rows.h"
 #include <mysql.h>
-#endif
 extern MYSQL *DB;
 MYSQL *sql_open_configured_connection(unsigned long client_flags);
 MYSQL_RES *db_query_at(struct persistence_query_site site, const char *format, ...);
@@ -113,8 +110,6 @@ uint64_t sql_game_loop_query_count(void);
  * the same database. */
 const char *sql_persistence_db_name(void);
 
-#ifndef __NO_MYSQL__
-#endif
 bool sql_persistence_item_owner_matches(unsigned long long item_uid, const char *owner_type,
 					const char *owner_ref, const char *context);
 bool sql_persistence_item_owner_matches_identity(unsigned long long item_uid,
@@ -122,25 +117,6 @@ bool sql_persistence_item_owner_matches_identity(unsigned long long item_uid,
 						 unsigned long long owner_id,
 						 unsigned long long owner_context_id,
 						 const char *context);
-/* The item_current_owner columns an owner check reads, joined as `current_item` with
- * item_owner_revision as `owner`; a read elsewhere selects them in this order. */
-#define SQL_ITEM_OWNER_COLUMNS                                                         \
-	"current_item.root_item_uid,COALESCE(current_item.parent_item_uid,0),"         \
-	"current_item.owner_type,current_item.owner_id,current_item.owner_context_id," \
-	"current_item.item_revision,current_item.vnum,current_item.state,owner.revision"
-#define SQL_ITEM_OWNER_REVISION_JOIN                                                       \
-	"LEFT JOIN item_owner_revision owner ON owner.owner_type=current_item.owner_type " \
-	"AND owner.owner_id=current_item.owner_id "                                        \
-	"AND owner.owner_context_id=current_item.owner_context_id"
-#define SQL_ITEM_OWNER_SELECT            \
-	"SELECT " SQL_ITEM_OWNER_COLUMNS \
-	" FROM item_current_owner current_item " SQL_ITEM_OWNER_REVISION_JOIN
-/* The same check for those columns already read (row[0..8], or NULL when the item
- * has no ownership row). */
-bool sql_persistence_item_owner_fields_match(unsigned long long item_uid, const char *owner_type,
-					     unsigned long long expected_id,
-					     unsigned long long expected_context_id,
-					     const char *const *row);
 bool sql_persistence_reconcile_world_recovery_items(const world_recovery_authority_item *items,
 						    size_t count,
 						    item_ownership_runtime_entry *authoritative,
@@ -198,12 +174,10 @@ void sql_mud_info_refresh(void);
 
 string escape_str(const char *str);
 
-#ifndef __NO_MYSQL__
 void sql_clear_results_on(MYSQL *conn);
 // For the writer: the id of the character's account_characters row, or 0.
 unsigned int sql_find_account_character_id(MYSQL *connection, long pid,
 					   const std::string &escaped_char_name, long *id);
-#endif
 
 #include <vector>
 using namespace std;

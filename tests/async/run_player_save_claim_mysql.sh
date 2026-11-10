@@ -77,6 +77,7 @@ g++ -std=c++20 -Wall -Wextra -Wpedantic -Werror -pthread -ffunction-sections -fd
     src/player/player_load_repository.c src/player/player_load_topology.c \
     src/combat/combat_outcome_command.c src/guild/artifact_guild_command.c src/world/zone_touch_command.c src/world/epic_command.c src/economy/currency_command.c src/persistence/critical_command.c \
     src/player/player_snapshot_repository.c src/player/player_snapshot_codec.c \
+    src/economy/collector_policy.c src/economy/collector_codec.c src/economy/collector_command.c \
     src/item/item_claim_repository.c src/item/item_claim.c src/persistence/dupe_log.c \
     src/sql/item_extra_descr_codec.c src/persistence/persistence_observability.c \
     -Wl,--gc-sections "${MYSQL_LIBS[@]}" -lcrypto \
@@ -91,11 +92,15 @@ import sys
 source = (Path(sys.argv[1]) / "src/sql/sql.c").read_text()
 body = source[source.rindex("bool sql_pwipe(int code_verify)"):]
 reset = re.search(r'qry\("(UPDATE player_data SET [^"]+)"\)', body).group(1)
+reset_mappings = re.search(r'qry\("(UPDATE account_characters SET deleted_at[^"]+)"\)', body).group(1)
 postflight_call = re.search(
     r'db_query\(\s*((?:"[^"]*"\s*)+),\s*OVERLORD\)', body).group(1)
 overlord = re.search(r'#define\s+OVERLORD\s+(\d+)',
                     (Path(sys.argv[1]) / 'src/core/config.h').read_text()).group(1)
 postflight = ''.join(re.findall(r'"([^"]*)"', postflight_call)).replace('%d', overlord)
+# Owned first saves now create a real membership, so include the production
+# reset's companion mapping tombstone before checking its postconditions.
+print(reset_mappings + ";")
 print(reset + ";")
 print(postflight + ";")
 PY
@@ -103,7 +108,7 @@ reset_remaining=$("${MYSQL[@]}" "$DB_NAME" < "$WORK/flight-reset.sql")
 [[ "$reset_remaining" == 0 ]]
 [[ $("${MYSQL[@]}" "$DB_NAME" -e "SELECT COUNT(*) FROM player_data WHERE learned_flight_stops <> 0") == 0 ]]
 
-# The zone-story state is saved through sql_queue() on the writer: a state above 64 KiB
+# The zone-story state is saved through sql_queue_sized_work() on the writer: a state above 64 KiB
 # is stored whole on the same schema.
 g++ -std=c++20 -Wall -Wextra -Wpedantic -Werror -pthread -ffunction-sections -fdata-sections \
     -Isrc "${MYSQL_CFLAGS[@]}" tests/async/zone_story_state_mysql_harness.cpp tests/async/harness_stubs.cpp \

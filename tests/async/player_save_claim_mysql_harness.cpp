@@ -5,7 +5,10 @@
 // log; the rest of the save commits. This drives
 // player_snapshot_repository_apply() against a real server.
 #include "item/item_claim_repository.h"
+#include "account/account.h"
 #include "core/files.h"
+#include "core/structs.h"
+#include "magic/spells.h"
 #include "persistence/dupe_log.h"
 #include "player/player_save_worker.h"
 #include "player/player_snapshot_repository.h"
@@ -262,7 +265,30 @@ int main()
 		item(1051, 551, 11),
 		item(1053, 553, 11),
 	};
+	// Persist the same item with a live Bless overlay in the room and player stores.
+	auto &blessed = save.items[1];
+	blessed.extra2_flags = ITEM2_ENHANCED | ITEM2_BLESS;
+	blessed.dynamic_affects = { { SPELL_BLESS, 0, ITEM2_BLESS }, { TAG_ALTERED_EXTRA2, 0, 0 } };
+	auto floor_item = blessed;
+	floor_item.parent_index = PLAYER_SNAPSHOT_NO_PARENT;
+	const saved_item_snapshot floor_save = {
+		{ item_owner_type::room, 3001, 0 }, "bless-policy", 3001, false, { floor_item }
+	};
+	require(saved_item_snapshot_repository_apply(test_connection, floor_save).outcome ==
+			player_save_apply_outcome::applied,
+		"save the blessed room item");
+	const std::string permanent_flags = std::to_string(ITEM2_ENHANCED);
+	require(scalar(test_connection,
+		       "SELECT extra2_flags FROM saved_items WHERE obj_uid=1003") ==
+			permanent_flags,
+		"room save strips temporary Bless and keeps the permanent flag");
 	player_save_apply_result applied = player_snapshot_repository_apply(test_connection, save);
+	require(scalar(test_connection,
+		       "SELECT extra2_flags FROM player_items WHERE obj_uid=1003") ==
+			permanent_flags,
+		"player save strips the same item's temporary Bless and keeps the permanent flag");
+	execute(test_connection, "DELETE FROM saved_items WHERE item_key='bless-policy'");
+
 	require(applied.outcome == player_save_apply_outcome::applied,
 		"a save whose items other owners hold must still commit");
 
@@ -334,9 +360,34 @@ int main()
 
 	// A character with no player_data row yet gets one instead of failing.
 	player_snapshot unbased = snapshot_for(3, 1, "Newcomer");
+	applied = player_snapshot_repository_apply(test_connection, unbased);
+	require(applied.outcome == player_save_apply_outcome::terminal_failure &&
+			applied.rolled_back &&
+			scalar(test_connection, "SELECT COUNT(*) FROM player_data WHERE pid=3") ==
+				"0",
+		"a missing row must never be created without an owner");
+	unbased.creation_account = "claim_probe";
 	unbased.wallet_revision = 7; // Starter money has already changed in memory.
 	unbased.status_integers.push_back({ player_status_field::copper, 35, 0, false });
 	unbased.items = { item(1012, 512, PLAYER_SNAPSHOT_NO_PARENT) };
+	execute(test_connection,
+		"CREATE TRIGGER reject_new_mapping BEFORE INSERT ON account_characters "
+		"FOR EACH ROW SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT='synthetic creation failure'");
+	applied = player_snapshot_repository_apply(test_connection, unbased);
+	require(applied.outcome == player_save_apply_outcome::terminal_failure &&
+			applied.rolled_back,
+		"initial mapping failure must report a confirmed rollback");
+	require(applied.creation_not_committed,
+		"mapping rollback must prove this initial attempt published no character");
+	for (const char *table : { "player_data", "player_items", "currency_wallet_baseline",
+				   "epic_balance_baseline", "combat_frag_baseline" })
+		require(scalar(test_connection, "SELECT COUNT(*) FROM " + std::string(table) +
+							" WHERE pid=3") == "0",
+			"mapping failure published part of the initial character");
+	require(scalar(test_connection,
+		       "SELECT COUNT(*) FROM item_current_owner WHERE item_uid=1012") == "0",
+		"mapping failure published an item claim");
+	execute(test_connection, "DROP TRIGGER reject_new_mapping");
 	applied = player_snapshot_repository_apply(test_connection, unbased);
 	require(applied.outcome == player_save_apply_outcome::applied,
 		"a save for a character without a row must commit");
@@ -352,6 +403,156 @@ int main()
 			       "SELECT CONCAT(opening_copper,':',opening_revision) "
 			       "FROM currency_wallet_baseline WHERE pid=3") == "35:7",
 		"the starter wallet opening baseline must begin at its captured revision");
+	require(scalar(test_connection, "SELECT account_name FROM player_data WHERE pid=3") ==
+				"claim_probe" &&
+			scalar(test_connection,
+			       "SELECT CONCAT(account_name,':',char_name) FROM account_characters WHERE pid=3") ==
+				"claim_probe:Newcomer",
+		"initial owner and selectable membership must commit with the usable snapshot");
+	applied = player_snapshot_repository_apply(test_connection, unbased);
+	require(applied.outcome == player_save_apply_outcome::already_applied,
+		"an ambiguous initial commit must reconcile the same character");
+	execute(test_connection, "UPDATE player_data SET level=30,save_revision=2 WHERE pid=3");
+	applied = player_snapshot_repository_apply(test_connection, unbased);
+	require(applied.outcome == player_save_apply_outcome::already_applied &&
+			scalar(test_connection, "SELECT level FROM player_data WHERE pid=3") ==
+				"30",
+		"an initial retry must not overwrite a character that already continued");
+	execute(test_connection, "UPDATE accounts SET blocked=1 WHERE account_name='claim_probe'");
+	applied = player_snapshot_repository_apply(test_connection, unbased);
+	require(applied.outcome == player_save_apply_outcome::already_applied &&
+			scalar(test_connection, "SELECT level FROM player_data WHERE pid=3") ==
+				"30",
+		"blocking entry must not turn a committed initial snapshot into a failed creation");
+	auto blocked = snapshot_for(5, 1, "BlockedNew");
+	blocked.creation_account = "claim_probe";
+	applied = player_snapshot_repository_apply(test_connection, blocked);
+	require(applied.outcome == player_save_apply_outcome::terminal_failure &&
+			applied.rolled_back &&
+			scalar(test_connection, "SELECT COUNT(*) FROM player_data WHERE pid=5") ==
+				"0" &&
+			scalar(test_connection,
+			       "SELECT COUNT(*) FROM account_characters WHERE pid=5") == "0",
+		"a blocked account must not commit a fresh character");
+	require(applied.creation_not_committed,
+		"blocked fresh creation must permit attempt-scoped cleanup");
+	auto missing_owner = snapshot_for(6, 1, "MissingOwner");
+	missing_owner.creation_account = "absent_account";
+	applied = player_snapshot_repository_apply(test_connection, missing_owner);
+	require(applied.outcome == player_save_apply_outcome::terminal_failure &&
+			applied.creation_not_committed &&
+			scalar(test_connection, "SELECT COUNT(*) FROM player_data WHERE pid=6") ==
+				"0",
+		"missing owner with no initial row must release only its empty attempt");
+	execute(test_connection, "UPDATE accounts SET blocked=0 WHERE account_name='claim_probe'");
+	auto conflicting = unbased;
+	execute(test_connection, "INSERT INTO accounts(account_name) VALUES ('other_creator')");
+	conflicting.creation_account = "other_creator";
+	require(player_snapshot_repository_apply(test_connection, conflicting).outcome ==
+			player_save_apply_outcome::terminal_failure,
+		"a retry must never transfer ownership");
+	conflicting = unbased;
+	conflicting.pid = 4;
+	require(player_snapshot_repository_apply(test_connection, conflicting).outcome ==
+				player_save_apply_outcome::terminal_failure &&
+			scalar(test_connection, "SELECT COUNT(*) FROM player_data WHERE pid=4") ==
+				"0",
+		"a competing PID must never take an existing name");
+	execute(test_connection, "UPDATE account_characters SET deleted_at=NOW() WHERE pid=3");
+	require(player_snapshot_repository_apply(test_connection, unbased).outcome ==
+				player_save_apply_outcome::terminal_failure &&
+			scalar(test_connection,
+			       "SELECT COUNT(*) FROM account_characters WHERE pid=3 AND deleted_at IS NOT NULL") ==
+				"1",
+		"a delayed creation retry must respect a deletion tombstone");
+	execute(test_connection, "UPDATE account_characters SET deleted_at=NULL WHERE pid=3");
+	std::cout
+		<< "[PASS] initial owner/membership/baselines, rollback, retry, competition and tombstone fences\n";
+
+	// A name can be reused without discarding the deleted PID's resurrection fence.
+	execute(test_connection,
+		"INSERT INTO account_characters(account_name,pid,char_name,deleted_at) "
+		"VALUES ('claim_probe',70001,'Recreated',NOW())");
+	auto recreated = snapshot_for(70002, 1, "Recreated");
+	recreated.creation_account = "claim_probe";
+	execute(test_connection,
+		"CREATE TRIGGER reject_recreated_mapping BEFORE INSERT ON account_characters "
+		"FOR EACH ROW SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT='synthetic name reuse failure'");
+	require(player_snapshot_repository_apply(test_connection, recreated).outcome ==
+				player_save_apply_outcome::terminal_failure &&
+			scalar(test_connection,
+			       "SELECT char_name FROM account_characters WHERE pid=70001") ==
+				"Recreated" &&
+			scalar(test_connection,
+			       "SELECT COUNT(*) FROM player_data WHERE pid=70002") == "0",
+		"failed name reuse must roll back the tombstone rename and initial character");
+	execute(test_connection, "DROP TRIGGER reject_recreated_mapping");
+	require(player_snapshot_repository_apply(test_connection, recreated).outcome ==
+			player_save_apply_outcome::applied,
+		"a new PID must be able to claim a deleted character's name");
+	auto resurrected = recreated;
+	resurrected.pid = 70001;
+	require(player_snapshot_repository_apply(test_connection, resurrected).outcome ==
+			player_save_apply_outcome::terminal_failure,
+		"name reuse must retain the deleted PID's fence");
+	require(scalar(test_connection,
+		       "SELECT COUNT(*) FROM account_characters WHERE pid=70001 AND deleted_at IS NOT NULL") ==
+			"1",
+		"name reuse discarded the deletion tombstone");
+
+	// The initial quest fallback has the same revision as the final quest save.
+	auto initial_quest = snapshot_for(70004, 1, "InitialQuest");
+	initial_quest.creation_account = "claim_probe";
+	initial_quest.pending_world_quest = {
+		true, 15001, 20, 9000, 0, 1800000000, "InitialQuest", "first completion"
+	};
+	initial_quest.pending_world_quest.before_quest[0] = 1;
+	initial_quest.pending_world_quest.before_quest[1] = 15001;
+	require(player_snapshot_repository_apply(test_connection, initial_quest).outcome ==
+				player_save_apply_outcome::applied &&
+			scalar(test_connection,
+			       "SELECT COUNT(*) FROM world_quest_accomplished WHERE pid=70004") ==
+				"1" &&
+			scalar(test_connection,
+			       "SELECT quest_active FROM player_data WHERE pid=70004") == "0",
+		"first-save reconciliation must commit the quest after its fallback");
+	execute(test_connection, "UPDATE player_data SET level=30,save_revision=2 WHERE pid=70004");
+	require(player_snapshot_repository_apply(test_connection, initial_quest).outcome ==
+				player_save_apply_outcome::already_applied &&
+			scalar(test_connection, "SELECT level FROM player_data WHERE pid=70004") ==
+				"30",
+		"an initial quest retry must preserve later player state");
+	std::cout
+		<< "[PASS] creation name reuse, blocked reconciliation and first quest continuation\n";
+
+	// The account lock serializes the final available slot across first saves.
+	execute(test_connection, "INSERT INTO accounts(account_name) VALUES ('limit_probe')");
+	for (int i = 1; i < MAX_CHARS_PER_ACCOUNT; ++i)
+		execute(test_connection,
+			"INSERT INTO account_characters(account_name,pid,char_name) VALUES "
+			"('limit_probe'," +
+				std::to_string(81000 + i) + ",'LimitSeed" + std::to_string(i) +
+				"')");
+	auto last_slot = snapshot_for(82001, 1, "Lastslot");
+	last_slot.creation_account = "limit_probe";
+	require(player_snapshot_repository_apply(test_connection, last_slot).outcome ==
+				player_save_apply_outcome::applied &&
+			player_snapshot_repository_apply(test_connection, last_slot).outcome ==
+				player_save_apply_outcome::already_applied,
+		"the last slot must commit and its retry must remain valid at the cap");
+	auto excess = last_slot;
+	excess.pid = 82002;
+	for (auto &field : excess.status_strings)
+		if (field.field == player_status_string_field::name)
+			field.value = "Overlimit";
+	const auto capped = player_snapshot_repository_apply(test_connection, excess);
+	require(capped.outcome == player_save_apply_outcome::terminal_failure &&
+			capped.creation_not_committed &&
+			scalar(test_connection,
+			       "SELECT COUNT(*) FROM player_data WHERE pid=82002") == "0" &&
+			scalar(test_connection,
+			       "SELECT COUNT(*) FROM account_characters WHERE pid=82002") == "0",
+		"an over-limit creation must publish no character or membership");
 
 	// A corpse save claims what the corpse holds and replaces its rows; a remove deletes
 	// them (persistence reset step 6).
@@ -767,88 +968,8 @@ int main()
 				"150:" + std::to_string(paid.wallet_revision),
 		"non-wallet status work reset the committed wallet revision");
 
-	// Inn rent consumes only NORENT keys, in the same transaction as the player.
-	for (int scenario = 0; scenario < 6; ++scenario)
-	{
-		const uint64_t uid = 4040100 + scenario * 10;
-		const int place = scenario % 3;
-		auto rent = snapshot_for(1, 200000 + scenario * 10, "Claimer");
-		rent.items = { item(uid, 100, -1), item(uid + 1, 40401, place == 2 ? 0 : -1),
-			       item(uid + 2, 101, 0), item(uid + 3, 102, -1) };
-		rent.items[0].type = ITEM_CONTAINER;
-		rent.items[1].type = ITEM_KEY;
-		rent.items[1].extra_flags = ITEM_NORENT;
-		rent.items[1].equipment_slot = place == 1 ? HOLD + 1 : 0;
-		rent.items[2].type = ITEM_FOOD;
-		rent.items[2].extra_flags = ITEM_NORENT;
-		rent.items[3].type = ITEM_KEY;
-		if (scenario >= 3)
-		{
-			auto before_rent = rent;
-			if (scenario == 5)
-			{
-				before_rent.pid = 2;
-				before_rent.status_strings[0].value = "Other";
-			}
-			require(player_snapshot_repository_apply(test_connection, before_rent)
-						.outcome == player_save_apply_outcome::applied,
-				"owned rent baseline");
-		}
-		rent.save_intent = RENT_INN;
-		const auto apply = [&](const player_snapshot &input)
-		{
-			require(player_snapshot_repository_apply(test_connection, input).outcome ==
-					player_save_apply_outcome::applied,
-				"rent save");
-		};
-		const auto kept = [&]
-		{
-			require(scalar(test_connection,
-				       "SELECT GROUP_CONCAT(obj_uid ORDER BY obj_uid) FROM player_items WHERE pid=1") ==
-					std::to_string(uid) + "," + std::to_string(uid + 2) + "," +
-						std::to_string(uid + 3),
-				"rent lost ordinary items or retained key");
-			require(scalar(test_connection,
-				       "SELECT bag.obj_uid FROM player_items child JOIN player_items bag ON child.container_id=bag.id WHERE child.obj_uid=" +
-					       std::to_string(uid + 2) + " AND child.pid=1") ==
-					std::to_string(uid),
-				"rent changed sibling topology");
-		};
-		apply(rent);
-		kept();
-		require(owner_of(uid + 1) == "8:0:0:2:" + std::to_string(uid + 1) + ":0",
-			"rent custody");
-		const auto revision =
-			scalar(test_connection,
-			       "SELECT item_revision FROM item_current_owner WHERE item_uid=" +
-				       std::to_string(uid + 1));
-		const auto audits = scalar(test_connection,
-					   "SELECT COUNT(*) FROM item_owner_audit WHERE item_uid=" +
-						   std::to_string(uid + 1));
-		apply(rent);
-		kept();
-		require(scalar(test_connection,
-			       "SELECT item_revision FROM item_current_owner WHERE item_uid=" +
-				       std::to_string(uid + 1)) == revision &&
-				scalar(test_connection,
-				       "SELECT COUNT(*) FROM item_owner_audit WHERE item_uid=" +
-					       std::to_string(uid + 1)) == audits,
-			"rent retry changed custody or audit");
-		auto old = rent;
-		old.save_intent = RENT_CRASH;
-		--old.revision;
-		apply(old);
-		kept();
-		require(owner_of(uid + 1) == "8:0:0:2:" + std::to_string(uid + 1) + ":0",
-			"stale save revived key");
-		auto invalid = rent;
-		invalid.items[1].object_uid = 0;
-		invalid.items[0].vnum = 999;
-		require(player_snapshot_repository_apply(test_connection, invalid).outcome ==
-				player_save_apply_outcome::terminal_failure,
-			"UID-less disposal accepted");
-		kept();
-	}
+	// A save claims a NORENT item like any other: what must not stay is taken off the
+	// character before the save is captured.
 	auto recovery = snapshot_for(1, 300000, "Claimer");
 	// Preserve the delivery sequence established by the preceding reward tests.
 	recovery.status_integers.push_back(
@@ -857,57 +978,17 @@ int main()
 	recovery.items = { item(4040991, 40401, -1) };
 	recovery.items[0].type = ITEM_KEY;
 	recovery.items[0].extra_flags = ITEM_NORENT;
-	for (int intent :
-	     { RENT_CRASH, RENT_CRASH2, RENT_QUIT, RENT_LINKDEAD, RENT_CAMPED, RENT_DEATH })
+	for (int intent : { RENT_INN, RENT_CRASH, RENT_CRASH2, RENT_QUIT, RENT_LINKDEAD,
+			    RENT_CAMPED, RENT_DEATH })
 	{
 		recovery.save_intent = intent;
 		require(player_snapshot_repository_apply(test_connection, recovery).outcome ==
 					player_save_apply_outcome::applied &&
 				owner_of(4040991) == "1:1:0:1:4040991:0",
-			"recovery lost key");
+			"save lost NORENT key");
 		++recovery.revision;
 	}
-	auto partial = recovery;
-	partial.components = PLAYER_COMPONENT_STATUS;
-	partial.save_intent = RENT_INN;
-	require(player_snapshot_repository_apply(test_connection, partial).outcome ==
-				player_save_apply_outcome::applied &&
-			owner_of(4040991) == "1:1:0:1:4040991:0",
-		"partial status disposed key");
-	partial.components = PLAYER_COMPONENT_PETS;
-	player_pet_snapshot pet_key{};
-	pet_key.pet_uid = 4040992;
-	pet_key.mob_vnum = 1201;
-	pet_key.room_vnum = 3001;
-	pet_key.items = recovery.items;
-	pet_key.items[0].object_uid = 4040993;
-	partial.pets = { pet_key };
-	require(player_snapshot_repository_apply(test_connection, partial).outcome ==
-				player_save_apply_outcome::applied &&
-			owner_of(4040993) == "11:4040992:1:1:4040993:0",
-		"pet rent disposed key");
-
-	// Fail after the ownership update but before the replacement payload commits.
-	recovery.save_intent = RENT_INN;
-	execute(test_connection,
-		"CREATE TRIGGER reject_rent_items BEFORE DELETE ON player_items FOR EACH ROW SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT='rent rollback probe'");
-	const auto failed_rent = player_snapshot_repository_apply(test_connection, recovery);
-	execute(test_connection, "DROP TRIGGER reject_rent_items");
-	require(failed_rent.outcome == player_save_apply_outcome::terminal_failure &&
-			owner_of(4040991) == "1:1:0:1:4040991:0" &&
-			scalar(test_connection,
-			       "SELECT COUNT(*) FROM player_items WHERE pid=1 AND obj_uid=4040991") ==
-				"1" &&
-			scalar(test_connection,
-			       "SELECT COUNT(*) FROM item_owner_audit WHERE item_uid=4040991 AND new_owner_type=8") ==
-				"0",
-		"rent rollback split custody, audit or inventory");
-	require(player_snapshot_repository_apply(test_connection, recovery).outcome ==
-				player_save_apply_outcome::applied &&
-			owner_of(4040991) == "8:0:0:2:4040991:0",
-		"rent after rollback");
-	std::cout
-		<< "[PASS] rent placements, replay, recovery intents, partial saves and SQL rollback\n";
+	std::cout << "[PASS] every save intent claims a NORENT key it holds\n";
 
 	// History and its player's quest after-image must be one transaction. A
 	// rejected INSERT must not leave the task cleared; replay must not duplicate it.
@@ -1061,6 +1142,78 @@ int main()
 				"0",
 		"a colliding reward UID stole another owner's item or recorded history");
 	std::cout << "[PASS] quest reward custody, history, rollback, replay and UID collision\n";
+
+	// Snapshot nesting supports more levels than InnoDB's cascading delete.
+	// Replacement must not recursively delete the old tree through its parents.
+	execute(test_connection,
+		"INSERT INTO player_data(pid,name,account_name) VALUES(90001,'DeepInventory','claim_probe')");
+	player_snapshot deep{};
+	deep.schema_version = PLAYER_SNAPSHOT_SCHEMA_VERSION;
+	deep.pid = 90001;
+	deep.revision = 1;
+	deep.components = PLAYER_COMPONENT_INVENTORY;
+	deep.room_vnum = 3001;
+	deep.encoded_size_bound = PLAYER_SNAPSHOT_MAX_BYTES;
+	constexpr int depth = 20;
+	for (int index = 0; index < depth; ++index)
+	{
+		auto nested = item(17000000 + index, 4917, index - 1);
+		nested.type = ITEM_CONTAINER;
+		nested.affects[0] = { APPLY_HITROLL, 1 };
+		nested.extra_descriptions.push_back({ "depth-note", "preserved", false, {} });
+		deep.items.push_back(std::move(nested));
+	}
+	require(player_snapshot_repository_apply(test_connection, deep).outcome ==
+			player_save_apply_outcome::applied,
+		"initial deep inventory checkpoint");
+	const std::string original_links =
+		scalar(test_connection,
+		       "SELECT GROUP_CONCAT(CONCAT(id,':',COALESCE(container_id,0)) ORDER BY id) "
+		       "FROM player_items WHERE pid=90001");
+	deep.revision = 2;
+	deep.items.back().cost = 27;
+	execute(test_connection,
+		"CREATE TRIGGER reject_deep_delete BEFORE DELETE ON player_items FOR EACH ROW "
+		"BEGIN IF OLD.pid=90001 THEN SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT='deep replacement rollback'; END IF; END");
+	const auto failed_deep = player_snapshot_repository_apply(test_connection, deep);
+	execute(test_connection, "DROP TRIGGER reject_deep_delete");
+	require(failed_deep.outcome == player_save_apply_outcome::terminal_failure &&
+			failed_deep.rolled_back &&
+			scalar(test_connection,
+			       "SELECT GROUP_CONCAT(CONCAT(id,':',COALESCE(container_id,0)) ORDER BY id) "
+			       "FROM player_items WHERE pid=90001") == original_links &&
+			scalar(test_connection,
+			       "SELECT save_revision FROM player_data WHERE pid=90001") == "1",
+		"failed replacement did not roll back detached parent links and revision");
+	require(player_snapshot_repository_apply(test_connection, deep).outcome ==
+			player_save_apply_outcome::applied,
+		"deep inventory replacement checkpoint");
+	require(scalar(test_connection,
+		       "SELECT COUNT(*) FROM player_items WHERE pid=90001 AND obj_uid BETWEEN 17000000 AND 17000019") ==
+				"20" &&
+			scalar(test_connection,
+			       "SELECT COUNT(*) FROM player_items child JOIN player_items parent ON child.container_id=parent.id "
+			       "WHERE child.pid=90001 AND child.obj_uid=parent.obj_uid+1") ==
+				"19" &&
+			scalar(test_connection,
+			       "SELECT COUNT(*) FROM player_item_affects a JOIN player_items i ON i.id=a.item_id WHERE i.pid=90001 AND a.location=18 AND a.modifier=1") ==
+				"20" &&
+			scalar(test_connection,
+			       "SELECT COUNT(*) FROM player_item_extra_descr e JOIN player_items i ON i.id=e.item_id "
+			       "WHERE i.pid=90001 AND e.keyword='depth-note' AND e.description='preserved'") ==
+				"20" &&
+			scalar(test_connection,
+			       "SELECT cost FROM player_items WHERE obj_uid=17000019") == "27",
+		"deep replacement lost UID graph, metadata or updated payload");
+	deep.revision = 3;
+	deep.items.clear();
+	require(player_snapshot_repository_apply(test_connection, deep).outcome ==
+				player_save_apply_outcome::applied &&
+			scalar(test_connection,
+			       "SELECT COUNT(*) FROM player_items WHERE pid=90001") == "0",
+		"empty checkpoint did not remove the deep inventory graph");
+	std::cout
+		<< "[PASS] deep inventory replacement, metadata and rollback within supported nesting\n";
 
 	mysql_close(test_connection);
 	mysql_library_end();

@@ -26,6 +26,7 @@ affects = '\n'.join(function(ROOT/'src/magic/affects.c', signature) for signatur
 
 HARNESS = r'''
 #include "item/weapon_actions.h"
+#include "combat/attack_continuation.c"
 static int attacks=0, hits=0, damage_amount=0, healed_amount=0, packed=0, dirty=0, call_mutation=0;
 static bool skin=true;
 static P_char sword_master=nullptr;
@@ -307,10 +308,16 @@ signatures = ('int good_evil_stoneOrSoulshield(', 'void good_evil_procDrain(',
     'void good_evil_coolDown(', 'int killOtherSword(', 'int attemptToDisengage(',
     'void good_evil_poofSword(', 'void good_evil_configSword(', 'int good_evil_sword(')
 callbacks='\n'.join(function(specs,s) for s in signatures)
+callbacks+='\n'+function(ROOT/'src/combat/fight.c','static void cast_packed_weapon_spell(')
+callbacks+='\n'+function(ROOT/'src/net/comm.c','void act_trio(')
+callbacks+='\n'+function(ROOT/'src/specs/specs.object.c','bool periodic_stoneskin(')
 callbacks+='\n'+function(ROOT/'src/combat/fight.c','bool weapon_proc(')
+callbacks+='\n'+'\n'.join(function(ROOT/'src/magic/magic.c',s) for s in (
+    'static int vitality_hit_points(','static int vitality_duration('))
 callbacks+='\n'+function(ROOT/'src/magic/magic.c','void spell_vitality(').replace(
     'void spell_vitality(', 'static void real_spell_vitality(', 1)
-with tempfile.TemporaryDirectory(prefix='duris-swords-') as directory:
+(ROOT/'bin/tests').mkdir(parents=True, exist_ok=True)
+with tempfile.TemporaryDirectory(prefix='duris-swords-', dir=ROOT/'bin/tests') as directory:
     source=Path(directory)/'harness.cpp'; binary=Path(directory)/'harness'
     source.write_text(scope['platform']+scope['fixture']+scope['boundary']+
         native_boundary.replace('// INSERT_AFFECTS',affects)+HARNESS.replace('// INSERT_CALLBACKS',callbacks))

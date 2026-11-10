@@ -1158,6 +1158,13 @@ static void ws_reset_chargen(struct descriptor_data *d)
 	d->chargen_newbie = 0;
 }
 
+/* Only an account menu with no body or load in flight may log in or enter a character. */
+static bool ws_at_account_menu(struct descriptor_data *d)
+{
+	return !d->character && !d->player_load_request_id &&
+	       (STATE(d) == CON_ACCT_SELECT_CHAR || STATE(d) == CON_DISPLAY_ACCT_MENU);
+}
+
 /* handle login command */
 void ws_cmd_login(struct descriptor_data *d, cJSON *data)
 {
@@ -1168,6 +1175,11 @@ void ws_cmd_login(struct descriptor_data *d, cJSON *data)
 	if (d && (d->durisweb_verified || d->durisweb_backend))
 	{
 		ws_send_auth_failed(d, "Service connection cannot log in as a player");
+		return;
+	}
+	if (STATE(d) != CON_GET_ACCT_NAME && !ws_at_account_menu(d))
+	{
+		ws_send_auth_failed(d, "Leave your character before logging in again");
 		return;
 	}
 	if (!ws_player_auth_attempt(d, 0))
@@ -1247,6 +1259,14 @@ void ws_finish_login(struct descriptor_data *d, int password_valid)
 	if (!password_valid)
 	{
 		ws_send_auth_failed(d, "Invalid account or password");
+		d->account = free_account(d->account);
+		return;
+	}
+	if (d->account->acct_blocked == ACCOUNT_BLOCK_DELETION)
+	{
+		ws_send_auth_failed(
+			d,
+			"This account is being deleted. Connect by Telnet to finish the deletion.");
 		d->account = free_account(d->account);
 		return;
 	}
@@ -1372,8 +1392,8 @@ void ws_cmd_enter(struct descriptor_data *d, cJSON *data)
 	struct acct_chars *c;
 	struct descriptor_data *k, *next_k;
 
-	/* prevent duplicate entry if already entering or playing */
-	if (d->connected == CON_ACCT_CONFIRM_CHAR || d->connected == CON_PLAYING)
+	/* prevent duplicate entry if already entering, waiting for approval or playing */
+	if (d->account && !ws_at_account_menu(d))
 	{
 		return;
 	}
@@ -1527,6 +1547,8 @@ void ws_cmd_game(struct descriptor_data *d, cJSON *data)
 }
 
 /* handle register command - create a new account */
+static void ws_begin_email_verification(P_desc d, const char *email);
+
 void ws_cmd_register(struct descriptor_data *d, cJSON *data)
 {
 	cJSON *account_json, *password_json, *email_json;
@@ -1652,55 +1674,38 @@ void ws_cmd_register(struct descriptor_data *d, cJSON *data)
 				    hashed_desc->account = free_account(hashed_desc->account);
 				    return;
 			    }
-			    /* The name is checked on the writer, behind every account save queued
-			     * before it. */
-			    account_read(
-				    hashed_desc, hashed_desc->account->acct_name,
-				    [hash = std::string(hash)](P_desc completed_desc, bool ok,
-							       P_acct existing)
+			    if (pwipe_launch_closed_at(time(NULL)))
+			    {
+				    pwipe_launch_deny(hashed_desc);
+				    return;
+			    }
+			    if (hashed_desc->account->acct_password)
+				    FREE(hashed_desc->account->acct_password);
+			    hashed_desc->account->acct_password = str_dup(hash);
+			    const std::string requested_email = hashed_desc->account->acct_email;
+			    account_create(
+				    hashed_desc,
+				    [requested_email](P_desc reader, bool ok)
 				    {
-					    if (!ok || existing ||
-						is_email_taken(completed_desc->account->acct_email))
+					    if (!ok)
 					    {
-						    free_account(existing);
 						    ws_send_auth_failed(
-							    completed_desc,
+							    reader,
 							    "Unable to create account with those details");
-						    completed_desc->account =
-							    free_account(completed_desc->account);
+						    reader->account = free_account(reader->account);
 						    return;
 					    }
-					    if (pwipe_launch_closed_at(time(NULL)))
-					    {
-						    pwipe_launch_deny(completed_desc);
-						    return;
-					    }
-					    completed_desc->account->acct_password =
-						    str_dup(hash.c_str());
-
-					    /* mark account as confirmed (skip email verification for web clients) */
-					    completed_desc->account->acct_confirmed = 1;
-
-					    /* save account to disk */
-					    if (write_account(completed_desc->account) == -1)
-					    {
-						    ws_send_auth_failed(
-							    completed_desc,
-							    "Failed to save account - server error");
-						    statuslog(
-							    56,
-							    "&+RALERT&n: WebSocket account write failed");
-						    completed_desc->account =
-							    free_account(completed_desc->account);
-						    return;
-					    }
-
 					    statuslog(56, "WebSocket: New account created");
-
-					    STATE(completed_desc) = CON_ACCT_SELECT_CHAR;
-					    ws_send_auth_success(
-						    completed_desc,
-						    completed_desc->account->acct_name);
+					    STATE(reader) = CON_ACCT_SELECT_CHAR;
+					    ws_send_auth_success(reader,
+								 reader->account->acct_name);
+					    if (account_recovery_enabled())
+						    ws_begin_email_verification(
+							    reader, requested_email.c_str());
+					    else
+						    ws_send_system(
+							    reader, "info",
+							    "Email verification is unavailable; no recovery address was saved.");
 				    });
 		    }))
 	{
@@ -2123,8 +2128,6 @@ void ws_cmd_create_character(struct descriptor_data *d, cJSON *data)
 {
 	cJSON *name_item, *race_item, *class_item, *sex_item, *align_item;
 	cJSON *hometown_item, *hardcore_item, *newbie_item;
-	cJSON *response;
-	char *json_str;
 	const char *name;
 	int race_id, class_id, sex, alignment;
 	int hometown_id, is_hardcore, is_newbie;
@@ -2132,6 +2135,12 @@ void ws_cmd_create_character(struct descriptor_data *d, cJSON *data)
 
 	if (!ws_chargen_allowed(d))
 		return;
+	if (d->account->num_chars >= MAX_CHARS_PER_ACCOUNT)
+	{
+		ws_send_system(d, "error",
+			       "Your account already has the maximum number of characters.");
+		return;
+	}
 	if (d->chargen_phase != CHARGEN_READY)
 	{
 		ws_send_system(d, "error", "Complete the preceding stat creation steps first");
@@ -2273,7 +2282,8 @@ void ws_cmd_create_character(struct descriptor_data *d, cJSON *data)
 		return;
 	}
 
-	const int actual_hometown = hometown_item ? hometown_id : find_hometown(race_id, true);
+	const int actual_hometown = hometown_item ? hometown_id :
+						    find_hometown(race_id, true, resolved_racewar);
 	if (!creation_hometown_available(race_id, resolved_racewar, actual_hometown))
 	{
 		ws_send_system(d, "error", "That hometown is not available for your race and side");
@@ -2401,56 +2411,69 @@ void ws_cmd_create_character(struct descriptor_data *d, cJSON *data)
 	/* copy account password to character */
 	strlcpy(ch->only.pc->pwd, d->account->acct_password, sizeof ch->only.pc->pwd);
 
-#ifdef USE_ACCOUNT
-	add_char_to_account(d);
-#endif
-
-	/* save character to disk */
-	if (chaos_mud_enabled())
-		schedule_chaos_new_character_kit_before_entry(ch);
-	else
-		writeCharacter(ch, RENT_QUIT, NOWHERE);
-
-	account_racewar_admission admission = {};
-	if (!account_commit_character_admission(d, ch, false, &admission))
-	{
-		char message[512];
-		account_format_racewar_denial(&admission, message, sizeof(message));
-		ws_send_system(d, "error", message);
-		item_creation_grant_cancel_batch_before_entry(ch);
-		d->character = NULL;
-		ch->desc = NULL;
-		free_char(ch);
+	if (!keep_new_character(d))
 		ws_reset_chargen(d);
-		STATE(d) = CON_ACCT_SELECT_CHAR;
-		ws_send_auth_success(d, d->account->acct_name);
+}
+
+void ws_finish_kept_character(P_desc d, bool created)
+{
+	P_char ch = d->character;
+	const bool waiting = IS_SET(ch->specials.act3, PLR3_APPROVAL_PENDING);
+	const int race_id = GET_RACE(ch);
+	const int class_id = flag2idx(ch->player.m_class);
+	const int alignment = GET_ALIGNMENT(ch) / 1000;
+	const int resolved_racewar = GET_RACEWAR(ch);
+	const int actual_hometown = d->chargen_hometown;
+	const bool is_hardcore = IS_SET(ch->specials.act2, PLR2_HARDCORE_CHAR);
+	const bool is_newbie = IS_SET(ch->specials.act2, PLR2_NEWBIE);
+	if (!created)
+	{
+		account_racewar_admission admission = {};
+		const auto *membership =
+			find_char_in_list(d->account->acct_character_list, GET_NAME(ch));
+		if (!account_commit_character_admission(d, ch, membership && membership->blocked,
+							&admission))
+		{
+			char message[512];
+			account_format_racewar_denial(&admission, message, sizeof(message));
+			ws_send_system(d, "error", message);
+			item_creation_grant_cancel_batch_before_entry(ch);
+			d->character = NULL;
+			ch->desc = NULL;
+			free_char(ch);
+			ws_reset_chargen(d);
+			STATE(d) = CON_ACCT_SELECT_CHAR;
+			ws_send_auth_success(d, d->account->acct_name);
+			return;
+		}
+
+		logit(LOG_NEW, "%s [%s] new WebSocket player.", GET_NAME(ch), d->host);
+		statuslog(ch->player.level, "%s [%s] new WebSocket player.", GET_NAME(ch), d->host);
+
+		/* set connection state before entering game */
+		STATE(d) = CON_PLAYING;
+		enter_game(d);
+		/* Entry raises a new character from level 0 to 1; publish that projection too. */
+		const int projection_room = ch->in_room >= 0 && ch->in_room <= top_of_world ?
+						    world[ch->in_room].number :
+						    ch->specials.was_in_room;
+		if (!sync_account_character_projection(ch, projection_room, TRUE))
+			statuslog(56, "WebSocket new-character account projection save failed");
+		d->prompt_mode = !item_creation_grant_blocks_commands(ch);
+
+		/* send full game state via gmcp */
+		ws_send_full_game_state(d);
 		return;
 	}
-
-	logit(LOG_NEW, "%s [%s] new WebSocket player.", GET_NAME(ch), d->host);
-	statuslog(ch->player.level, "%s [%s] new WebSocket player.", GET_NAME(ch), d->host);
-
-	ws_reset_chargen(d);
-	/* set connection state before entering game */
-	STATE(d) = CON_PLAYING;
-	enter_game(d);
-	/* Entry raises a new character from level 0 to 1; publish that projection too. */
-	const int projection_room = ch->in_room >= 0 && ch->in_room <= top_of_world ?
-					    world[ch->in_room].number :
-					    ch->specials.was_in_room;
-	if (!sync_account_character_projection(ch, projection_room, TRUE))
-		statuslog(56, "WebSocket new-character account projection save failed");
-	d->prompt_mode = !item_creation_grant_blocks_commands(ch);
-
-	/* send full game state via gmcp */
-	ws_send_full_game_state(d);
-
-	/* send success response */
-	response = cJSON_CreateObject();
+	/* Only a matching committed Keep reaches this response. */
+	cJSON *response = cJSON_CreateObject();
 	cJSON_AddStringToObject(response, "type", "create_character");
 	cJSON_AddStringToObject(response, "status", "created");
-	cJSON_AddStringToObject(response, "message", "Character created successfully!");
-	cJSON_AddStringToObject(response, "name", capitalized_name);
+	cJSON_AddStringToObject(response, "message",
+				waiting ? "Character saved; waiting for staff approval." :
+					  "Character saved. Select it when you are ready to play.");
+	cJSON_AddBoolToObject(response, "waitingForApproval", waiting);
+	cJSON_AddStringToObject(response, "name", GET_NAME(ch));
 	cJSON_AddStringToObject(response, "race", race_names_table[race_id].normal);
 	cJSON_AddStringToObject(response, "class", class_names_table[class_id].normal);
 	cJSON_AddStringToObject(response, "alignment", ws_get_class_alignment(alignment));
@@ -2467,7 +2490,7 @@ void ws_cmd_create_character(struct descriptor_data *d, cJSON *data)
 		cJSON_AddStringToObject(response, "hometown", town_name_list[actual_hometown]);
 	}
 
-	json_str = cJSON_PrintUnformatted(response);
+	char *json_str = cJSON_PrintUnformatted(response);
 	if (json_str)
 	{
 		websocket_send_text(d, json_str);
@@ -2475,6 +2498,7 @@ void ws_cmd_create_character(struct descriptor_data *d, cJSON *data)
 	}
 
 	cJSON_Delete(response);
+	ws_reset_chargen(d);
 }
 
 /* validate character name - check if already taken */
@@ -2613,6 +2637,12 @@ void ws_cmd_get_hometowns(struct descriptor_data *d, cJSON *data)
 		}
 		alignment = align_item->valuestring;
 		racewar = ws_resolve_racewar_side(race_id, selected_alignment);
+	}
+	else if (race_id == RACE_TIEFLING)
+	{
+		ws_send_system(d, "error",
+			       "Choose an alignment before requesting Tiefling hometowns");
+		return;
 	}
 	else if (strcmp(faction, "neutral"))
 	{
@@ -2773,77 +2803,88 @@ void ws_cmd_account_info(struct descriptor_data *d, cJSON * /*data*/)
 }
 
 /* change account email */
+static void ws_begin_email_verification(P_desc d, const char *email)
+{
+	const auto outcome = account_email_request(d->account, email, d->host);
+	if (outcome == account_recovery_request_outcome::queued)
+		ws_send_account_message(d, "email_verification_requested", NULL, NULL);
+	else
+		ws_send_account_message(
+			d, "error", NULL,
+			outcome == account_recovery_request_outcome::disabled ?
+				"Email verification is unavailable; contact staff" :
+			outcome == account_recovery_request_outcome::suppressed ?
+				"Use your pending verification code, or wait 10 minutes before requesting another" :
+				"Unable to send a verification code; try again later or contact staff");
+}
+
+static bool ws_can_change_email(P_desc d)
+{
+	return d && d->account && !d->durisweb_verified && !d->durisweb_backend &&
+	       (STATE(d) == CON_ACCT_SELECT_CHAR || STATE(d) == CON_DISPLAY_ACCT_MENU ||
+		STATE(d) == CON_PLAYING);
+}
+
 void ws_cmd_change_email(struct descriptor_data *d, cJSON *data)
 {
-	cJSON *new_email_json;
-	const char *new_email;
-	cJSON *result_data;
-
-	if (!d->account)
+	if (!ws_can_change_email(d))
 	{
 		ws_send_account_message(d, "error", NULL, "Not logged in");
 		return;
 	}
-
-	if (!data)
-	{
-		ws_send_account_message(d, "error", NULL, "Missing data");
-		return;
-	}
-
-	new_email_json = cJSON_GetObjectItem(data, "newEmail");
-	if (!new_email_json || !cJSON_IsString(new_email_json))
-	{
-		ws_send_account_message(d, "error", NULL, "Missing newEmail field");
-		return;
-	}
-
-	new_email = new_email_json->valuestring;
-
-	/* validate email format */
-	if (!is_valid_email(new_email))
+	const cJSON *email = data ? cJSON_GetObjectItemCaseSensitive(data, "newEmail") : NULL;
+	if (!cJSON_IsString(email) || !is_valid_email(email->valuestring))
 	{
 		ws_send_account_message(d, "error", NULL, "Invalid email format");
 		return;
 	}
-
-	/* check if email is already taken */
-	if (is_email_taken(new_email))
+	if (is_email_taken(email->valuestring) &&
+	    (!d->account->acct_email || strcasecmp(email->valuestring, d->account->acct_email)))
 	{
-		/* allow keeping the same email */
-		if (!d->account->acct_email || strcasecmp(new_email, d->account->acct_email) != 0)
-		{
-			ws_send_account_message(d, "error", NULL, "Email already in use");
-			return;
-		}
-	}
-
-	/* update email */
-	if (d->account->acct_email)
-	{
-		FREE(d->account->acct_email);
-	}
-	d->account->acct_email = str_dup(new_email);
-	if (-1 == write_account(d->account))
-	{
-		ws_send_account_message(d, "error", NULL, "Failed to save email change");
-		statuslog(56, "&+RALERT&n: account email-change save failed");
-		persistence_alert(AVATAR, "account", "redacted", "none", "none", "write_failed",
-				  NULL);
+		ws_send_account_message(d, "error", NULL, "Unable to use that email address");
 		return;
 	}
-
-	/* A reset code mailed to the old address must never complete against the new one. */
-	account_recovery_invalidate(d->account->acct_name);
-
-	statuslog(56, "Account email changed");
-
-	result_data = cJSON_CreateObject();
-	cJSON_AddStringToObject(result_data, "email", new_email);
-	ws_send_account_message(d, "email_changed", result_data, NULL);
+	ws_begin_email_verification(d, email->valuestring);
 }
 
-/* change account password */
+static void ws_cmd_confirm_email(P_desc d, cJSON *data)
+{
+	if (!ws_can_change_email(d))
+	{
+		ws_send_account_message(d, "error", NULL, "Not logged in");
+		return;
+	}
+	const cJSON *code = data ? cJSON_GetObjectItemCaseSensitive(data, "code") : NULL;
+	if (!cJSON_IsString(code))
+	{
+		ws_send_account_message(d, "error", NULL, "Missing verification code");
+		return;
+	}
+	account_email_complete(
+		d, code->valuestring,
+		[](P_desc reader, account_recovery_complete_outcome outcome)
+		{
+			if (!reader)
+				return;
+			if (outcome != account_recovery_complete_outcome::ok)
+			{
+				ws_send_account_message(
+					reader, "error", NULL,
+					outcome == account_recovery_complete_outcome::write_failed ||
+							outcome ==
+								account_recovery_complete_outcome::
+									load_failed ?
+						"Email could not be saved; retry with the same code" :
+						"Invalid or expired email verification code");
+				return;
+			}
+			reader->account_recovery_attempts = 0;
+			cJSON *result = cJSON_CreateObject();
+			cJSON_AddStringToObject(result, "email", reader->account->acct_email);
+			ws_send_account_message(reader, "email_changed", result, NULL);
+		});
+}
+
 void ws_cmd_change_password(struct descriptor_data *d, cJSON *data)
 {
 	cJSON *current_json, *new_json;
@@ -3242,6 +3283,7 @@ void ws_cmd_delete_character(struct descriptor_data *d, cJSON *data)
 			    }
 			    // One in the game, linkdead or entering it would go on playing, unsaved.
 			    if (is_pid_online(GET_PID(loaded), TRUE) ||
+				account_character_body_held(GET_PID(loaded), nullptr) ||
 				player_load_pipeline_pid_pending(GET_PID(loaded)))
 			    {
 				    free_char(loaded);
@@ -3400,6 +3442,7 @@ static void admin_delete_character_loaded(P_desc d, P_acct target_acct, const ch
 			    }
 			    // One in the game, linkdead or entering it would go on playing, unsaved.
 			    if (is_pid_online(GET_PID(loaded), TRUE) ||
+				account_character_body_held(GET_PID(loaded), nullptr) ||
 				player_load_pipeline_pid_pending(GET_PID(loaded)))
 			    {
 				    free_char(loaded);
@@ -3567,9 +3610,10 @@ void ws_cmd_rested_bonus(struct descriptor_data *d, cJSON * /*data*/)
 
 		char_obj = cJSON_CreateObject();
 		cJSON_AddStringToObject(char_obj, "name", name_cap);
-		cJSON_AddNumberToObject(char_obj, "restedPercent", percent);
+		cJSON_AddBoolToObject(char_obj, "availableOnFirstEntry", c->level == 0);
+		cJSON_AddNumberToObject(char_obj, "restedPercent", c->level == 0 ? 100 : percent);
 		cJSON_AddNumberToObject(char_obj, "restedHours",
-					offline_hours > max_hours ? max_hours : offline_hours);
+					c->level == 0 ? 0 : MIN(offline_hours, max_hours));
 		cJSON_AddNumberToObject(char_obj, "maxHours", max_hours);
 		cJSON_AddItemToArray(characters, char_obj);
 	}
@@ -3584,6 +3628,11 @@ void ws_cmd_logout(struct descriptor_data *d, cJSON * /*data*/)
 	if (!d->account)
 	{
 		ws_send_account_message(d, "error", NULL, "Not logged in");
+		return;
+	}
+	if (STATE(d) == CON_PLAYING)
+	{
+		ws_send_account_message(d, "error", NULL, "Leave the game before logging out");
 		return;
 	}
 
@@ -3888,6 +3937,7 @@ void ws_handle_command(struct descriptor_data *d, const char *cmd, cJSON *data)
 		{ "swap_stats", ws_cmd_swap_stats },
 		{ "account_info", ws_cmd_account_info },
 		{ "change_email", ws_cmd_change_email },
+		{ "confirm_email", ws_cmd_confirm_email },
 		{ "change_password", ws_cmd_change_password },
 		{ "delete_character", ws_cmd_delete_character },
 		{ "rested_bonus", ws_cmd_rested_bonus },

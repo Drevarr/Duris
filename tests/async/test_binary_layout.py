@@ -86,7 +86,6 @@ assert "BACKEND_STAMP" in makefile
 for backend, profile in (
     ("mariadb", "development"),
     ("mariadb", "production"),
-    ("flatfile", "development"),
 ):
     output = subprocess.run(
         [
@@ -105,8 +104,9 @@ for backend, profile in (
         capture_output=True,
     ).stdout
     assert f"bin/objects/server/{backend}/{profile}" in output
-    assert f"backend='{backend}'" in output
-    assert f"profile='{profile}'" in output
+    stamp = output.index(f'"{backend}/{profile}" >"$tmp.backend"')
+    lock = output.index('flock -x 8', stamp)
+    assert lock < output.index('mv -T "$tmp"', lock) < output.index('mv -T "$tmp.backend"', lock)
     # A development build stays debuggable; a production build is optimised.
     if profile == "development":
         assert "-DTEST_MUD" in output

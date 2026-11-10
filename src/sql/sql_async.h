@@ -30,8 +30,7 @@
  * the persistence writer as an `sql` job, in capture order with the saves around it.
  * Each job runs in one transaction. A read is queued the same way, so it sees every
  * write queued before it; its rows come back to the game thread on a later pulse
- * (sql_async_pulse()). Without a database (the flat-file backend) nothing is queued
- * and the calls return false.
+ * (sql_async_pulse()).
  *
  * During boot the writer is not running yet. Until sql_async_boot_done() a write is
  * applied before its call returns, on the game thread's connection, and returns false
@@ -62,6 +61,8 @@ bool sql_queue_statements_at(struct persistence_query_site site,
 			     std::shared_ptr<sql_write_receipt> receipt);
 // Writes that need the database's answer first (a lookup, then an update or an insert).
 bool sql_queue_work_at(struct persistence_query_site site, sql_work work);
+// For work capturing a large payload: `bytes` counts it against the writer's pending limit.
+bool sql_queue_sized_work_at(struct persistence_query_site site, size_t bytes, sql_work work);
 bool sql_queue_work_at(struct persistence_query_site site, sql_work work,
 		       std::shared_ptr<sql_write_receipt> receipt);
 // done(ok, rows) runs on the game thread; ok is false when the read failed.
@@ -93,6 +94,7 @@ size_t sql_async_pulse(void);
 #define sql_queue(...) sql_queue_at(PERSISTENCE_QUERY_SITE, __VA_ARGS__)
 #define sql_queue_statements(...) sql_queue_statements_at(PERSISTENCE_QUERY_SITE, __VA_ARGS__)
 #define sql_queue_work(...) sql_queue_work_at(PERSISTENCE_QUERY_SITE, __VA_ARGS__)
+#define sql_queue_sized_work(...) sql_queue_sized_work_at(PERSISTENCE_QUERY_SITE, __VA_ARGS__)
 #define sql_read(...) sql_read_at(PERSISTENCE_QUERY_SITE, __VA_ARGS__)
 #define sql_read_for(...) sql_read_for_at(PERSISTENCE_QUERY_SITE, __VA_ARGS__)
 #define sql_read_work(...) sql_read_work_at(PERSISTENCE_QUERY_SITE, __VA_ARGS__)

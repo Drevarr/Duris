@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Real local bartender-quest journey for MariaDB and flatfile-primary builds.
+"""Real local bartender-quest journey on MariaDB.
 
 This is intentionally a ``run_`` script rather than an automatically discovered
 regression: it builds/boots the full world, exercises restart, and needs Docker for the
@@ -24,7 +24,7 @@ import time
 import uuid
 from concurrent.futures import ThreadPoolExecutor
 
-from test_flatfile_combat_journey import MudClient, reconnect_character, create_character
+from test_mariadb_combat_journey import MudClient, reconnect_character, create_character
 
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
@@ -32,7 +32,7 @@ BARTENDER_ROOM = 16633
 QUEST_LEVEL = 11
 # The migrations verify their schema on MariaDB 10.11 and MySQL 8.0 only.
 DB_IMAGE = os.environ.get("DURIS_WORLD_QUEST_DB_IMAGE", "mariadb:10.11")
-REQUESTED_BACKEND = os.environ.get("DURIS_WORLD_QUEST_BACKEND", "both")
+REQUESTED_BACKEND = os.environ.get("DURIS_WORLD_QUEST_BACKEND", "mariadb")
 BINARY_OVERRIDE = os.environ.get("DURIS_WORLD_QUEST_BINARY")
 JOURNEY = os.environ.get("DURIS_WORLD_QUEST_JOURNEY", "both")
 GAMEPLAY_CASES = tuple(tuple(map(int, case.split(":"))) for case in
@@ -50,8 +50,8 @@ if not GAMEPLAY_CASES or any(case not in {(11, 2), (11, 1), (29, 1), (29, 2), (3
     raise ValueError("unsupported focused gameplay cases")
 if JOURNEY not in {"both", "recovery", "gameplay", "rewards", "reward-recovery", "rested-ask", "audit", "reported", "history", "history-failure", "history-failure-restart"}:
     raise ValueError("unsupported DURIS_WORLD_QUEST_JOURNEY scenario")
-if REQUESTED_BACKEND not in {"both", "mariadb", "flatfile"}:
-    raise ValueError("DURIS_WORLD_QUEST_BACKEND must be both, mariadb, or flatfile")
+if REQUESTED_BACKEND != "mariadb":
+    raise ValueError("DURIS_WORLD_QUEST_BACKEND must be mariadb")
 
 
 def require(condition: bool, message: str) -> None:
@@ -103,12 +103,6 @@ def build_server(backend: str, build_root: pathlib.Path) -> pathlib.Path:
     require(result.returncode == 0,
             f"{backend} server build failed:\n{result.stdout[-12000:].decode(errors='replace')}")
     output = result.stdout.decode(errors="replace")
-    if backend == "flatfile":
-        require("-D__NO_MYSQL__" in output, "flat build did not define __NO_MYSQL__")
-        require("-I/usr/include/mysql" not in output, "flat build used MySQL headers")
-        require("-lmysqlclient" not in output, "flat build linked MySQL")
-    else:
-        require("-D__NO_MYSQL__" not in output, "MariaDB build selected flatfile mode")
     require(binary.is_file() and os.access(binary, os.X_OK),
             f"{backend} build did not create an executable")
     return binary
@@ -246,7 +240,7 @@ def runtime_environment(backend: str, state_root: pathlib.Path, player_journal: 
     environment = {
         "PATH": os.environ.get("PATH", "/usr/bin:/bin"),
         "ENVIRONMENT": "local",
-        "PERSISTENCE_MODE": "flatfile-primary" if backend == "flatfile" else "mariadb-primary",
+        "PERSISTENCE_MODE": "mariadb-primary",
         "CRITICAL_COMMAND_JOURNAL_DIR": str(critical_journal),
         "LISTEN_ADDRESS": "127.0.0.1",
         "DURIS_TLS_PORT": str(tls_port),
@@ -258,15 +252,12 @@ def runtime_environment(backend: str, state_root: pathlib.Path, player_journal: 
         "CHAOS_TEST_ACCOUNT": "Journeyacct",
         "CHAOS_STARTER_BONUSES": "FALSE",
     }
-    if backend == "flatfile":
-        environment["FLATFILE_STATE_DIR"] = str(state_root)
-    else:
-        if database_environment is None:
-            raise AssertionError("MariaDB runtime environment missing")
-        environment.update({key: database_environment[key] for key in (
-            "DB_HOST", "DB_PORT", "DB_USER", "DB_PASSWD", "DB_NAME",
-            "DB_ALLOWED_TARGETS", "DB_TLS", "DB_SOCKET",
-        )})
+    if database_environment is None:
+        raise AssertionError("MariaDB runtime environment missing")
+    environment.update({key: database_environment[key] for key in (
+        "DB_HOST", "DB_PORT", "DB_USER", "DB_PASSWD", "DB_NAME",
+        "DB_ALLOWED_TARGETS", "DB_TLS", "DB_SOCKET",
+    )})
     return environment
 
 
@@ -408,7 +399,9 @@ def navigate_quest(client: MudClient, run_root: pathlib.Path, *, returning: bool
         observed = gameplay_snapshot(client, run_root)
         if observed["room"] == batch[-1]["to"]:
             steps += len(batch)
-        elif observed["fighting"]:
+        elif observed["fighting"] or observed["position"] != posture:
+            # Combat, including a bash that ends the fight with the actor on
+            # the ground, stops the queued moves; resume from where it stopped.
             prefix = [batch[0]["from"]] + [step["to"] for step in batch]
             require(observed["room"] in prefix,
                     f"combat displaced the journey off its path: {observed}")
@@ -591,7 +584,7 @@ def perform_gameplay(client: MudClient, run_root: pathlib.Path, restart,
             partials.append(current)
             if not partial_persisted and level == 29 and (29, 1) in cases:
                 client.send("save")
-                client.expect("Save complete for Taverek.", timeout=120)
+                client.expect("Saving Taverek.", timeout=120)
                 saved = gameplay_snapshot(client, run_root)
                 require(saved["active"] and saved["kills"] < saved["quota"],
                         "combat completed before the partial checkpoint")
@@ -642,7 +635,7 @@ def perform_gameplay(client: MudClient, run_root: pathlib.Path, restart,
                            if (row.get("selector") or "").endswith(":" + str(uid))]
             require(len(reward_rows) == 1, "committed reward missing or duplicated in owner item wire snapshot")
         client.send("save")
-        client.expect("Save complete for Taverek.", timeout=120)
+        client.expect("Saving Taverek.", timeout=120)
         deadline = time.monotonic() + 30
         while stored_gameplay_history(database_environment, completed) != history_before + 1:
             require(time.monotonic() < deadline, "completion did not persist exactly one history row")
@@ -659,7 +652,7 @@ def perform_gameplay(client: MudClient, run_root: pathlib.Path, restart,
             "no real partial-progress restart was qualified")
     # One focused restart proves ordinary equipment plus all completed rewards.
     client.send("save")
-    client.expect("Save complete for Taverek.", timeout=120)
+    client.expect("Saving Taverek.", timeout=120)
     before_items = item_snapshot(client)
     client = restart(client)
     enable_items(client)
@@ -754,7 +747,7 @@ def perform_rested_ask(client, run_root, restart, database_environment):
                         stored_gameplay_history(database_environment, credited) == history + 1,
                         "expired ASK rest was lost, stacked, or history was repeated")
                 current_client.send("save")
-                current_client.expect("Save complete for Taverek.", timeout=120)
+                current_client.expect("Saving Taverek.", timeout=120)
                 current_client = restart(current_client)
                 final = settled_gameplay_snapshot(current_client, run_root)
                 # Chaos login restores level 56, independent of this fixture's
@@ -785,7 +778,7 @@ def perform_reward_recovery(client, run_root, restart, database_environment):
         require(history == stored_gameplay_history(database_environment, accepted),
                 "failed preparation consumed history")
         current_client.send("save")
-        current_client.expect("Save complete for Taverek.", timeout=120)
+        current_client.expect("Saving Taverek.", timeout=120)
         current_client = restart(current_client, lambda: control.write_text("9 0 0\n"))
         restored = settled_gameplay_snapshot(current_client, run_root)
         require(restored["frozen_item_count"] == 3 and restored["active"],
@@ -823,7 +816,7 @@ def perform_reward_recovery(client, run_root, restart, database_environment):
                 stored_gameplay_history(database_environment, claimed) == history + 1,
                 "secured recovery repeated generation, XP, or completion history")
         current_client.send("save")
-        current_client.expect("Save complete for Taverek.", timeout=120)
+        current_client.expect("Saving Taverek.", timeout=120)
         current_client = restart(current_client)
         final = settled_gameplay_snapshot(current_client, run_root)
         require(not final["active"] and uids <= {item["uid"] for item in final["items"]} and
@@ -860,7 +853,7 @@ def perform_reported(client: MudClient, run_root: pathlib.Path, restart,
     def persist(state):
         nonlocal client
         client.send("save")
-        client.expect("Save complete for Taverek.", timeout=120)
+        client.expect("Saving Taverek.", timeout=120)
         history = stored_gameplay_history(database_environment, state)
         client = restart(client)
         # Chaos entry restores its level-56 floor. Reapply only the requested
@@ -932,9 +925,9 @@ def perform_reported(client: MudClient, run_root: pathlib.Path, restart,
                 mapped["remaining"] == shared["remaining"] and not mapped["due"],
                 "locked-route map purchase changed entitlement/history or charged incorrectly")
         partner.send("save")
-        partner.expect("Save complete for Nimerek.", timeout=120)
+        partner.expect("Saving Nimerek.", timeout=120)
         client.send("save")
-        client.expect("Save complete for Taverek.", timeout=120)
+        client.expect("Saving Taverek.", timeout=120)
         partner.close()
         client = restart(client)
         client.send("chaos")  # Reapply current actor level only; no setup action is pending.
@@ -1081,7 +1074,7 @@ def perform_history_regrant(client: MudClient, run_root: pathlib.Path, restart,
             regrant["wallet"] == abandoned["wallet"] - 600,
             "history rollover changed allowance or purchase fee")
     client.send("save")
-    client.expect("Save complete for Taverek.", timeout=120)
+    client.expect("Saving Taverek.", timeout=120)
     client = restart(client)
     client.send("chaos")  # Reapply only the test actor's level after Chaos entry.
     restored = settled_gameplay_snapshot(client, run_root)
@@ -1194,7 +1187,7 @@ def perform_history_write_failure(client: MudClient, run_root: pathlib.Path, res
     client.send("chaos")
     before = settled_gameplay_snapshot(client, run_root)
     client.send("save")
-    client.expect("Save complete for Taverek.", timeout=120)
+    client.expect("Saving Taverek.", timeout=120)
     history_before = stored_gameplay_history(database_environment, before)
     sql("CREATE TRIGGER quest_history_refusal BEFORE INSERT ON world_quest_accomplished "
         "FOR EACH ROW SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT='fixture history failure'")
@@ -1242,7 +1235,7 @@ def perform_history_write_failure(client: MudClient, run_root: pathlib.Path, res
     require(stored_gameplay_history(database_environment, after) == history_before + 1,
             "recovery did not persist exactly one history row")
     client.send("save")
-    client.expect("Save complete for Taverek.", timeout=120)
+    client.expect("Saving Taverek.", timeout=120)
     client = restart(client)
     restored = settled_gameplay_snapshot(client, run_root)
     require(not restored["active"] and restored["wallet"] == after["wallet"] and
@@ -1269,8 +1262,7 @@ def perform_quest_journey(binary: pathlib.Path, backend: str, state_root: pathli
         probe_source = run_root / "recovery_probe.cpp"
         probe_binary = run_root / "recovery_probe.so"
         probe_source.write_text(RECOVERY_PROBE_SOURCE)
-        flags = (["-D__NO_MYSQL__", "-Isrc/no_mysql"] if backend == "flatfile" else
-                 subprocess.check_output(["mysql_config", "--cflags"], text=True).split())
+        flags = subprocess.check_output(["mysql_config", "--cflags"], text=True).split()
         built = run(["g++", "-std=c++20", "-g", "-shared", "-fPIC", "-Wall", "-Wextra", "-Werror",
                      "-fsanitize=undefined", "-fno-sanitize-recover=all", "-Isrc", *flags,
                      str(probe_source), "-lcjson", "-o", str(probe_binary)], timeout=60)
@@ -1402,7 +1394,7 @@ caller = gdb.newest_frame().older()
 if caller and (caller.name() or '').startswith('world_quest_roll_item_count'):
     index = int(gdb.parse_and_eval('quest_gameplay_bonus_rolls'))
     successes = int(gdb.parse_and_eval('quest_gameplay_bonus_successes'))
-    gdb.execute('return ' + ('10' if index < successes else '11'), to_string=True)
+    gdb.execute('return ' + ('1' if index < successes else '2'), to_string=True)
     gdb.execute('set quest_gameplay_bonus_rolls = ' + str(index + 1))
     gdb.execute('set $bonus_remaining = $bonus_remaining - 1')
     if int(gdb.parse_and_eval('$bonus_remaining')) == 0:
@@ -1507,7 +1499,7 @@ run
             client.expect("Quest-room test move complete.", timeout=15)
             client.expect("Quest-room test funds committed.", timeout=60)
             client.send("save")
-            client.expect("Save complete for Taverek.", timeout=120)
+            client.expect("Saving Taverek.", timeout=120)
             client.send("look")
             client.expect("Mathorn's Bar", timeout=15)
             if JOURNEY == "history":
@@ -1589,7 +1581,7 @@ run
             require(output_path.read_text(errors="replace").count("World quest catalog ready:") == 1,
                     "catalog was rebuilt during repeated quest/abandon commands")
             client.send("save")
-            client.expect("Save complete for Taverek.", timeout=120)
+            client.expect("Saving Taverek.", timeout=120)
             player_state = None
             if database_environment is not None:
                 player_state = verify_mariadb_player_state(database_environment)
@@ -1613,7 +1605,7 @@ run
             client.send("ask bartender quest")
             client.expect("Your free replacement and earned progress remain yours.", timeout=30)
             client.send("save")
-            client.expect("Save complete for Taverek.", timeout=120)
+            client.expect("Saving Taverek.", timeout=120)
             if database_environment is not None:
                 verify_mariadb_player_state(database_environment, active=0, map_bought=1,
                                             replacement_due=1)
@@ -1636,7 +1628,7 @@ run
             require(all(relogged[k] == pending[k] for k in JOURNEY_FIELDS),
                     "pending entitlement changed on relogin")
             client.send("save")
-            client.expect("Save complete for Taverek.", timeout=120)
+            client.expect("Saving Taverek.", timeout=120)
             client.send("rent")
             client.expect("ACCOUNT MENU", timeout=30)
             client.send("0")
@@ -1677,7 +1669,7 @@ run
             require(replacement["origin"] == BARTENDER_ROOM and replacement["map_room"] > 0,
                     "replacement lost its current verified origin/entrance")
             client.send("save")
-            client.expect("Save complete for Taverek.", timeout=120)
+            client.expect("Saving Taverek.", timeout=120)
             if database_environment is not None:
                 verify_mariadb_player_state(database_environment, map_bought=1)
             if JOURNEY != "recovery":
@@ -1842,8 +1834,6 @@ def run_backend(backend: str, build_root: pathlib.Path) -> dict:
             result["database_zone_flags"] = verify_mariadb_zone_flag(container, root_password, database)
             require(result["database_zone_flags"]["quest_enabled_rows"] == 0,
                     "MariaDB fixture unexpectedly needed quest_zone=1 for successful quest")
-        else:
-            result["flatfile_state_root_created"] = state_root.is_dir()
         return result
     finally:
         if container:
@@ -1860,8 +1850,7 @@ def main() -> None:
     build_parent.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix="world-quest-build-", dir=build_parent) as build_tmp:
         build_root = pathlib.Path(build_tmp)
-        backends = ("mariadb", "flatfile") if REQUESTED_BACKEND == "both" else (REQUESTED_BACKEND,)
-        results = [run_backend(backend, build_root) for backend in backends]
+        results = [run_backend(REQUESTED_BACKEND, build_root)]
     print(json.dumps({"status": "passed", "results": results}, indent=2))
 
 

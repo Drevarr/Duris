@@ -17,9 +17,6 @@
 #include "core/utils.h"
 #include "cmd/wikihelp.h"
 #include "cmd/help_cache.h"
-#ifdef __NO_MYSQL__
-#include "flatfile/flatfile_help_catalog.h"
-#endif
 #include <algorithm>
 #include <iomanip>
 #include <iostream>
@@ -68,14 +65,59 @@ string str_replace(string haystack_, const char *needle_, const char *replace_)
 	return result;
 }
 
-/* clean up some of the wiki formatting */
-string dewikify(string str_)
+static void append_help_link(string &output, const string &topic, OutputLinks *links)
 {
-	string str(str_);
-	str = str_replace(str, "[[", "&+c");
-	str = str_replace(str, "]]", "&n");
-	str = str_replace(str, "'''", "");
-	return str;
+	const size_t begin = output.size();
+	output += topic;
+	if (links && links->size() < OUTPUT_LINK_MAX_COUNT)
+	{
+		const OutputLink link{ begin, output.size(), OutputLinkKind::Command,
+				       "help " + trim(topic, " \t\r\n") };
+		append_output_links(*links, std::span(&link, 1), 0, output.size());
+	}
+}
+
+// Only authored help adopts [[topic]] syntax. Malformed references remain
+// readable; no arbitrary output scanner can create a command link.
+static string dewikify(string str, OutputLinks *links)
+{
+	if (links)
+		links->clear();
+	str = str_replace(std::move(str), "'''", "");
+	string result;
+	for (size_t position = 0; position < str.size();)
+	{
+		if (str.compare(position, 2, "[["))
+		{
+			result += str[position++];
+			continue;
+		}
+		const size_t end = str.find("]]", position + 2);
+		if (end == string::npos)
+		{
+			result.append(str, position, string::npos);
+			break;
+		}
+		const string topic = str.substr(position + 2, end - position - 2);
+		const OutputLink candidate{ 0, topic.size(), OutputLinkKind::Command,
+					    "help " + trim(topic, " \t\r\n") };
+		if (topic.find_first_of("[]") != string::npos ||
+		    !valid_output_links(std::span(&candidate, 1), topic.size()))
+			result.append(str, position, end + 2 - position);
+		else
+		{
+			result += "&+c";
+			append_help_link(result, topic, links);
+			result += "&n";
+		}
+		position = end + 2;
+	}
+	return result;
+}
+
+string dewikify(string str)
+{
+	return dewikify(std::move(str), nullptr);
 }
 
 string tolower(string str_)
@@ -87,113 +129,20 @@ string tolower(string str_)
 	return str;
 }
 
-#ifdef __NO_MYSQL__
-
-namespace
-{
-struct cached_flat_help
-{
-	flatfile_help_catalog catalog;
-	string error;
-	bool ready = false;
-};
-
-const cached_flat_help &flat_help()
-{
-	static const cached_flat_help cached = []
-	{
-		cached_flat_help value;
-		value.ready = flatfile_help_catalog_load(".", &value.catalog, &value.error);
-		return value;
-	}();
-	return cached;
-}
-
-string render_flat_help(const flatfile_help_entry &entry, unsigned int depth)
-{
-	if (depth < 8)
-	{
-		const string content = trim(entry.text, " \t\r\n");
-		const string prefix = "Redirect:";
-		if (content.rfind(prefix, 0) == 0)
-		{
-			const string target = trim(content.substr(prefix.size()), " \t\r\n");
-			const flatfile_help_entry *redirect =
-				flatfile_help_catalog_find(flat_help().catalog, target);
-			if (redirect)
-				return render_flat_help(*redirect, depth + 1);
-		}
-	}
-	string rendered = "&+c" + entry.title + "&N\n&+L";
-	rendered.append(entry.title.size(), '=');
-	rendered += "&N\n";
-	rendered += dewikify(trim(entry.text, " \t\r\n"));
-	return rendered;
-}
-} // namespace
-
-string wiki_help_single(string str)
-{
-	const auto &help = flat_help();
-	if (!help.ready)
-	{
-		logit(LOG_DEBUG, "flat-file help catalog unavailable: %s", help.error.c_str());
-		return string("&+GSorry, but there was an error with the help system.");
-	}
-	const flatfile_help_entry *entry = flatfile_help_catalog_find(help.catalog, str);
-	return entry ? render_flat_help(*entry, 0) : string("&+GHelp topic not found.");
-}
-
 string wiki_help(string str)
 {
-	if (str.empty())
-		return wiki_help_single("help");
-	const auto &help = flat_help();
-	if (!help.ready)
-	{
-		logit(LOG_DEBUG, "flat-file help catalog unavailable: %s", help.error.c_str());
-		return string("&+GSorry, but there was an error with the help system.");
-	}
-	const auto matches = flatfile_help_catalog_search(
-		help.catalog, str, static_cast<size_t>(WIKIHELP_RESULTS_LIMIT) + 1);
-	if (matches.empty())
-	{
-		logit(LOG_HELP, "%s", str.c_str());
-		return string("&+GSorry, but there are no help topics that match your search.");
-	}
-	if (matches.size() == 1)
-		return render_flat_help(*matches.front(), 0);
-	const string key = tolower(str);
-	const flatfile_help_entry *exact = nullptr;
-	string result;
-	for (const auto *entry : matches)
-		if (tolower(entry->title) == key)
-		{
-			exact = entry;
-			break;
-		}
-	if (exact)
-	{
-		result = render_flat_help(*exact, 0);
-		result += "\n\n&+GThe following help topics also matched your search:\n";
-	}
-	else
-		result = "&+GThe following help topics matched your search:\n";
-	for (const auto *entry : matches)
-		if (entry != exact)
-			result += " &+c" + entry->title + "\n";
-	return result;
+	return wiki_help(std::move(str), nullptr);
 }
 
-#else
-
-string wiki_help(string str)
+string wiki_help(string str, OutputLinks *links)
 {
+	if (links)
+		links->clear();
 	const auto *catalog = help_cache_get();
 	if (!catalog)
 		return "&+GHelp is temporarily unavailable while its catalog loads. Please try again shortly.";
 	if (str.empty())
-		return wiki_help_single("help");
+		return wiki_help_single("help", links);
 	std::vector<const help_page *> matches;
 	for (const auto &page : *catalog)
 		if (help_title_matches(page.fields[0], str))
@@ -208,7 +157,7 @@ string wiki_help(string str)
 		return "&+GSorry, but there are no help topics that match your search.";
 	}
 	if (matches.size() == 1)
-		return wiki_help_single(matches.front()->fields[0]);
+		return wiki_help_single(matches.front()->fields[0], links);
 	std::string result;
 	const help_page *exact = nullptr;
 	for (const auto *page : matches)
@@ -218,13 +167,17 @@ string wiki_help(string str)
 			break;
 		}
 	if (exact)
-		result = wiki_help_single(exact->fields[0]) +
+		result = wiki_help_single(exact->fields[0], links) +
 			 "\n\n&+GThe following help topics also matched your search:\n";
 	else
 		result = "&+GThe following help topics matched your search:\n";
 	for (const auto *page : matches)
 		if (page != exact)
-			result += " &+c" + page->fields[0] + "\n";
+		{
+			result += " &+c";
+			append_help_link(result, page->fields[0], links);
+			result += "\n";
+		}
 	return result;
 }
 
@@ -587,6 +540,13 @@ string wiki_races(string title, int type)
 // Display a single help topic. Resolve redirects without recursion or I/O.
 string wiki_help_single(string str)
 {
+	return wiki_help_single(std::move(str), nullptr);
+}
+
+string wiki_help_single(string str, OutputLinks *links)
+{
+	if (links)
+		links->clear();
 	const auto *catalog = help_cache_get();
 	if (!catalog)
 		return "&+GHelp is temporarily unavailable while its catalog loads. Please try again shortly.";
@@ -631,7 +591,12 @@ string wiki_help_single(string str)
 	}
 	return_str += "&N\n";
 
-	return_str += dewikify(trim(string(row[1]), " \t\n"));
+	OutputLinks body_links;
+	const string body = dewikify(trim(string(row[1]), " \t\n"), links ? &body_links : nullptr);
+	if (links)
+		append_output_links(*links, body_links, return_str.size(),
+				    return_str.size() + body.size());
+	return_str += body;
 
 	// Race type help files
 	if (atoi(row[2]) == 25)
@@ -697,24 +662,12 @@ string wiki_help_single(string str)
 	return return_str;
 }
 
-#endif
-
 // Reference profiles use authored prose, with live grants supplied separately.
 string wiki_help_prose(string title, string section)
 {
 	string text;
 	for (unsigned depth = 0; depth < 8; ++depth)
 	{
-#ifdef __NO_MYSQL__
-		const auto &help = flat_help();
-		if (!help.ready)
-			return "";
-		const auto *entry = flatfile_help_catalog_find(help.catalog, title);
-		if (!entry)
-			return "";
-		title = entry->title;
-		text = entry->text;
-#else
 		const auto *catalog = help_cache_get();
 		if (!catalog)
 			return "";
@@ -726,7 +679,6 @@ string wiki_help_prose(string title, string section)
 				text = page.fields[1];
 				break;
 			}
-#endif
 		text = trim(text, " \t\r\n");
 		// Imported parsed-help pages retain their edit header and underline.
 		while (!text.empty())
@@ -896,8 +848,12 @@ void load_cmd_attributes()
 		}
 		// create the list of attributes.
 		attributes[0] = '\0';
-		APPEND_ATTR(
-			"The following character attributes are used in execution of this ability (if any):\n");
+		for (i = 0; i < ATT_MAX; i++)
+			if (ch_attributes[i] || vi_attributes[i])
+				break;
+		if (i < ATT_MAX)
+			APPEND_ATTR(
+				"The following character attributes are used in execution of this ability (if any):\n");
 		if (ch_attributes[ATT_STR])
 			APPEND_ATTR("Char's Strength.\n");
 		if (vi_attributes[ATT_STR])

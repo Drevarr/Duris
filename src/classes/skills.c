@@ -849,9 +849,9 @@ void initialize_skills()
 #endif
 	SPELL_ADD(CLASS_MINDFLAYER, 8);
 
-	SPELL_CREATE("memory block", SPELL_MEMORY_BLOCK, PULSE_SPELLCAST * 2,
-		     TAR_CHAR_ROOM | TAR_FIGHT_VICT | TAR_CHAR_RANGE | TAR_AGGRO,
-		     spell_memory_block);
+	SPELL_CREATE_MSG("memory block", SPELL_MEMORY_BLOCK, PULSE_SPELLCAST * 2,
+			 TAR_CHAR_ROOM | TAR_FIGHT_VICT | TAR_CHAR_RANGE | TAR_AGGRO,
+			 spell_memory_block, "&+YYour blocked memories return.&n");
 	SPELL_ADD(CLASS_MINDFLAYER, 9);
 
 	SPELL_CREATE_MSG("biofeedback", SPELL_BIOFEEDBACK, (PULSE_SPELLCAST * 5) / 2, TAR_SELF_ONLY,
@@ -3452,7 +3452,7 @@ void initialize_skills()
 	SPEC_SPELL_ADD(CLASS_BLIGHTER, 6, SPEC_RUINER);
 
 	SPELL_CREATE("holy blade", SPELL_HOLY_BLADE, PULSE_SPELLCAST * 8, TAR_IGNORE | TAR_NOCOMBAT,
-		     spell_doom_blade);
+		     spell_holy_blade);
 	SPEC_SPELL_ADD(CLASS_THEURGIST, 8, SPEC_THAUMATURGE);
 
 	SPELL_CREATE_MSG("holy sword", SPELL_HOLY_SWORD, PULSE_SPELLCAST * 4 / 3, TAR_SELF_ONLY,

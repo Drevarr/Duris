@@ -66,12 +66,19 @@ unsigned int append_items(const world_recovery_object_record &record,
 }
 unsigned int append_tree(const std::vector<unsigned char> &native, artifact_payload_domain domain,
 			 uint64_t sequence, std::unordered_set<uint64_t> *seen,
-			 artifact_recovery_population *population)
+			 artifact_recovery_population *population, bool roamer = false)
 {
 	world_recovery_object_record record = {};
 	std::vector<world_recovery_item_snapshot> items;
-	if (!world_recovery_read_object_record(native.data(), native.size(), &record, &items))
+	const size_t suffix = roamer ? sizeof(int32_t) : 0;
+	if (native.size() < suffix ||
+	    !world_recovery_read_object_record(native.data(), native.size() - suffix, &record,
+					       &items))
 		return EINVAL;
+	// As in the restore plan, a floor delta supersedes a fuzzy NPC tree.
+	if (roamer && std::any_of(items.begin(), items.end(), [&](const auto &item)
+				  { return seen->count(item.item_uid) != 0; }))
+		return 0;
 	return append_items(record, items, domain, sequence, seen, population);
 }
 } // namespace
@@ -111,6 +118,7 @@ unsigned int artifact_population_read_recovery(const redis_world_boot_snapshot &
 	{
 		artifact_recovery_population staged;
 		std::unordered_set<uint64_t> seen;
+		std::vector<std::vector<unsigned char>> roamer_items;
 		size_t offset = WORLD_RECOVERY_WIRE_HEADER_BYTES;
 		while (offset < snapshot.generation.size())
 		{
@@ -133,6 +141,8 @@ unsigned int artifact_population_read_recovery(const redis_world_boot_snapshot &
 					    snapshot.sequence, &seen, &staged))
 					return failed;
 			}
+			else if (type == world_recovery_record_type::roamer_item)
+				roamer_items.push_back(std::move(native));
 			else if (type == world_recovery_record_type::mob)
 			{
 				copyover_mob mob = {};
@@ -163,6 +173,11 @@ unsigned int artifact_population_read_recovery(const redis_world_boot_snapshot &
 							    snapshot.sequence, &seen, &staged))
 				return failed;
 		}
+		for (const auto &item : roamer_items)
+			if (const auto failed =
+				    append_tree(item, artifact_payload_domain::redis_generation,
+						snapshot.sequence, &seen, &staged, true))
+				return failed;
 		*population = std::move(staged);
 		return 0;
 	}
@@ -184,9 +199,14 @@ unsigned int artifact_population_read_copyover(const copyover_boot_snapshot &sna
 	}
 	if (snapshot.bytes.size() > WORLD_RECOVERY_MAX_BYTES)
 		return E2BIG;
+	const bool players_only = !memcmp(snapshot.header.magic, COPYOVER_PLAYERS_MAGIC, 4);
 	if (snapshot.bytes.size() < sizeof(copyover_header) ||
-	    memcmp(snapshot.header.magic, COPYOVER_MAGIC, 4) || snapshot.header.num_mobs < 0 ||
-	    snapshot.header.num_objects < 0 ||
+	    (memcmp(snapshot.header.magic, COPYOVER_MAGIC, 4) && !players_only) ||
+	    (players_only &&
+	     (snapshot.header.version < 19 || snapshot.header.version > COPYOVER_VERSION ||
+	      snapshot.header.num_mobs || snapshot.header.num_objects ||
+	      snapshot.header.num_rooms)) ||
+	    snapshot.header.num_mobs < 0 || snapshot.header.num_objects < 0 ||
 	    static_cast<size_t>(snapshot.header.num_mobs) != snapshot.mobs.size() ||
 	    static_cast<size_t>(snapshot.header.num_objects) != snapshot.objects.size())
 		return EINVAL;

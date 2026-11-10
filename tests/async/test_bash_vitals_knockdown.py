@@ -55,6 +55,7 @@ def test_native_bash_vitals_runtime() -> None:
 #include "combat/damage.h"
 #include "combat/forced_movement.h"
 #include "magic/spells.h"
+#include "abilities/abilities.h"
 #include "net/comm.h"
 #include "net/gmcp.h"
 #include "core/json_utils.h"
@@ -130,10 +131,9 @@ void CharWait(P_char ch, int) { SET_BIT(ch->specials.act2, PLR2_WAIT); }
 P_char ParseTarget(P_char, char *) { return tackle_target; }
 void set_fighting(P_char ch, P_char victim) { ch->specials.fighting = victim; }
 void unlink_char(P_char, P_char, ush_int) {}
-using forced_departure_message = std::pair<uint64_t, std::string>;
 static std::vector<forced_departure_message> snapshot_forced_departure(P_char, P_char, int, bool, bool)
 { assert(false); return {}; }
-static void deliver_forced_departure(const std::vector<forced_departure_message> &, P_char, P_char, int, bool)
+void deliver_forced_departure(const std::vector<forced_departure_message> &, P_char, P_char, int, bool)
 { assert(false); }
 static void forced_rebound_messages(P_char, P_char, forced_block, bool) { assert(false); }
 forced_move_result move_forced_pair(P_char, P_char, int, const std::function<void()> &)
@@ -367,6 +367,20 @@ int main()
     assert(!CAN_ACT((&npc)));
     assert(IS_FIGHTING(&attacker));
 
+    // Equal-sized quadruped targets are sturdy; a quadruped attacker does
+    // not make a normal target sturdy. Both source checks must use the victim.
+    rooms[0].room_flags = 0;
+    for (bool quadruped_target : {false, true}) {
+        attacker.player.race = quadruped_target ? RACE_HUMAN : RACE_QUADRUPED;
+        npc.player.race = quadruped_target ? RACE_QUADRUPED : RACE_HUMAN;
+        attacker.specials.act2 = npc.specials.act2 = 0;
+        attacker.specials.fighting = npc.specials.fighting = nullptr;
+        SET_POS(&attacker, POS_STANDING + STAT_NORMAL);
+        SET_POS(&npc, POS_STANDING + STAT_NORMAL);
+        int before = melee_damage_calls;
+        bash(&attacker, &npc, false);
+        assert(melee_damage_calls == before + (quadruped_target ? 0 : 1));
+    }
     std::printf("Bash/tackle vitals knockdown native runtime tests passed\n");
     return 0;
 }
@@ -374,6 +388,8 @@ int main()
 
     tackle_fn = extract_function("actoff.c", "void do_tackle(")
     bash_fn = extract_function("actoff.c", "void bash(P_char ch, P_char victim, bool _debug)")
+    assert bash_fn.count("GET_RACE(victim) == RACE_QUADRUPED") == 2
+    assert "GET_RACE(ch) == RACE_QUADRUPED" not in bash_fn
     update_pos_fn = extract_function("combat/fight.c", "void update_pos(P_char ch)")
     json_build_char_vitals_fn = extract_function("core/json_utils.c", "char *json_build_char_vitals(struct char_data *ch)")
     gmcp_char_vitals_fn = extract_function("net/gmcp.c", "void gmcp_char_vitals(struct char_data *ch)")
@@ -394,6 +410,33 @@ int main()
                 gmcp_char_vitals_fn,
                 gmcp_send_group_status_fn,
                 update_pos_fn,
+                "const Rolls live_rolls = { dice, number };",
+                extract_function("actoff.c", "static float shieldless_bash_modifier("),
+                extract_function("actoff.c", "static int skewer_off_target_rating("),
+                extract_function("actoff.c", "static int skewer_down_threshold("),
+                extract_function("actoff.c", "static int skewer_down_damage("),
+                extract_function("actoff.c", "static int skewer_down_lag("),
+                extract_function("actoff.c", "static int skewer_down_target_lag("),
+                extract_function("actoff.c", "static int skewer_bash_threshold("),
+                extract_function("actoff.c", "static int skewer_bash_damage("),
+                extract_function("actoff.c", "static int skewer_bash_lag("),
+                extract_function("actoff.c", "static int tackle_body_lag("),
+                extract_function("actoff.c", "static int tackle_size_lag("),
+                extract_function("actoff.c", "static int tackle_lag("),
+                extract_function("actoff.c", "static int tackle_prone_lag("),
+                extract_function("actoff.c", "static int tackle_rest("),
+                extract_function("actoff.c", "static int tackle_combat_pulse("),
+                extract_function("actoff.c", "static int tackle_combat_pulse_duration("),
+                extract_function("actoff.c", "static int tackle_self_stun("),
+                extract_function("actoff.c", "static int tackle_carry_roll("),
+                extract_function("actoff.c", "static int bash_damage("),
+                extract_function("actoff.c", "static int bash_rest("),
+                extract_function("actoff.c", "static int bash_hit_lag("),
+                extract_function("actoff.c", "static int bash_miss_lag("),
+                extract_function("actoff.c", "static int bash_target_down_lag("),
+                extract_function("actoff.c", "static int bash_size_lag("),
+                extract_function("actoff.c", "static int bash_takedown_penalty_lag("),
+                extract_function("actoff.c", "static int bash_target_lag("),
                 bash_fn,
                 tackle_fn,
                 driver,

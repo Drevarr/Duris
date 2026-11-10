@@ -150,6 +150,7 @@ def tokens(text):
 assert tokens(hand_wear_source(wear_source)) == tokens(hand_wear_source(variant))
 
 production = '\n'.join([
+    extract_function('nanny.c', 'void set_char_size(P_char ch)'),
     extract_function('actobj.c', 'int wield_item_size('),
     extract_function('actobj.c', 'int get_numb_free_hands('),
     extract_function('actobj.c', 'static int free_hand_slot('),
@@ -159,6 +160,7 @@ production = '\n'.join([
     extract_function('memorize.c', 'P_obj SpellBookAtHand('),
     extract_function('memorize.c', 'P_obj FindSpellBookWithSpell('),
     extract_function('memorize.c', 'void do_scribe(P_char ch, char *arg, int /*cmd*/)'),
+    extract_function('memorize.c', 'static int scribe_page_wait('),
     extract_function('memorize.c', 'void event_scribe(P_char ch, P_char /*victim*/'),
 ])
 fixture = (ROOT / 'tests/async/wear_all_fixture.cpp').read_text()

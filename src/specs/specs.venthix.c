@@ -309,9 +309,10 @@ void event_super_cannon_fire(P_char ch, P_char /*vict*/, P_obj /*obj*/, void *da
 				send_to_char("&+WSMACK! &+LYou ran into something, that hurt!\r\n",
 					     ch);
 				ch->specials.z_cord = 0;
-				spell_damage(ch, ch, 20, SPLDAM_GENERIC,
-					     SPLDAM_NOSHRUG | SPLDAM_NODEFLECT, 0);
-				SET_POS(ch, GET_STAT(ch) + POS_PRONE);
+				if (spell_damage(ch, ch, 20, SPLDAM_GENERIC,
+						 SPLDAM_NOSHRUG | SPLDAM_NODEFLECT,
+						 0) == DAM_NONEDEAD)
+					SET_POS(ch, GET_STAT(ch) + POS_PRONE);
 				return;
 			}
 			troom = EXIT(ch, dir)->to_room;
@@ -352,13 +353,15 @@ void event_super_cannon_fire(P_char ch, P_char /*vict*/, P_obj /*obj*/, void *da
 					"&+LYou've landed!  You roll as you hit the ground.&n\r\n",
 					ch);
 				if (!affected_by_spell(ch, SPELL_FLY) &&
-				    GET_CHAR_SKILL(ch, SKILL_SAFE_FALL) >= number(0, 100))
+				    GET_CHAR_SKILL(ch, SKILL_SAFE_FALL) < number(0, 100))
 				{
 					send_to_char(
 						"&+WOuch! &+LYou should try a fly spell next time.&n\r\n",
 						ch);
-					spell_damage(ch, ch, 20, SPLDAM_GENERIC,
-						     SPLDAM_NOSHRUG | SPLDAM_NODEFLECT, 0);
+					if (spell_damage(ch, ch, 20, SPLDAM_GENERIC,
+							 SPLDAM_NOSHRUG | SPLDAM_NODEFLECT,
+							 0) != DAM_NONEDEAD)
+						return;
 				}
 				SET_POS(ch, GET_STAT(ch) + POS_PRONE);
 			}

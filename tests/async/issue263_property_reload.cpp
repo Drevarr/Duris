@@ -1,5 +1,6 @@
 // Executes real properties.c parsing/commands; unrelated game services are stubs.
 #include "world/properties.c"
+#include "core/profile.h"
 #include "telemetry/telemetry_config_reload.h"
 #include "telemetry/telemetry_config_private.h"
 
@@ -259,6 +260,209 @@ static void failure_case(P_char actor, const std::string &test)
 	assert(get_property("epic.touch.PayoutFactor", 0.0) == 1);
 }
 
+PROFILE_DEFINE(random_mob_create)
+bool do_profile = false;
+P_index mob_index;
+static int spawn_attempts;
+static P_char next_spawn;
+P_char create_random_mob(int theme, int level)
+{
+	assert(theme == -1 && level == 0);
+	++spawn_attempts;
+	if (next_spawn)
+	{
+		next_spawn->next = character_list;
+		character_list = next_spawn;
+	}
+	return next_spawn;
+}
+#include "training_dummy_is.inc"
+#include "spawn_random_mapmob.inc"
+
+static void expect_spawn_attempts(int population, int attempts)
+{
+	index_data prototype{};
+	prototype.virtual_number = 1255;
+	mob_index = &prototype;
+	npc_only_data npc{};
+	std::vector<char_data> roamers(population);
+	assert(!character_list);
+	for (auto &roamer : roamers)
+	{
+		roamer.specials.act = ACT_ISNPC;
+		roamer.only.npc = &npc;
+		roamer.next = character_list;
+		character_list = &roamer;
+	}
+	spawn_attempts = 0;
+	spawn_random_mapmob();
+	assert(spawn_attempts == attempts);
+	character_list = nullptr;
+	mob_index = nullptr;
+}
+
+static void check_mapmob_population(P_char actor)
+{
+	std::ofstream("lib/duris.properties") << "random.mapmob.populationCap=45.000\n";
+	assert(initialize_properties());
+	index_data prototypes[4]{};
+	prototypes[0].virtual_number = 1255;
+	prototypes[1].virtual_number = 1256;
+	prototypes[2].virtual_number = 7;
+	prototypes[3].virtual_number = 11;
+	mob_index = prototypes;
+
+	char_data player{};
+	char_data extras[3]{};
+	npc_only_data extra_data[3]{};
+	character_list = &player;
+	for (int i = 0; i < 3; ++i)
+	{
+		extra_data[i].R_num = i + 1;
+		extra_data[i].training_dummy = i == 1;
+		extras[i].specials.act = ACT_ISNPC;
+		extras[i].only.npc = &extra_data[i];
+		extras[i].next = character_list;
+		character_list = &extras[i];
+	}
+	const auto other_characters = character_list;
+
+	for (int dummies : { 0, 69, 71 })
+	{
+		std::vector<char_data> targets(dummies);
+		std::vector<npc_only_data> profiles(dummies);
+		character_list = other_characters;
+		for (int i = 0; i < dummies; ++i)
+		{
+			profiles[i].training_dummy = true;
+			profiles[i].training_dummy_fixed = i % 2 == 0;
+			targets[i].only.npc = &profiles[i];
+			targets[i].specials.act = ACT_ISNPC;
+			targets[i].player.name = const_cast<char *>("renamed target");
+			targets[i].next = character_list;
+			character_list = &targets[i];
+		}
+		const auto dummy_list = character_list;
+		for (int limit : { 45, 2, 60, 0 })
+		{
+			command(actor, ("set random.mapmob.populationCap " + std::to_string(limit))
+					       .c_str());
+			for (int population : { 0, std::max(0, limit - 1), limit, limit + 1 })
+			{
+				std::vector<char_data> roamers(population + 1);
+				std::vector<npc_only_data> instances(population + 1);
+				for (int i = 0; i <= population; ++i)
+				{
+					roamers[i].only.npc = &instances[i];
+					roamers[i].specials.act = ACT_ISNPC;
+					roamers[i].player.name =
+						const_cast<char *>("training dummy");
+					roamers[i].in_room = i % 2 ? NOWHERE : 1;
+				}
+				char_link_data pet{};
+				pet.type = LNK_PET;
+				pet.linking = &roamers.front();
+				pet.linked = &player;
+				player.linked = &pet;
+				roamers.front().linking = &pet;
+
+				character_list = dummy_list;
+				for (int i = 0; i < population; ++i)
+				{
+					roamers[i].next = character_list;
+					character_list = &roamers[i];
+				}
+
+				spawn_attempts = 0;
+				const int allowed = population < limit;
+				const auto initial_list = character_list;
+				spawn_random_mapmob();
+				assert(spawn_attempts == allowed && character_list == initial_list);
+
+				// First generation failed. Try again and insert a roamer.
+				next_spawn = &roamers.back();
+				spawn_random_mapmob();
+				assert(spawn_attempts == 2 * allowed);
+				assert(character_list == (allowed ? next_spawn : initial_list));
+				next_spawn = nullptr;
+
+				spawn_random_mapmob();
+				assert(spawn_attempts ==
+				       2 * allowed + (population + allowed < limit));
+				player.linked = nullptr;
+				for (const auto &profile : profiles)
+					assert(profile.training_dummy);
+				for (const auto &instance : instances)
+					assert(!instance.training_dummy);
+			}
+		}
+	}
+	assert(prototypes[0].virtual_number == 1255);
+	character_list = nullptr;
+	mob_index = nullptr;
+}
+
+static void check_mapmob_cap(P_char actor)
+{
+	assert(initialize_properties()); // Runner supplies the shipped file.
+	output.clear();
+	command(actor, "show random.mapmob.populationCap");
+	assert(output.find("random.mapmob.populationCap: 45.000") != std::string::npos);
+	expect_spawn_attempts(44, 1);
+	expect_spawn_attempts(45, 0);
+
+	property_file(1.0F);
+	assert(initialize_properties()); // Older config with no key.
+	expect_spawn_attempts(0, 1);
+	expect_spawn_attempts(44, 1);
+	expect_spawn_attempts(45, 0);
+
+	const std::string base = read_file() + "random.mapmob.other=3\n";
+	const std::string cap = "random.mapmob.populationCap";
+	std::ofstream("lib/duris.properties") << base << cap << " = 2.000 \n";
+	command(actor, "reload");
+	expect_spawn_attempts(1, 1);
+	expect_spawn_attempts(2, 0);
+	command(actor, "set random.mapmob.populationCAP 60");
+	expect_spawn_attempts(59, 1);
+	expect_spawn_attempts(60, 0);
+	command(actor, "save");
+	assert(read_file().find(cap + "=60.000\n") != std::string::npos);
+	command(actor, "set random.mapmob.populationCap 0");
+	expect_spawn_attempts(0, 0);
+	expect_spawn_attempts(2, 0);
+	command(actor, "revert");
+	expect_spawn_attempts(59, 1);
+	command(actor, "set random.mapmob.populationCap 0");
+	assert(initialize_properties()); // Same loader as process startup.
+	expect_spawn_attempts(59, 1);
+	expect_spawn_attempts(60, 0);
+
+	for (const char *bad :
+	     { "", "-1", "-0.00000001", "0.00000001", "2.00000001", "NaN", "Inf", "1e1000",
+	       "1e-1000", "2147483647", "2147483648", "junk", "2junk", "2 3" })
+	{
+		output.clear();
+		command(actor, (std::string("set random.mapmob.* ") + bad).c_str());
+		assert(output.find("requires a nonnegative whole") != std::string::npos);
+		assert(get_property("random.mapmob.other", 0.0) == 3);
+		expect_spawn_attempts(59, 1);
+		expect_spawn_attempts(60, 0);
+
+		// Invalid startup input and reload use the same transactional loader.
+		std::ofstream("lib/duris.properties") << base << cap << '=' << bad << '\n';
+		output.clear();
+		command(actor, "reload");
+		assert(output.find("reload failed") != std::string::npos);
+		expect_spawn_attempts(59, 1);
+		expect_spawn_attempts(60, 0);
+	}
+	std::ofstream("lib/duris.properties") << base << cap << "=2147483520.000\n";
+	command(actor, "reload");
+	assert(get_property(cap.c_str(), 0.0) == 2147483520.0F);
+	expect_spawn_attempts(60, 1);
+}
+
 int main(int argc, char **argv)
 {
 	char_data actor{};
@@ -266,10 +470,15 @@ int main(int argc, char **argv)
 	actor.player.name = const_cast<char *>("PropertyQa");
 	if (argc == 2)
 	{
-		failure_case(&actor, argv[1]);
+		if (std::strcmp(argv[1], "mapmob-cap") == 0)
+			check_mapmob_cap(&actor);
+		else if (std::strcmp(argv[1], "mapmob-population") == 0)
+			check_mapmob_population(&actor);
+		else
+			failure_case(&actor, argv[1]);
 		for (int i = 0; i < properties_count; ++i)
 			FREE(duris_properties[i].key);
-		std::cout << "property failure preserved state: " << argv[1] << '\n';
+		std::cout << "property scenario passed: " << argv[1] << '\n';
 		return 0;
 	}
 	observations seen{}, other{};

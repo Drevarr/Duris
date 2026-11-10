@@ -47,6 +47,7 @@
 #include "world/map.h"
 #include "net/mccp.h"
 #include "player/player_save_pipeline.h"
+#include "redis/redis_floor_runtime.h"
 #include "redis/redis_presence_runtime.h"
 #include "ships/ships.h"
 #include "classes/specializations.h"
@@ -62,6 +63,8 @@
 #include "world/vnum.room.h"
 #include "world/weather.h"
 #include "net/ws_handlers.h"
+#include "abilities/abilities.h"
+#include "world/falling_policy.h"
 
 /*
  * external variables
@@ -545,6 +548,140 @@ void do_camp(P_char ch, char *arg, int /*cmd*/)
 	affect_to_char(ch, &af);
 }
 
+// 1 for most, 2 for berserkers, 3 for dwarven berserkers.
+static int berserk_quality(P_char ch)
+{
+	return (GET_CLASS(ch, CLASS_BERSERKER)) ?
+		       ((GET_RACE(ch) == RACE_MOUNTAIN || GET_RACE(ch) == RACE_DUERGAR) ? 3 : 2) :
+		       1;
+}
+
+static int berserk_str_max(const Rolls &rolls, P_char ch, int berserk_quality)
+{
+	// Berserkers get better str.
+	if (berserk_quality > 1)
+		return (ch->base_stats.Str * 1 / 7) + rolls.number(-5, 5);
+	return (ch->base_stats.Str * 1 / 10) + rolls.number(-5, 5);
+}
+
+static int berserk_con_max(const Rolls &rolls, P_char ch, int berserk_quality)
+{
+	// Dwarven berserkers get better con.
+	if (berserk_quality == 3)
+		return ch->base_stats.Con * 3 / 2 + rolls.number(-5, 5);
+	return ch->base_stats.Con + rolls.number(-5, 5);
+}
+
+static int berserk_int(P_char ch)
+{
+	return -(ch->base_stats.Int * 2 / 3);
+}
+
+static int berserk_wis(P_char ch, int berserk_quality)
+{
+	// Dwarven berserkers get less of a wis penalty.
+	return berserk_quality == 3 ? -(ch->base_stats.Wis * 1 / 5) : -(ch->base_stats.Wis * 2 / 3);
+}
+
+static int berserk_pow_max(const Rolls &rolls, P_char ch, int berserk_quality)
+{
+	if (berserk_quality == 3)
+		return ch->base_stats.Pow / 8 + rolls.number(-2, 2);
+	return (ch->base_stats.Pow + 8) / 20 + rolls.number(-2, 2);
+}
+
+// The combat pulse bonus a dwarven berserker gets with both skills mastered, and others.
+static int berserk_combat_pulse(P_char ch, int berserk_quality)
+{
+	return berserk_quality == 3 && GET_CHAR_SKILL(ch, SKILL_BERSERK) == 100 &&
+			       GET_CHAR_SKILL(ch, SKILL_INDOMITABLE_RAGE) == 100 ?
+		       -2 :
+		       -1;
+}
+
+// The hit points a dwarven berserker gets above level 6.
+static int berserk_hit_points(P_char ch)
+{
+	return GET_LEVEL(ch) * 2 - 12;
+}
+
+// How long, in pulses, a berserk from the command lasts.
+static int berserk_duration(P_char ch)
+{
+	int duration = 5 * (MAX(25, (GET_CHAR_SKILL(ch, SKILL_BERSERK) + GET_LEVEL(ch))));
+
+	if (GET_CLASS(ch, CLASS_BERSERKER) || GET_RACE(ch) == RACE_MOUNTAIN ||
+	    GET_RACE(ch) == RACE_DUERGAR)
+		duration *= 4;
+	return duration;
+}
+
+// The lag, in pulses, after trying to start a berserk.
+static int berserk_lag(P_char ch)
+{
+	if (GET_CLASS(ch, CLASS_BERSERKER))
+	{
+		if (GET_LEVEL(ch) < 10)
+		{
+			return 2 * PULSE_VIOLENCE;
+		}
+		else if (GET_LEVEL(ch) < 20)
+		{
+			return 1 * PULSE_VIOLENCE;
+		}
+		return 2;
+	}
+	/* Let's see if berserk is used more often other than
+	 * in zones with this tweak. -Lucrot
+	 */
+	if (GET_CLASS(ch, CLASS_WARRIOR) && GET_LEVEL(ch) >= 51)
+		return 2;
+	return 2 * PULSE_VIOLENCE;
+}
+
+// The lag, in pulses, after leaving a berserk.
+static int berserk_stop_lag(P_char ch)
+{
+	return GET_CLASS(ch, CLASS_BERSERKER) ? 1 * PULSE_VIOLENCE : 2 * PULSE_VIOLENCE;
+}
+
+// The share of hit points below which a player under a PvP delay can't leave a berserk.
+static double berserk_stop_wounded_share()
+{
+	return 0.30;
+}
+
+std::string berserk_facts(P_char ch)
+{
+	const int quality = berserk_quality(ch);
+	const int rating = GET_CHAR_SKILL(ch, SKILL_BERSERK);
+	std::string facts =
+		fact("Chance to start",
+		     std::to_string(GET_CHAR_SKILL(ch, SKILL_BERSERK)) + " in 100") +
+		fact("Duration", real_time(berserk_duration(ch))) +
+		fact("Your lag after trying", seconds(berserk_lag(ch))) +
+		fact("Chance to stop",
+		     std::to_string(rating ? MIN(101, rating + 1) : 0) + " in 101") +
+		"    (never below " + std::to_string((int)(berserk_stop_wounded_share() * 100)) +
+		"% of your hit points under a PvP delay)\n" +
+		fact("Your lag after stopping", seconds(berserk_stop_lag(ch))) +
+		fact("Strength max", show_signed({ berserk_str_max(lowest_rolls, ch, quality),
+						   berserk_str_max(highest_rolls, ch, quality) })) +
+		fact("Constitution max",
+		     show_signed({ berserk_con_max(lowest_rolls, ch, quality),
+				   berserk_con_max(highest_rolls, ch, quality) })) +
+		fact("Wisdom", std::to_string(berserk_wis(ch, quality)));
+	if (quality == 1)
+		return facts + fact("Intelligence", std::to_string(berserk_int(ch)));
+	facts += fact("Power max", show_signed({ berserk_pow_max(lowest_rolls, ch, quality),
+						 berserk_pow_max(highest_rolls, ch, quality) })) +
+		 fact("Combat pulse", std::to_string(berserk_combat_pulse(ch, quality))) +
+		 "  You also get tower of iron will.\n";
+	if (quality == 3 && GET_LEVEL(ch) > 6)
+		facts += fact("Hit points", "+" + std::to_string(berserk_hit_points(ch)));
+	return facts;
+}
+
 void berserk(P_char ch, int duration)
 {
 	struct affected_type af;
@@ -556,33 +693,18 @@ void berserk(P_char ch, int duration)
 	act("$n fills with &+rBloodLust&N", FALSE, ch, 0, 0, TO_ROOM);
 	send_to_char("Your instincts force you into a &+rBloodLust&N!\r\n", ch);
 
-	berserk_quality =
-		(GET_CLASS(ch, CLASS_BERSERKER)) ?
-			((GET_RACE(ch) == RACE_MOUNTAIN || GET_RACE(ch) == RACE_DUERGAR) ? 3 : 2) :
-			1;
+	berserk_quality = ::berserk_quality(ch);
 
 	memset(&af, 0, sizeof(af));
 	af.type = SKILL_BERSERK;
 	af.flags = AFFTYPE_SHORT | AFFTYPE_NODISPEL;
 	af.duration = duration;
 
-	// Berserkers get better str.
-	if (berserk_quality > 1)
-	{
-		af.modifier = (ch->base_stats.Str * 1 / 7) + number(-5, 5);
-	}
-	else
-	{
-		af.modifier = (ch->base_stats.Str * 1 / 10) + number(-5, 5);
-	}
+	af.modifier = berserk_str_max(live_rolls, ch, berserk_quality);
 	af.location = APPLY_STR_MAX;
 	affect_to_char(ch, &af);
 
-	// Dwarven berserkers get better con.
-	if (berserk_quality == 3)
-		af.modifier = ch->base_stats.Con * 3 / 2 + number(-5, 5);
-	else
-		af.modifier = ch->base_stats.Con + number(-5, 5);
+	af.modifier = berserk_con_max(live_rolls, ch, berserk_quality);
 	af.flags |= AFFTYPE_NOMSG;
 	af.location = APPLY_CON_MAX;
 	affect_to_char(ch, &af);
@@ -590,16 +712,12 @@ void berserk(P_char ch, int duration)
 	// Non-zerkers get int penalty.
 	if (berserk_quality == 1)
 	{
-		af.modifier = -(ch->base_stats.Int * 2 / 3);
+		af.modifier = berserk_int(ch);
 		af.location = APPLY_INT;
 		affect_to_char(ch, &af);
 	}
 
-	// Dwarven berserkers get less of a wis penalty.
-	if (berserk_quality == 3)
-		af.modifier = -(ch->base_stats.Wis * 1 / 5);
-	else
-		af.modifier = -(ch->base_stats.Wis * 2 / 3);
+	af.modifier = berserk_wis(ch, berserk_quality);
 	af.location = APPLY_WIS;
 	affect_to_char(ch, &af);
 
@@ -607,14 +725,14 @@ void berserk(P_char ch, int duration)
 	if (berserk_quality == 3 && GET_CHAR_SKILL(ch, SKILL_BERSERK) == 100 &&
 	    GET_CHAR_SKILL(ch, SKILL_INDOMITABLE_RAGE) == 100)
 	{
-		af.modifier = -2;
+		af.modifier = berserk_combat_pulse(ch, berserk_quality);
 		af.location = APPLY_COMBAT_PULSE;
 		affect_to_char(ch, &af);
 	}
 	// All other zerkers get a 1 point combat pulse bonus.
 	else if (berserk_quality > 1)
 	{
-		af.modifier = -1;
+		af.modifier = berserk_combat_pulse(ch, berserk_quality);
 		af.location = APPLY_COMBAT_PULSE;
 		affect_to_char(ch, &af);
 	}
@@ -624,7 +742,7 @@ void berserk(P_char ch, int duration)
 	{
 		af.bitvector3 = AFF3_TOWER_IRON_WILL;
 		af.location = APPLY_POW_MAX;
-		af.modifier = ch->base_stats.Pow / 8 + number(-2, 2);
+		af.modifier = berserk_pow_max(live_rolls, ch, berserk_quality);
 		affect_to_char(ch, &af);
 	}
 	// Other zerkers get TOIW and a tiny pow bonus.
@@ -635,7 +753,7 @@ void berserk(P_char ch, int duration)
 		// Cases with no max_stat equipment:
 		// Worst case: Mino with 80 base pow -> (52 actual + 8) / 20 = 3 -> 1-5 pow.
 		// Best case: Human with 100 base pow -> (105 actual + 8) / 20 = 5 -> 3-7 pow.
-		af.modifier = (ch->base_stats.Pow + 8) / 20 + number(-2, 2);
+		af.modifier = berserk_pow_max(live_rolls, ch, berserk_quality);
 		affect_to_char(ch, &af);
 	}
 	af.bitvector3 = 0;
@@ -644,7 +762,7 @@ void berserk(P_char ch, int duration)
 	if (berserk_quality == 3 && GET_LEVEL(ch) > 6)
 	{
 		// 100 at lvl 56.
-		af.modifier = GET_LEVEL(ch) * 2 - 12;
+		af.modifier = berserk_hit_points(ch);
 		af.location = APPLY_HIT;
 		affect_to_char(ch, &af);
 	}
@@ -668,7 +786,7 @@ void do_berserk(P_char ch, char * /*argument*/, int /*cmd*/)
 			return;
 		}
 		else if (IS_PC(ch) && affected_by_spell(ch, TAG_PVPDELAY) &&
-			 GET_HIT(ch) < (GET_MAX_HIT(ch) * 0.30))
+			 GET_HIT(ch) < (GET_MAX_HIT(ch) * berserk_stop_wounded_share()))
 		{
 			send_to_char(
 				"Your &+rwounds&n are severe, you taste &+Rblood&n and &+ysweat&n, thus coming out of your &+Rbloodlust&n is impossible!\r\n",
@@ -683,14 +801,7 @@ void do_berserk(P_char ch, char * /*argument*/, int /*cmd*/)
 
 		notch_skill(ch, SKILL_BERSERK, 4);
 
-		if (GET_CLASS(ch, CLASS_BERSERKER))
-		{
-			CharWait(ch, 1 * PULSE_VIOLENCE);
-		}
-		else
-		{
-			CharWait(ch, 2 * PULSE_VIOLENCE);
-		}
+		CharWait(ch, berserk_stop_lag(ch));
 		return;
 	}
 
@@ -701,37 +812,32 @@ void do_berserk(P_char ch, char * /*argument*/, int /*cmd*/)
 	}
 	else
 	{
-		duration = 5 * (MAX(25, (GET_CHAR_SKILL(ch, SKILL_BERSERK) + GET_LEVEL(ch))));
-
-		if (GET_CLASS(ch, CLASS_BERSERKER) || GET_RACE(ch) == RACE_MOUNTAIN ||
-		    GET_RACE(ch) == RACE_DUERGAR)
-			duration *= 4;
+		duration = berserk_duration(ch);
 
 		berserk(ch, duration);
 	}
 
-	if (GET_CLASS(ch, CLASS_BERSERKER))
-	{
-		if (GET_LEVEL(ch) < 10)
-		{
-			CharWait(ch, 2 * PULSE_VIOLENCE);
-		}
-		else if (GET_LEVEL(ch) < 20)
-		{
-			CharWait(ch, 1 * PULSE_VIOLENCE);
-		}
-		else if (GET_LEVEL(ch) >= 20)
-		{
-			CharWait(ch, 2);
-		}
-	}
-	/* Let's see if berserk is used more often other than
-	 * in zones with this tweak. -Lucrot
-	 */
-	else if (GET_CLASS(ch, CLASS_WARRIOR) && GET_LEVEL(ch) >= 51)
-		CharWait(ch, 2);
-	else
-		CharWait(ch, 2 * PULSE_VIOLENCE);
+	CharWait(ch, berserk_lag(ch));
+}
+
+// How long, in ticks, a rampage's speed lasts.
+static int rampage_duration()
+{
+	return 3;
+}
+
+// The lag, in pulses, after a rampage.
+static int rampage_lag()
+{
+	return 8;
+}
+
+std::string rampage_facts(P_char ch)
+{
+	return fact("Chance", std::to_string(GET_CHAR_SKILL(ch, SKILL_RAMPAGE)) + " in 110") +
+	       fact(GET_LEVEL(ch) > 55 ? "Blur" : "Haste", game_hours(rampage_duration())) +
+	       fact("Your lag when it works", seconds(rampage_lag())) +
+	       "  Needs berserk. Haste up to level 55, blur from level 56.\n";
 }
 
 void do_rampage(P_char ch, char * /*argument*/, int /*cmd*/)
@@ -789,14 +895,67 @@ void do_rampage(P_char ch, char * /*argument*/, int /*cmd*/)
 			af.type = SPELL_HASTE;
 			af.bitvector = AFF_HASTE;
 		}
-		af.duration = 3;
+		af.duration = rampage_duration();
 
 		affect_to_char(ch, &af);
 		notch_skill(ch, SKILL_RAMPAGE, 17);
-		CharWait(ch, 8);
+		CharWait(ch, rampage_lag());
 
 		return;
 	}
+}
+
+// How long, in ticks, either growth lasts.
+static int infuriate_duration()
+{
+	return 3;
+}
+
+// The lag, in pulses, after infuriating.
+static int infuriate_lag()
+{
+	return PULSE_VIOLENCE;
+}
+
+// The stat changes of titan form (the rarer growth) and of enlarge.
+static int infuriate_str_max(P_char ch, bool titan)
+{
+	return titan ? (ch->base_stats.Str / 10) : (ch->base_stats.Str / 12);
+}
+
+static int infuriate_con_max(P_char ch, bool titan)
+{
+	return titan ? (ch->base_stats.Con / 5) : (ch->base_stats.Con / 7);
+}
+
+static int infuriate_agi(P_char ch, bool titan)
+{
+	return titan ? -(ch->base_stats.Agi / 5) : -(ch->base_stats.Agi / 3);
+}
+
+static int infuriate_dex(P_char ch, bool titan)
+{
+	return titan ? -(ch->base_stats.Dex / 5) : -(ch->base_stats.Dex / 3);
+}
+
+static std::string infuriate_form_facts(P_char ch, bool titan)
+{
+	return fact(titan ? "Titan form" : "Enlarge",
+		    "strength max +" + std::to_string(infuriate_str_max(ch, titan)) +
+			    ", constitution max +" + std::to_string(infuriate_con_max(ch, titan))) +
+	       fact("  Agility and dexterity", std::to_string(infuriate_agi(ch, titan)) + " and " +
+						       std::to_string(infuriate_dex(ch, titan)));
+}
+
+std::string infuriate_facts(P_char ch)
+{
+	const int rating = GET_CHAR_SKILL(ch, SKILL_INFURIATE);
+	return infuriate_form_facts(ch, false) + infuriate_form_facts(ch, true) +
+	       fact("Chance of titan form instead of enlarge",
+		    std::to_string(MAX(0, MIN(rating, 100) - 69)) + " in 31") +
+	       fact("Duration", game_hours(infuriate_duration())) +
+	       fact("Your lag", seconds(infuriate_lag())) +
+	       "  Needs berserk, and you can't already be enlarged or in titan form.\n";
 }
 
 void do_infuriate(P_char ch, char * /*argument*/, int /*cmd*/)
@@ -836,24 +995,24 @@ void do_infuriate(P_char ch, char * /*argument*/, int /*cmd*/)
 	{
 		bzero(&af, sizeof(af));
 		af.type = SKILL_INFURIATE;
-		af.duration = 3;
+		af.duration = infuriate_duration();
 		af.bitvector3 = AFF3_ENLARGE;
 		affect_to_char(ch, &af);
 
 		af.bitvector3 = 0;
-		af.modifier = (ch->base_stats.Str / 12);
+		af.modifier = infuriate_str_max(ch, false);
 		af.location = APPLY_STR_MAX;
 		affect_to_char(ch, &af);
 
-		af.modifier = (ch->base_stats.Con / 7);
+		af.modifier = infuriate_con_max(ch, false);
 		af.location = APPLY_CON_MAX;
 		affect_to_char(ch, &af);
 
-		af.modifier = -(ch->base_stats.Agi / 3);
+		af.modifier = infuriate_agi(ch, false);
 		af.location = APPLY_AGI;
 		affect_to_char(ch, &af);
 
-		af.modifier = -(ch->base_stats.Dex / 3);
+		af.modifier = infuriate_dex(ch, false);
 		af.location = APPLY_DEX;
 		affect_to_char(ch, &af);
 
@@ -861,29 +1020,29 @@ void do_infuriate(P_char ch, char * /*argument*/, int /*cmd*/)
 		act("$n is overwhelmed with &+RANGER&n, and starts to increase in size!\r\n", FALSE,
 		    ch, 0, 0, TO_ROOM);
 		notch_skill(ch, SKILL_INFURIATE, 17);
-		CharWait(ch, PULSE_VIOLENCE);
+		CharWait(ch, infuriate_lag());
 	}
 	else
 	{
 		bzero(&af, sizeof(af));
 		af.type = SKILL_INFURIATE;
-		af.duration = 3;
+		af.duration = infuriate_duration();
 		af.bitvector5 = AFF5_TITAN_FORM;
 		affect_to_char(ch, &af);
 
 		af.bitvector3 = 0;
-		af.modifier = (ch->base_stats.Str / 10);
+		af.modifier = infuriate_str_max(ch, true);
 		af.location = APPLY_STR_MAX;
 		affect_to_char(ch, &af);
 
-		af.modifier = (ch->base_stats.Con / 5);
+		af.modifier = infuriate_con_max(ch, true);
 		af.location = APPLY_CON_MAX;
 		affect_to_char(ch, &af);
-		af.modifier = -(ch->base_stats.Agi / 5);
+		af.modifier = infuriate_agi(ch, true);
 		af.location = APPLY_AGI;
 		affect_to_char(ch, &af);
 
-		af.modifier = -(ch->base_stats.Dex / 5);
+		af.modifier = infuriate_dex(ch, true);
 		af.location = APPLY_DEX;
 		affect_to_char(ch, &af);
 
@@ -893,8 +1052,53 @@ void do_infuriate(P_char ch, char * /*argument*/, int /*cmd*/)
 		act("$n is overwhelmed with &+RHATRED&n, and begins to grow to enormous proportions!\r\n",
 		    FALSE, ch, 0, 0, TO_ROOM);
 		notch_skill(ch, SKILL_INFURIATE, 17);
-		CharWait(ch, PULSE_VIOLENCE);
+		CharWait(ch, infuriate_lag());
 	}
+}
+
+static int rage_failed_lag()
+{
+	return 2 * PULSE_VIOLENCE;
+}
+
+static double rage_lag()
+{
+	return 1.5 * PULSE_VIOLENCE;
+}
+
+static int rage_ragelord_lag()
+{
+	return (int)(0.5 * PULSE_VIOLENCE);
+}
+
+static int rage_duration(P_char ch)
+{
+	return (4 * PULSE_VIOLENCE * GET_CHAR_SKILL(ch, SKILL_RAGE)) / 100;
+}
+
+// Before you can rage again, from when it starts.
+static int rage_rest(int dura)
+{
+	return dura + (5 * WAIT_SEC) / 2;
+}
+
+std::string rage_facts(P_char ch)
+{
+	extern float dam_factor[LAST_DF + 1];
+	const int rating = GET_CHAR_SKILL(ch, SKILL_RAGE);
+	if (!rating)
+		return "  You need this skill to rage.\n";
+	return fact("Chance", chance_under(rating + 1, 1, 105)) +
+	       fact("Duration", seconds(rage_duration(ch))) +
+	       fact("Your melee damage", share_percent(dam_factor[DF_RAGED]) + " of normal") +
+	       fact("Before you can rage again", seconds(rage_rest(rage_duration(ch)))) +
+	       fact("Your lag",
+		    seconds(GET_SPEC(ch, CLASS_BERSERKER, SPEC_RAGELORD) ? rage_ragelord_lag() :
+									   (int)rage_lag())) +
+	       fact("Your lag if you fail", seconds(rage_failed_lag())) +
+	       fact("Spell damage added while you rage",
+		    "+" + share_percent(dam_factor[DF_BERSERKRAGE] - 1.0)) +
+	       "  It needs berserk. You can't dodge, block or parry anyone but your opponent.\n";
 }
 
 void do_rage(P_char ch, char * /*argument*/, int /*cmd*/)
@@ -935,7 +1139,7 @@ void do_rage(P_char ch, char * /*argument*/, int /*cmd*/)
 	if (number(1, 105) > GET_CHAR_SKILL(ch, SKILL_RAGE))
 	{
 		send_to_char("&+RYou are unable to call forth the rage within you...\r\n", ch);
-		CharWait(ch, 2 * PULSE_VIOLENCE);
+		CharWait(ch, rage_failed_lag());
 		return;
 	}
 
@@ -943,11 +1147,11 @@ void do_rage(P_char ch, char * /*argument*/, int /*cmd*/)
 
 	if (!(GET_SPEC(ch, CLASS_BERSERKER, SPEC_RAGELORD)))
 	{
-		CharWait(ch, 1.5 * PULSE_VIOLENCE);
+		CharWait(ch, rage_lag());
 	}
 	else
 	{
-		CharWait(ch, (int)(0.5 * PULSE_VIOLENCE));
+		CharWait(ch, rage_ragelord_lag());
 	}
 
 	act("&+rYou feel a rage start to come from within...\n", FALSE, ch, 0, 0, TO_CHAR);
@@ -955,7 +1159,7 @@ void do_rage(P_char ch, char * /*argument*/, int /*cmd*/)
 	act("$n fills with a &+RSURGE&n of &+rBLoOdLuST! ROARRRRRRRR!!!\r\n", FALSE, ch, 0, 0,
 	    TO_ROOM);
 
-	dura = (4 * PULSE_VIOLENCE * GET_CHAR_SKILL(ch, SKILL_RAGE)) / 100;
+	dura = rage_duration(ch);
 
 	ch->specials.combat_tics = 3;
 	memset(&af, 0, sizeof(struct affected_type));
@@ -972,7 +1176,7 @@ void do_rage(P_char ch, char * /*argument*/, int /*cmd*/)
 	  af.duration = dura;
 	  affect_to_char(ch, &af);*/
 
-	set_short_affected_by(ch, SKILL_RAGE_REORIENT, dura + (5 * WAIT_SEC) / 2);
+	set_short_affected_by(ch, SKILL_RAGE_REORIENT, rage_rest(dura));
 }
 
 // Creates a foragable item that would grow in sector, sends forage message to ch, and gives obj to them.
@@ -1835,8 +2039,8 @@ static void check_manual_character_save_status(struct manual_save_status_slot *s
 	    revision.written_revision >= status->revision)
 	{
 		PlayerOutputMessage(ch, OutputChannel::SystemFeedback, OutputRole::Success)
-			.literal("Save complete for ")
-			.entity(GET_NAME(ch))
+			.literal("Saving ")
+			.entity(GET_NAME(GET_PLYR(ch)))
 			.literal(".\r\n")
 			.send(LOG_PUBLIC);
 		clear_manual_save_status(pid);
@@ -2126,6 +2330,67 @@ bool persistence_flush_all_character_saves(void)
 	return all_saved;
 }
 
+// Take a detached no-rent item off its departing owner. What it holds moves to
+// `container`, or to the owner's inventory, first.
+static void remove_norent_item(P_char ch, P_obj item, P_obj container)
+{
+	while (P_obj content = item->contains)
+	{
+		obj_from_obj(content);
+		if (container)
+			obj_to_obj(content, container);
+		else
+			obj_to_char(content, ch);
+	}
+	// A ghost being extracted may not be in any room.
+	if (IS_SET(item->extra_flags, ITEM_NODROP) || IS_SET(item->extra2_flags, ITEM2_SOULBIND) ||
+	    ch->in_room == NOWHERE || IS_ROOM(ch->in_room, ROOM_LOCKER))
+	{
+		act("$p is no-rent and crumbles to dust.", TRUE, ch, item, 0, TO_CHAR);
+		act("$p is no-rent and crumbles to dust.", TRUE, ch, item, 0, TO_ROOM);
+		extract_obj(item);
+		return;
+	}
+	act("$p is no-rent and falls to the floor.", TRUE, ch, item, 0, TO_CHAR);
+	act("$p is no-rent and falls to the floor.", TRUE, ch, item, 0, TO_ROOM);
+	obj_to_room(item, ch->in_room);
+	if (item->obj_uid)
+		redis_log_floor_drop(item, world[item->loc.room].number);
+}
+
+// Innermost first, so a no-rent bag has only items that stay when it comes off.
+static void remove_norent_contents(P_char ch, P_obj list, P_obj container)
+{
+	P_obj next;
+	for (P_obj object = list; object; object = next)
+	{
+		remove_norent_contents(ch, object->contains, object);
+		next = object->next_content;
+		if (!IS_SET(object->extra_flags, ITEM_NORENT))
+			continue;
+		if (container)
+			obj_from_obj(object);
+		else
+			obj_from_char(object);
+		remove_norent_item(ch, object, container);
+	}
+}
+
+// A no-rent item never leaves the game with its owner, whatever its ownership record says.
+static void remove_norent_items(P_char ch)
+{
+	for (int slot = 0; slot < MAX_WEAR; ++slot)
+	{
+		P_obj worn = ch->equipment[slot];
+		if (!worn)
+			continue;
+		remove_norent_contents(ch, worn->contains, worn);
+		if (IS_SET(worn->extra_flags, ITEM_NORENT))
+			remove_norent_item(ch, unequip_char(ch, slot), nullptr);
+	}
+	remove_norent_contents(ch, ch->carrying, nullptr);
+}
+
 /*
  * Logging out never waits: the terminal save is captured and queued on the one
  * writer, and the caller extracts at once. Shutdown and copyover drain the writer.
@@ -2135,6 +2400,10 @@ bool persistence_save_character_terminal(P_char ch, int type)
 {
 	if (!ch || IS_NPC(ch) || GET_PID(ch) <= 0 || !GET_NAME(ch))
 		return false;
+
+	locker_return_norent_items(ch);
+	if (type == RENT_INN || type == RENT_CAMPED || type == RENT_LINKDEAD)
+		remove_norent_items(ch);
 
 	const int room = calculate_save_room(ch, type, ch->in_room);
 	const player_save_pipeline_result queued =
@@ -2164,10 +2433,24 @@ bool persistence_save_character_terminal(P_char ch, int type)
 	return true;
 }
 
-/** Copyover drains the writer after queuing every save. */
+/** A copyover may discard the live body only after this revision lands. */
 bool persistence_save_character_terminal_database_acknowledged(P_char ch, int type)
 {
-	return persistence_save_character_terminal(ch, type);
+	if (!ch || IS_NPC(ch) || GET_PID(ch) <= 0 || !GET_NAME(ch))
+		return false;
+	locker_return_norent_items(ch);
+	const int room = calculate_save_room(ch, type, ch->in_room);
+	if (player_save_pipeline_terminal(ch, type, room, 5000) !=
+	    player_save_terminal_result::database_acknowledged)
+		return false;
+	locker_post_save_hook(ch);
+	if (!sync_account_character_projection(ch, room, FALSE) ||
+	    !save_account_character_departure(ch))
+		return false;
+	if (struct deferred_save_slot *slot = find_deferred_save_slot(GET_PID(ch)))
+		memset(slot, 0, sizeof(*slot));
+	clear_manual_save_status(GET_PID(ch));
+	return true;
 }
 
 /** Queue a terminal save for every live player; the caller drains the writer. */
@@ -2303,7 +2586,6 @@ bool do_save_silent(P_char ch, int type)
 /** Queue a manual checkpoint and track feedback until its captured revision is durable. */
 void do_save(P_char ch, char *argument, int /*cmd*/)
 {
-	char Gbuf1[MAX_STRING_LENGTH];
 	char tmp_buf[MAX_STRING_LENGTH];
 
 	if (!ch)
@@ -2345,12 +2627,7 @@ void do_save(P_char ch, char *argument, int /*cmd*/)
 	}
 	struct manual_save_status_slot *status = find_manual_save_status(GET_PID(ch));
 	if (status)
-	{
-		snprintf(Gbuf1, MAX_STRING_LENGTH, "Save already queued for %s.\r\n",
-			 GET_NAME(GET_PLYR(ch)));
-		send_to_char(Gbuf1, ch);
 		return;
-	}
 	status = find_empty_manual_save_status();
 	if (!status)
 	{
@@ -2364,8 +2641,6 @@ void do_save(P_char ch, char *argument, int /*cmd*/)
 	persistence_schedule_character_save(ch, 1, 2, "manual_save");
 	if (!find_deferred_save_slot(GET_PID(ch)))
 		begin_manual_save_status_wait(ch);
-	snprintf(Gbuf1, MAX_STRING_LENGTH, "Save queued for %s.\r\n", GET_NAME(GET_PLYR(ch)));
-	send_to_char(Gbuf1, ch);
 }
 
 void do_not_here(P_char ch, char * /*argument*/, int /*cmd*/)
@@ -2638,6 +2913,39 @@ void do_withdraw(P_char ch, char *argument, int /*cmd*/)
 	}
 }
 
+// The lag, in pulses, after starting to sneak.
+static int sneak_lag()
+{
+	return PULSE_VIOLENCE;
+}
+
+// How long, in ticks, sneaking lasts.
+static int sneak_duration(P_char ch)
+{
+	return GET_LEVEL(ch);
+}
+
+// What agility adds to the rating a sneak rolls against.
+static int sneak_agility_bonus(P_char ch)
+{
+	return agi_app[STAT_INDEX(GET_C_AGI(ch))].sneak;
+}
+
+std::string sneak_facts(P_char ch)
+{
+	if (has_innate(ch, INNATE_SNEAK))
+		return "  You sneak by nature: starting again always works, with no lag.\n";
+	const bool certain = GET_SPEC(ch, CLASS_ROGUE, SPEC_THIEF) && (GET_LEVEL(ch) > 35);
+	return fact("Chance",
+		    certain ?
+			    "certain" :
+			    std::to_string(MAX(0, MIN(101, GET_CHAR_SKILL(ch, SKILL_SNEAK) +
+								   sneak_agility_bonus(ch) - 1))) +
+				    " in 101") +
+	       fact("Duration", game_hours(sneak_duration(ch))) +
+	       fact("Your lag", seconds(sneak_lag()));
+}
+
 void do_sneak(P_char ch, char *argument, int /*cmd*/)
 {
 	struct affected_type af;
@@ -2738,25 +3046,64 @@ void do_sneak(P_char ch, char *argument, int /*cmd*/)
 	}
 
 	percent = number(1, 101);
-	CharWait(ch, PULSE_VIOLENCE);
+	CharWait(ch, sneak_lag());
 
 	// Notching check moved to actmove.c Apr09 -Lucrot
 	//  notch_skill(ch, SKILL_SNEAK, 5);
 
 	bzero(&af, sizeof(af));
 	af.type = SKILL_SNEAK;
-	af.duration = GET_LEVEL(ch);
+	af.duration = sneak_duration(ch);
 
 	if (GET_SPEC(ch, CLASS_ROGUE, SPEC_THIEF) && (GET_LEVEL(ch) > 35))
 	{
 		af.bitvector = AFF_SNEAK;
 	}
-	else if (percent < (skl_lvl + agi_app[STAT_INDEX(GET_C_AGI(ch))].sneak))
+	else if (percent < (skl_lvl + sneak_agility_bonus(ch)))
 	{
 		af.bitvector = AFF_SNEAK;
 	}
 
 	affect_to_char(ch, &af);
+}
+
+// The lag, in pulses, after hiding, unless a master thief.
+static int hide_lag()
+{
+	return PULSE_VIOLENCE * 3;
+}
+
+// What agility adds to the rating a hide rolls against.
+static int hide_agility_bonus(P_char ch)
+{
+	return agi_app[STAT_INDEX(GET_C_AGI(ch))].hide;
+}
+
+// How long, in ticks, a good hiding spot lasts.
+static int ambush_duration()
+{
+	return 10;
+}
+
+std::string hide_facts(P_char ch)
+{
+	const bool master = GET_SPEC(ch, CLASS_ROGUE, SPEC_THIEF) &&
+			    GET_CHAR_SKILL(ch, SKILL_HIDE) > 90;
+	return fact("Chance", std::to_string(MAX(0, MIN(101, GET_CHAR_SKILL(ch, SKILL_HIDE) +
+								     hide_agility_bonus(ch)))) +
+				      " in 101; luck can raise it") +
+	       fact("Your lag", master ? "none, as a master thief" : seconds(hide_lag())) +
+	       "  Not while riding, flying, fighting, in water, or with faerie fire on you.\n";
+}
+
+std::string ambush_facts(P_char ch)
+{
+	return fact("Chance of a good spot when you hide",
+		    std::to_string(MIN(102, GET_CHAR_SKILL(ch, SKILL_AMBUSH))) + " in 102") +
+	       fact("How long the spot stays good", game_hours(ambush_duration())) +
+	       fact("Chance a tackle, backstab, headbutt or apply keeps you hidden",
+		    std::to_string(MIN(102, GET_CHAR_SKILL(ch, SKILL_AMBUSH))) + " in 102") +
+	       "  Most other commands from the spot give away your hiding place.\n";
 }
 
 void do_hide(P_char ch, char *argument, int /*cmd*/)
@@ -2854,7 +3201,7 @@ void do_hide(P_char ch, char *argument, int /*cmd*/)
 				ch);
 		}
 		else
-			CharWait(ch, PULSE_VIOLENCE * 3);
+			CharWait(ch, hide_lag());
 
 		/*  destroy your tracks! */
 		for (tobj = world[ch->in_room].contents; tobj; tobj = next_tobj)
@@ -2876,7 +3223,7 @@ void do_hide(P_char ch, char *argument, int /*cmd*/)
 			}
 		}
 		notch_skill(ch, SKILL_HIDE, 17);
-		if (roll > skl_lvl + agi_app[STAT_INDEX(GET_C_AGI(ch))].hide)
+		if (roll > skl_lvl + hide_agility_bonus(ch))
 		{
 			return;
 		}
@@ -2889,7 +3236,7 @@ void do_hide(P_char ch, char *argument, int /*cmd*/)
 			affect_from_char(ch, SKILL_AMBUSH);
 			bzero(&af, sizeof(af));
 			af.type = SKILL_AMBUSH;
-			af.duration = 10;
+			af.duration = ambush_duration();
 			affect_to_char(ch, &af);
 		}
 		return;
@@ -2983,7 +3330,7 @@ void listen(P_char ch, char *argument)
 				snprintf(
 					buf, MAX_STRING_LENGTH,
 					"You hear what might be %d creatures invisible, or hiding.\r\n",
-					MAX(1, (found + number(0, 1) - number(0, 1))));
+					std::max(1, found + number(0, 1) - number(0, 1)));
 			}
 			else
 				snprintf(buf, MAX_STRING_LENGTH,
@@ -3025,7 +3372,7 @@ void listen(P_char ch, char *argument)
 				{
 					snprintf(buf, MAX_STRING_LENGTH,
 						 "You hear what might be %d creatures %s%s.\r\n",
-						 MAX(1, (found + number(0, 1) - number(0, 1))),
+						 std::max(1, found + number(0, 1) - number(0, 1)),
 						 ((dir == 5) ? "below" :
 						  (dir == 4) ? "above" :
 							       "to the "),
@@ -3384,6 +3731,14 @@ static bool steal_player_item(P_char thief, P_char victim, P_obj object, bool eq
 	return true;
 }
 
+// The thief's lag, in pulses, after an attempt.
+static int steal_lag()
+{
+	return PULSE_VIOLENCE * 2;
+}
+
+extern int dragonmind_steal_divisor();
+
 void do_steal(P_char ch, char *argument, int /*cmd*/)
 {
 	int skl;
@@ -3571,7 +3926,7 @@ void do_steal(P_char ch, char *argument, int /*cmd*/)
 		percent += (GET_LEVEL(ch) - GET_LEVEL(victim)) / 2;
 		// Hard to steal from Red Dragon - Monks?
 		if (has_innate(victim, INNATE_DRAGONMIND))
-			percent = percent / 2;
+			percent = percent / dragonmind_steal_divisor();
 		// At this point, ensure that percent is between 1 and 100
 		percent = BOUNDED(1, percent, 100);
 
@@ -3646,7 +4001,7 @@ void do_steal(P_char ch, char *argument, int /*cmd*/)
 	}
 
 	if (!trusted)
-		CharWait(ch, PULSE_VIOLENCE * 2);
+		CharWait(ch, steal_lag());
 
 	switch (type)
 	{
@@ -4412,6 +4767,12 @@ void do_area(P_char ch, char *argument, int /*cmd*/)
 	}
 }
 
+// Quick thinking and combat mind steady a potion in combat.
+int combat_mind_quaff_chance(int chance)
+{
+	return (int)(chance * 1.25);
+}
+
 void do_quaff(P_char ch, char *argument, int /*cmd*/)
 {
 	P_obj bottle;
@@ -4453,6 +4814,13 @@ void do_quaff(P_char ch, char *argument, int /*cmd*/)
 		return;
 	}
 
+	for (i = 1; i < 4; ++i)
+		if (bottle->value[i] == SPELL_VITALITY && affected_by_spell(ch, SPELL_VITALITY))
+		{
+			send_to_char("You are already affected by vitality!\r\n", ch);
+			return;
+		}
+
 	if (affected_by_spell(ch, TAG_POTION_TIMER))
 	{
 		// gellz added potion messages for timer durations  070316
@@ -4489,6 +4857,25 @@ void do_quaff(P_char ch, char *argument, int /*cmd*/)
 		return;
 	}
 
+	bool unsupported_magic = false, usable_magic = false;
+	for (i = 1; i < 4; ++i)
+	{
+		j = bottle->value[i];
+		if (j == SPELL_GATE || j == SPELL_CALL_LIGHTNING)
+			unsupported_magic = true;
+		else if (j > 0 && j < MAX_SKILLS && skills[j].spell_pointer &&
+			 !IS_SET(skills[j].targets, TAR_AREA | TAR_OFFAREA))
+			usable_magic = true;
+	}
+	if (unsupported_magic)
+	{
+		send_to_char("Gate and Call Lightning cannot be invoked by drinking a potion.\r\n",
+			     ch);
+		// Mixed potions still deliver their other spells or non-magical damage.
+		if (!usable_magic && bottle->value[4] <= 0)
+			return;
+	}
+
 	if (IS_FIGHTING(ch))
 	{
 		chance = 50;
@@ -4500,7 +4887,7 @@ void do_quaff(P_char ch, char *argument, int /*cmd*/)
 
 		if (has_innate(ch, INNATE_QUICK_THINKING) ||
 		    affected_by_spell(ch, SPELL_COMBAT_MIND))
-			chance = (int)(chance * 1.25);
+			chance = combat_mind_quaff_chance(chance);
 
 		if (number(0, 99) >= chance && OBJ_VNUM(bottle) != VOBJ_EPIC_BOTTLE_EPICS &&
 		    OBJ_VNUM(bottle) != VOBJ_EPIC_TOCORPSE_POTION)
@@ -4565,7 +4952,8 @@ void do_quaff(P_char ch, char *argument, int /*cmd*/)
 				if ((j != -1) && (skills[j].spell_pointer != NULL))
 				{
 					// We don't do area spells via potions unless the quaffer explodes.
-					if (IS_SET(skills[j].targets, TAR_AREA | TAR_OFFAREA))
+					if (j == SPELL_GATE || j == SPELL_CALL_LIGHTNING ||
+					    IS_SET(skills[j].targets, TAR_AREA | TAR_OFFAREA))
 						continue;
 					((*skills[j].spell_pointer)((int)bottle->value[0], ch, 0,
 								    SPELL_TYPE_POTION, ch, 0));
@@ -7011,6 +7399,22 @@ void do_suicide(P_char ch, char * /*argument*/, int /*cmd*/)
 	die(ch, ch);
 }
 
+// How long, in ticks, readying to climb lasts.
+static int climb_duration()
+{
+	return 10;
+}
+
+std::string climb_facts(P_char ch)
+{
+	int catches = 0;
+	for (int roll = 1; roll <= 100; roll++)
+		catches += falling_climb_catches(true, GET_CHAR_SKILL(ch, SKILL_CLIMB), roll);
+	return fact("Chance to catch yourself when you start to fall",
+		    std::to_string(catches) + " in 100") +
+	       fact("Duration", game_hours(climb_duration()));
+}
+
 void do_climb(P_char ch, char * /*argument*/, int /*cmd*/)
 {
 	struct affected_type af;
@@ -7029,7 +7433,7 @@ void do_climb(P_char ch, char * /*argument*/, int /*cmd*/)
 		send_to_char("You survey the climb ahead...\r\n", ch);
 		bzero(&af, sizeof(af));
 		af.type = SKILL_CLIMB;
-		af.duration = 10;
+		af.duration = climb_duration();
 		affect_to_char(ch, &af);
 		notch_skill(ch, SKILL_CLIMB, 17);
 	}
@@ -7084,6 +7488,32 @@ void do_nothing(P_char /*ch*/, char * /*argument*/, int /*cmd*/)
 	return;
 }
 
+// The lag, in pulses, after a failure or when already scenting, and after a success.
+static int blood_scent_failed_lag()
+{
+	return (2 * PULSE_VIOLENCE);
+}
+
+static int blood_scent_lag()
+{
+	return PULSE_VIOLENCE;
+}
+
+// How long, in pulses, the scent lasts.
+static int blood_scent_duration(P_char ch)
+{
+	return WAIT_SEC * GET_CHAR_SKILL(ch, SKILL_BLOOD_SCENT);
+}
+
+std::string blood_scent_facts(P_char ch)
+{
+	return fact("Chance", std::to_string(GET_CHAR_SKILL(ch, SKILL_BLOOD_SCENT)) + " in 100") +
+	       fact("Duration", real_time(blood_scent_duration(ch))) +
+	       fact("Your lag", seconds(blood_scent_lag()) + ", or " +
+					seconds(blood_scent_failed_lag()) +
+					" on a failure or if already active");
+}
+
 void do_blood_scent(P_char ch, char * /*argument*/, int /*cmd*/)
 {
 	struct affected_type af;
@@ -7099,14 +7529,14 @@ void do_blood_scent(P_char ch, char * /*argument*/, int /*cmd*/)
 	{
 		send_to_char("You sniff around but cant smell anything special.\r\n", ch);
 		notch_skill(ch, SKILL_BLOOD_SCENT, 7.69);
-		CharWait(ch, (2 * PULSE_VIOLENCE));
+		CharWait(ch, blood_scent_failed_lag());
 		return;
 	}
 
 	if (affected_by_spell(ch, SKILL_BLOOD_SCENT))
 	{
 		send_to_char("Blood, blood, yes you can almost taste it!\r\n", ch);
-		CharWait(ch, (2 * PULSE_VIOLENCE));
+		CharWait(ch, blood_scent_failed_lag());
 		return;
 	}
 
@@ -7114,11 +7544,11 @@ void do_blood_scent(P_char ch, char * /*argument*/, int /*cmd*/)
 
 	act("You grin evilly as the smell of &+rblood&n fills you.", FALSE, ch, 0, 0, TO_CHAR);
 	act("$n licks his cracked lips and grins evilly.", FALSE, ch, 0, 0, TO_ROOM);
-	CharWait(ch, PULSE_VIOLENCE);
+	CharWait(ch, blood_scent_lag());
 	af.type = SKILL_BLOOD_SCENT;
 	af.bitvector5 = AFF5_BLOOD_SCENT;
 	af.flags = AFFTYPE_SHORT | AFFTYPE_NODISPEL | AFFTYPE_NOSHOW;
-	af.duration = WAIT_SEC * GET_CHAR_SKILL(ch, SKILL_BLOOD_SCENT);
+	af.duration = blood_scent_duration(ch);
 	affect_to_char(ch, &af);
 
 	/* I don't see the point of this...so lets comment it out!

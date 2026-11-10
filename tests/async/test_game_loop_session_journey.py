@@ -4,27 +4,27 @@
 This is deliberately a small wire-level journey rather than a source-only
 contract.  It crosses account and character entry, prompt framing, queued
 type-ahead, rendered output, quit, and reconnect against a disposable
-flat-file server.  The shared fixtures own the server lifecycle and copy all
+MariaDB server.  The shared fixtures own the server lifecycle and copy all
 mutable runtime state into temporary directories.
 """
 
 from __future__ import annotations
 
-import os
+import argparse
 import pathlib
-import tempfile
 
 from test_account_recovery_journey import (
     ACCOUNT,
     OLD_PASSWORD,
     IsolatedServer,
     MudClient,
-    build_flatfile_server,
     enter_account_name,
     require,
 )
 from test_creation_prompt_journey import (
+    MENU,
     finish_character_choices,
+    play_saved_character,
     reply,
     require_prompt_framed,
     start_character,
@@ -57,7 +57,8 @@ def create_character(client: MudClient) -> None:
     reply(client, "y", "meet these criteria?")
     reply(client, "y", "Your selection")
     finish_character_choices(client)
-    reply(client, "y", "PRESS RETURN")
+    reply(client, "y", MENU)
+    play_saved_character(client, CHARACTER)
     reply(client, "", "Your starter kit is ready")
     client.expect("Pos: standing >", timeout=30)
 
@@ -100,7 +101,7 @@ def run_journey(binary: pathlib.Path) -> None:
             require_prompt_framed(client, "< (news)> ")
 
             client.send("save")
-            client.expect(f"Save complete for {CHARACTER}.", timeout=20)
+            client.expect(f"Saving {CHARACTER}.", timeout=20)
 
             client.send("quit")
             # Normal quit camps first (TAG_CAMP: roughly 140 seconds).
@@ -131,6 +132,7 @@ def run_journey(binary: pathlib.Path) -> None:
 
 
 if __name__ == "__main__":
-    with tempfile.TemporaryDirectory(prefix=f"game-loop-session-{os.getpid()}-") as build_tmp:
-        run_journey(build_flatfile_server(pathlib.Path(build_tmp)))
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--server", type=pathlib.Path, required=True)
+    run_journey(parser.parse_args().server.resolve())
     print("game-loop real session journey passed")

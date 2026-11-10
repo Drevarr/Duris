@@ -910,16 +910,12 @@ void do_page(P_char ch, char *argument, int /*cmd*/)
 	}
 	if (!strcasecmp(argument, "help") || !strcasecmp(argument, "help status"))
 	{
-#ifdef __NO_MYSQL__
-		send_to_char("Flat-file help is loaded once from the local catalog.\r\n", ch);
-#else
 		if (!strcasecmp(argument, "help"))
 			send_to_char(help_cache_refresh() ?
 					     "Help refresh queued.\r\n" :
 					     "Help refresh already pending or unavailable.\r\n",
 				     ch);
 		send_to_char(("Help cache: " + help_cache_status() + "\r\n").c_str(), ch);
-#endif
 		return;
 	}
 	send_to_char("Re-reading news, motd and wiz motd...\r\n", ch);
@@ -1690,6 +1686,15 @@ int find_action(int cmd)
 	}
 }
 
+static void dragon_action_roar(P_char ch)
+{
+	const uint64_t actor_id = ch->runtime_id;
+	DragonCombat(ch, TRUE);
+	ch = find_character_by_runtime_id(actor_id);
+	if (ch && IS_PC_PET(ch))
+		CharWait(ch, PULSE_VIOLENCE);
+}
+
 void do_action(P_char ch, char *argument, int cmd)
 {
 	int act_nr;
@@ -1709,22 +1714,9 @@ void do_action(P_char ch, char *argument, int cmd)
 			return;
 		}
 	}
-	if (cmd == CMD_ROAR && IS_DRAGON(ch))
+	if (cmd == CMD_ROAR && (IS_DRAGON(ch) || IS_AVATAR(ch) || IS_TITAN(ch)))
 	{
-		DragonCombat(ch, TRUE); /* calls roar section only */
-		if (IS_PC_PET(ch))
-		{
-			CharWait(ch, PULSE_VIOLENCE);
-		}
-		return;
-	}
-	if (cmd == CMD_ROAR && (IS_AVATAR(ch) || IS_TITAN(ch)))
-	{
-		DragonCombat(ch, TRUE);
-		if (IS_PC_PET(ch))
-		{
-			CharWait(ch, PULSE_VIOLENCE);
-		}
+		dragon_action_roar(ch);
 		return;
 	}
 	if (cmd == CMD_TRIP)

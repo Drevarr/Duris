@@ -56,8 +56,8 @@ struct acct_chars
 	int last_room;
 	long last_save;
 	long played; /* seconds played, as of the last save */
-	/* The character's own racewar (RACEWAR_*). It keys the flat-file identity, wallet
-	 * and bank, as GET_RACEWAR() keys the MariaDB bank; 0 when not yet known. */
+	/* The character's own racewar (RACEWAR_*), as GET_RACEWAR() keys the bank; 0 when
+	 * not yet known. */
 	char player_racewar;
 	struct acct_chars *next;
 };
@@ -135,8 +135,16 @@ void account_apply_recovered_password(
 	struct acct_entry *fresh, const char *bcrypt_hash,
 	const unsigned char expected_fingerprint[ACCOUNT_RECOVERY_FINGERPRINT_LEN],
 	struct descriptor_data *keep_session, account_recovery_apply_done done);
-/* Reads the named account: on the writer, behind the saves queued before it, while d
- * waits with its input held (MariaDB), or at once (flat-file). done runs while d is still
+// Create a fresh account without overwriting an existing name. Acknowledgment
+// follows durable storage, and the callback only runs for a live session.
+void account_create(struct descriptor_data *d,
+		    std::function<void(struct descriptor_data *, bool)> done);
+void account_apply_verified_email(
+	struct acct_entry *fresh, const char *email,
+	const unsigned char expected_fingerprint[ACCOUNT_RECOVERY_FINGERPRINT_LEN],
+	struct descriptor_data *keep_session, account_recovery_apply_done done);
+/* Reads the named account on the writer, behind the saves queued before it, while d
+ * waits with its input held. done runs while d is still
  * connected, with the account, which it then owns, or null when there is none; ok is
  * false when the read failed. */
 using account_read_done =
@@ -146,5 +154,20 @@ void account_read(struct descriptor_data *d, const char *name, account_read_done
 // by the id wait_for_writer() gave, or finds nothing once the connection has closed.
 uint64_t wait_for_writer(struct descriptor_data *d);
 struct descriptor_data *writer_replied(uint64_t id);
+
+struct player_save_completion;
+bool account_character_body_held(int pid, struct descriptor_data *except);
+bool keep_new_character(struct descriptor_data *d);
+void continue_kept_character(struct descriptor_data *d, bool created = false);
+bool approve_kept_character(struct descriptor_data *d);
+bool decline_kept_character(struct descriptor_data *d, const char *reason);
+void account_creation_saved(const player_save_completion &completion);
+void account_creation_pulse();
+bool account_creation_pending(int pid);
+bool account_creation_owner_pending(const char *name);
+// Value projection: name/next remain null until publication into an account list.
+struct acct_chars account_kept_character_projection(struct char_data *character);
+bool account_publish_kept_character(struct acct_entry *account, const struct acct_chars &projection,
+				    const char *name);
 
 #endif // DURIS_ACCOUNT_H

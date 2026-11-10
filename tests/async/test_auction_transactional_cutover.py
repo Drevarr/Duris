@@ -100,7 +100,6 @@ class AuctionTransactionalCutoverTests(unittest.TestCase):
 
     def test_live_routes_submit_commands_and_publish_after_ack(self):
         source = (SRC / "auction_houses.c").read_text()
-        source = source[source.index("#else", source.index("#ifdef __NO_MYSQL__")) :]
         routes = {
             "bool auction_offer(P_char": "static void auction_list_row(",
             "bool auction_bid(P_char": "static void auction_pickup_claim(",
@@ -113,17 +112,17 @@ class AuctionTransactionalCutoverTests(unittest.TestCase):
             self.assertIn("auction_transaction_submit", body)
             self.assertNotIn("SUB_MONEY", body)
             self.assertNotIn("sql_begin_transaction", body)
-        # The listed items leave the inventory at submit and are extracted when the
-        # listing commits (auction_transaction.c); the callback only reports it.
+        # A pending listing keeps its source until the custody receipt commits.
         offer_callback = section(source, "void auction_list_completed(",
                                  "void auction_bid_completed(")
         self.assertNotIn("obj_from_char", offer_callback)
         transaction = (SRC / "auction_transaction.c").read_text()
         submit = transaction[transaction.index("bool submit(P_char character"):]
-        self.assertLess(submit.index("obj_from_char(object)"),
-                        submit.index("currency_transaction_save_first(character)"))
+        self.assertNotIn("obj_from_char(object)", submit)
         self.assertLess(submit.index("currency_transaction_save_first(character)"),
                         submit.index("critical_command_coordinator_submit"))
+        self.assertIn("currency_transaction_reserve_trade", submit)
+        self.assertIn("player_save_pipeline_reserve_trade", submit)
         self.assertNotIn("ws_broadcast_auction_new", offer_callback)
         publication = section(source, "static void auction_publish_event(",
                               "// syntax: auction offer")
@@ -136,16 +135,16 @@ class AuctionTransactionalCutoverTests(unittest.TestCase):
 
     def test_outbox_waits_for_async_publication_callback(self):
         transaction = (SRC / "auction_transaction.c").read_text()
-        declarations = transaction[transaction.index("enum class outbox_publication_state"):
+        declarations = transaction[transaction.index("struct pending_auction"):
                                    transaction.index("std::string operation_key(")]
         houses = (SRC / "auction_houses.c").read_text()
-        houses = houses[houses.index("#else", houses.index("#ifdef __NO_MYSQL__")):]
         producer = section(houses, "bool auction_publish_committed_event(",
                            "// syntax: auction offer")
         harness = r'''
 #include "economy/auction_transaction.h"
 #include "sql/sql_async.h"
 #include <cassert>
+#include <cstdlib>
 #include <mutex>
 #include <unordered_map>
 static std::function<void(bool, const sql_rows &)> done;
@@ -168,7 +167,10 @@ bool auction_command_decode_result(const uint8_t *, size_t, auction_command_resu
 }
 static void auction_publish_event(const auction_command_result &, unsigned long long,
                                   const sql_row &) { ++broadcasts; }
-''' + declarations + producer + \
+''' + declarations + r'''
+P_char find_player_by_pid(int) { return nullptr; }
+bool publish(std::unordered_map<std::string, pending_auction>::iterator, P_char) { std::abort(); }
+''' + producer + \
             extract_function("auction_transaction.c", "critical_outbox_delivery_result\nauction_transaction_outbox_delivery(") + \
             extract_function("auction_transaction.c", "void auction_transaction_outbox_published(") + \
             extract_function("auction_transaction.c", "void auction_transaction_publish_outbox(") + r'''
@@ -229,7 +231,6 @@ int main() {
         # Step 8: the listings, an auction's details, what waits for pickup, the resort and
         # the committed event's row are read on the writer; money pickups are queued there.
         source = (SRC / "auction_houses.c").read_text()
-        source = source[source.index("#else", source.index("#ifdef __NO_MYSQL__")) :]
         routes = {
             "static void auction_publish_event(": "// syntax: auction offer",
             "static void auction_list_row(P_char": "// syntax: auction remove",
@@ -254,49 +255,6 @@ int main() {
         self.assertIn("sql_queue(", section(source, "bool insert_money_pickup(int",
                                             "string format_time("))
 
-    def test_client_free_read_and_pickup_routes_use_flat_catalog(self):
-        source = (SRC / "auction_houses.c").read_text()
-        no_mysql = section(source, "#ifdef __NO_MYSQL__", "#else")
-        self.assertNotIn("Auctions are disabled", no_mysql)
-        list_route = section(no_mysql, "bool auction_list(P_char", "bool auction_info(P_char")
-        info_route = section(no_mysql, "bool auction_info(P_char", "bool auction_pickup(P_char")
-        pickup_route = section(no_mysql, "bool auction_pickup(P_char", "bool auction_help(P_char")
-        self.assertIn("flatfile_auction_list_open", list_route)
-        self.assertIn("flatfile_auction_find_open", info_route)
-        self.assertIn("flatfile_auction_find_pickup", pickup_route)
-        self.assertIn("auction_transaction_submit", pickup_route)
-        for route in (list_route, info_route, pickup_route):
-            self.assertNotIn("qry(", route)
-            self.assertNotIn("MYSQL_", route)
-
-    def test_client_free_mutations_and_expiry_use_typed_commands(self):
-        source = (SRC / "auction_houses.c").read_text()
-        no_mysql = section(source, "#ifdef __NO_MYSQL__", "#else")
-        expiry = section(no_mysql, "void auction_houses_activity()", "bool auction_offer(P_char")
-        offer = section(no_mysql, "bool auction_offer(P_char", "bool auction_bid(P_char")
-        bid = section(no_mysql, "bool auction_bid(P_char", "bool auction_remove(P_char")
-        remove = section(no_mysql, "bool auction_remove(P_char", "bool auction_list(P_char")
-        self.assertIn("flatfile_auction_list_open", expiry)
-        self.assertIn("pending_flat_finalizations", expiry)
-        self.assertIn("auction_transaction_submit_background", expiry)
-        self.assertIn("flatfile_auction_find_pending_event", expiry)
-        self.assertIn("publish_flat_auction_event", expiry)
-        self.assertIn("flatfile_auction_acknowledge_event", expiry)
-        # The seller holds the item in memory; the listing claims it in the repository.
-        self.assertNotIn("item_ownership_runtime_lookup", offer)
-        self.assertNotIn("ownership is still being synchronized", offer)
-        self.assertIn("write_one_object", offer)
-        for route in (offer, bid, remove):
-            self.assertIn("auction_transaction_submit", route)
-            self.assertNotIn("SUB_MONEY", route)
-            self.assertNotIn("qry(", route)
-        publisher = section(no_mysql, "bool publish_flat_auction_event(", "} // namespace")
-        self.assertIn("stage_auction_event_message", publisher)
-        self.assertIn("ws_broadcast_auction_new", publisher)
-        self.assertIn("ws_broadcast_auction_bid", publisher)
-        self.assertIn("ws_broadcast_auction_close", publisher)
-        self.assertIn("flatfile_offline_message_enqueue", no_mysql)
-
     def test_repository_owns_settlement_claims_ledgers_and_outbox(self):
         repository = (SRC / "auction_repository.c").read_text()
         generic = (SRC / "critical_command_repository.c").read_text()
@@ -306,8 +264,11 @@ int main() {
             "claim_operation_id", "claimed_at=CURRENT_TIMESTAMP(6)",
         ):
             self.assertIn(token, repository)
-        # The wallet is memory's: the repository reports what it charged or paid.
-        for token in ("UPDATE player_data", "account_banks", "currency_ledger"):
+        # Claims, listing fees and bids write the wallet in the same receipt.
+        self.assertIn("UPDATE player_data", repository)
+        self.assertIn("paid_receipt", repository)
+        self.assertIn("write_wallet(connection, payload, after, result)", repository)
+        for token in ("account_banks", "currency_ledger"):
             self.assertNotIn(token, repository)
         self.assertIn("wallet_value_delta", repository)
         auction_branch = generic[generic.index("if (auction_command)"):]

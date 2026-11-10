@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """End-to-end account password recovery by email regression.
 
-Boots the real flat-file server twice against an isolated authority.  The first
+Boots the real server twice against a disposable MariaDB schema.  The first
 boot enables recovery (MAIL_ENABLED=TRUE) with a wire-level fake SMTP server on
 loopback: an account is created with an email address, the password prompt
 offers '?', the reset code is read from the captured SMTP DATA, the password is
@@ -18,7 +18,9 @@ load_env_file's setenv(name, value, 0) lets a real environment variable win.
 from __future__ import annotations
 
 import server_build_artifacts
+from test_mariadb_combat_journey import mariadb_authority
 
+import argparse
 import os
 import pathlib
 import random
@@ -318,13 +320,13 @@ def generate_certificate(run_root: pathlib.Path) -> None:
     (run_root / "duris.key").chmod(0o600)
 
 
-def build_flatfile_server(build_root: pathlib.Path) -> pathlib.Path:
+def build_mariadb_server(build_root: pathlib.Path, *, real_clock: bool = False) -> pathlib.Path:
     """Acquire the shared artifact while retaining journey-owned runtime state."""
-    return server_build_artifacts.build_flatfile_server(build_root)
+    return server_build_artifacts.build_mariadb_server(build_root, real_clock=real_clock)
 
 
 class IsolatedServer:
-    """One booted flat-file server with its own state, run root, ports, and output file."""
+    """One booted server with its own schema, run root, ports, and output file."""
 
     def __init__(self, binary: pathlib.Path, mail_environment: dict[str, str] | None,
                  prepare_run_root=None, *, full_world=False) -> None:
@@ -333,6 +335,8 @@ class IsolatedServer:
         self.full_world = full_world
         self.mail_environment = mail_environment or {}
         self.prepare_run_root = prepare_run_root
+        self.authority = None
+        self.sql = None
         self.state_tmp = tempfile.TemporaryDirectory(prefix="duris-recovery-state-")
         self.run_tmp = tempfile.TemporaryDirectory(prefix="duris-recovery-run-")
         self.state_root = pathlib.Path(self.state_tmp.name)
@@ -344,6 +348,11 @@ class IsolatedServer:
 
     def __enter__(self) -> "IsolatedServer":
         try:
+            # A caller that brings its own schema passes its environment in.
+            if "DB_NAME" not in self.mail_environment:
+                self.authority = mariadb_authority()
+                database, self.sql = self.authority.__enter__()
+                self.mail_environment = {**database, **self.mail_environment}
             self._boot()
         except Exception:
             self.__exit__(None, None, None)
@@ -363,12 +372,27 @@ class IsolatedServer:
             self.output = None
         self.run_tmp.cleanup()
         self.state_tmp.cleanup()
+        if self.authority is not None:
+            self.authority.__exit__(None, None, None)
+            self.authority = None
 
     def _boot(self) -> None:
         self.state_root.chmod(0o700)
         (self.run_root / "logs/log").mkdir(parents=True)
         (self.run_root / "logs/log/.gitignore").write_text("*\n!.gitignore\n")
         make_fixture(self.run_root)
+        if self.full_world:
+            # A clean worktree has no ignored world.* outputs. Generate them
+            # from this checkout in the private runtime, with tools under bin/.
+            (self.run_root / "areas").unlink()
+            shutil.copytree(ROOT / "areas", self.run_root / "areas")
+            (self.run_root / "bin").symlink_to(ROOT / "bin", target_is_directory=True)
+            for command, directory in ((["make", "-j8"], ROOT / "areas/src"),
+                                       (["sh", "m_slow"], self.run_root / "areas")):
+                built = subprocess.run(command, cwd=directory, text=True,
+                                       stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                                       timeout=120)
+                require(built.returncode == 0, "isolated world build failed:\n" + built.stdout[-5000:])
         if self.prepare_run_root:
             self.prepare_run_root(self.run_root)
         generate_certificate(self.run_root)
@@ -380,8 +404,6 @@ class IsolatedServer:
         environment = {
             "PATH": os.environ.get("PATH", "/usr/bin:/bin"),
             "ENVIRONMENT": "local",
-            "PERSISTENCE_MODE": "flatfile-primary",
-            "FLATFILE_STATE_DIR": str(self.state_root),
             "CRITICAL_COMMAND_JOURNAL_DIR": str(journal_root / "critical"),
             "LISTEN_ADDRESS": "127.0.0.1",
             "DURIS_TLS_PORT": str(tls_port),
@@ -479,17 +501,17 @@ class IsolatedServer:
         )
 
 
-def enter_account_name(client: MudClient) -> None:
+def enter_account_name(client: MudClient, name: str = ACCOUNT) -> None:
     entry, _ = client.expect_any(("term type", "account name"))
     if entry == "term type":
         client.send("9")
         client.expect("account name")
-    client.send(ACCOUNT)
+    client.send(name)
 
 
-def create_account(client: MudClient, password: str) -> None:
-    """Create ACCOUNT with EMAIL on file and stop at the account menu."""
-    enter_account_name(client)
+def enter_account_details(client: MudClient, password: str, *, name: str = ACCOUNT) -> None:
+    """Fill a registration up to its final confirmation, without saving."""
+    enter_account_name(client, name)
     client.expect("is this correct?")
     client.send("y")
     client.expect("email address")
@@ -501,9 +523,23 @@ def create_account(client: MudClient, password: str) -> None:
     client.expect("Please re-enter the same password to confirm:  ")
     client.send(password)
     client.expect("information correct?")
+
+
+def create_account(client: MudClient, password: str, smtp: FakeSmtpServer | None = None,
+                   *, name: str = ACCOUNT) -> None:
+    """Register and verify the inbox when a local SMTP fixture is supplied."""
+    enter_account_details(client, password, name=name)
     client.send("y")
-    client.expect("PRESS RETURN")
-    client.send("")
+    if smtp is not None:
+        client.expect("Enter the email verification code (or CANCEL): ")
+        payload = smtp.wait_for_payloads(1, timeout=20)[0]
+        match = re.search(rb"Verification code: ([0-9a-f-]{35})", payload)
+        require(match is not None, "registration did not email an inbox verification code")
+        client.send(match[1].decode())
+        client.expect("Email verified and saved")
+    else:
+        client.expect("PRESS RETURN")
+        client.send("")
     client.expect("Please select an option")
 
 
@@ -588,7 +624,10 @@ def run_enabled_journey(binary: pathlib.Path) -> None:
                 server.wait_for_status_line(BOOT_ENABLED_LINE)
 
                 client = MudClient(server.plain_port)
-                create_account(client, OLD_PASSWORD)
+                create_account(client, OLD_PASSWORD, smtp)
+                with smtp.lock:
+                    smtp.payloads.clear()
+                    smtp.connections = 0
                 leave_account_menu(client)
                 client = None
 
@@ -675,11 +714,9 @@ def run_disabled_journey(binary: pathlib.Path) -> None:
 
 
 if __name__ == "__main__":
-    # The root regression runner executes the flat-file journeys concurrently.
-    # Distinct temporary build roots prevent linker/runtime races and are removed
-    # after each journey, including on failure.
-    with tempfile.TemporaryDirectory(prefix=f"flatfile-recovery-{os.getpid()}-") as build_tmp:
-        server_binary = build_flatfile_server(pathlib.Path(build_tmp))
-        run_enabled_journey(server_binary)
-        run_disabled_journey(server_binary)
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--server", type=pathlib.Path, required=True)
+    server_binary = parser.parse_args().server.resolve()
+    run_enabled_journey(server_binary)
+    run_disabled_journey(server_binary)
     print("account password recovery by email journey passed")

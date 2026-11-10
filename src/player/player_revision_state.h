@@ -48,14 +48,17 @@ struct player_revision_snapshot
 	player_revision_t current_revision;
 	player_revision_t acknowledged_revision;
 	// The newest revision the writer has written. acknowledged_revision moves when the
-	// writer accepts a save; this one when the save has landed.
+	// writer accepts a save; this one after it lands with no unrepaired write failures.
 	player_revision_t written_revision;
 	player_component_mask_t unacknowledged_components;
 	bool overflowed;
 	bool session_ended = false;
+	// Newly allocated PID, rather than a loaded legacy row at revision zero.
+	bool initial_creation = false;
 };
 
-bool player_revision_hydrate(int pid, player_revision_t durable_revision);
+bool player_revision_hydrate(int pid, player_revision_t durable_revision,
+			     bool initial_creation = false);
 bool player_revision_mark(int pid, player_component_mask_t components,
 			  player_revision_t *revision_out);
 // The revision and components a save captures now: everything not yet acknowledged.
@@ -63,7 +66,9 @@ bool player_revision_queue(int pid, player_revision_t *revision_out,
 			   player_component_mask_t *components_out);
 bool player_revision_acknowledge_durable(int pid, player_revision_t revision,
 					 player_component_mask_t components);
-bool player_revision_record_written(int pid, player_revision_t revision);
+bool player_revision_record_failed(int pid, player_component_mask_t components);
+bool player_revision_record_written(int pid, player_revision_t revision,
+				    player_component_mask_t components);
 bool player_revision_snapshot_copy(int pid, struct player_revision_snapshot *snapshot_out);
 void player_revision_end_session(int pid);
 void player_revision_forget(int pid);

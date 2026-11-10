@@ -8,6 +8,7 @@
  * ***************************************************************************
  */
 
+#include "abilities/abilities.h"
 #include "core/prototypes.h"
 #include "core/structs.h"
 #include "net/comm.h"
@@ -43,6 +44,7 @@
 #include "item/item_movement_transaction.h"
 #include "item/item_command_parser.h"
 #include "item/item_command_policy.h"
+#include "net/command_latency.h"
 #include "item/storage_lockers.h"
 #include "kingdom/kingdom_store_piece.h"
 #include "player/player_snapshot_capture.h"
@@ -102,9 +104,10 @@ bool is_stat_max(sbyte location)
 
 int wield_item_size(P_char ch, P_obj obj)
 {
+	// Player hand cost uses base size, not Enlarge/Reduce or the NPC giant list.
 	if (!(IS_SET(obj->extra_flags, ITEM_TWOHANDS) ||
 	      (obj->type == ITEM_WEAPON && obj->value[0] == WEAPON_2HANDSWORD)) ||
-	    (IS_GIANT(ch) && obj->type == ITEM_WEAPON))
+	    (obj->type == ITEM_WEAPON && (IS_PC(ch) ? GET_SIZE(ch) >= SIZE_HUGE : IS_GIANT(ch))))
 	{
 		return 1;
 	}
@@ -191,6 +194,12 @@ static bool can_equip_soulbound_item(P_char actor, P_obj object, bool show_rejec
 			logit(LOG_DEBUG, __VA_ARGS__); \
 	} while (0)
 
+// A roll of 0-100 below this gets something from a container unseen.
+int slip_get_threshold(P_char ch)
+{
+	return BOUNDED(5, (GET_CHAR_SKILL(ch, SKILL_SLIP) + (GET_C_DEX(ch) / 10)), 95);
+}
+
 namespace
 {
 struct synchronous_get_item
@@ -214,7 +223,6 @@ struct bulk_get_state
 	std::vector<std::string> rejections;
 	std::string corpse_name = {};
 	std::vector<std::string> haul = {};
-	bool announced = false;
 	bool count_limit_reported = false;
 };
 
@@ -294,17 +302,6 @@ static bulk_get_state *corpse_bulk_get(P_char actor, uint64_t container_uid)
 		       NULL;
 }
 
-static void announce_corpse_bulk_get(P_char actor, bulk_get_state &state, P_obj container)
-{
-	if (state.announced || state.corpse_name.empty())
-		return;
-	state.announced = true;
-	const std::string line = "You begin pulling things from " + state.corpse_name + ".\r\n";
-	send_to_char(line.c_str(), actor);
-	if (container && actor->in_room == state.room)
-		act("$n begins pulling things from $p.", TRUE, actor, container, 0, TO_ROOM);
-}
-
 // NPCs and characters without a persistent identity do not use the player transaction
 // facade. Check the whole vector before changing any denomination.
 static bool change_nonpersistent_coins(P_char actor, const currency_vector &delta)
@@ -372,7 +369,11 @@ static bool take_coins(P_char actor, P_obj money, P_obj container, int showit,
 		money->value[index] -= got[index];
 	audit.Commit();
 	if (bulk_get_state *haul = container ? corpse_bulk_get(actor, container->obj_uid) : NULL)
+	{
 		haul->haul.push_back(coins);
+		if (showit && actor->in_room == haul->room)
+			act("$n gets some coins from $P.", TRUE, actor, 0, container, TO_ROOM);
+	}
 	else
 	{
 		send_to_char(("You get " + coins + ".\r\n").c_str(), actor);
@@ -384,7 +385,7 @@ static bool take_coins(P_char actor, P_obj money, P_obj container, int showit,
 		extract_obj(money, FALSE);
 	else
 		add_coins(money, 0, 0, 0, 0);
-	if (container && container->type == ITEM_CORPSE &&
+	if (!item_get_ack_publication && container && container->type == ITEM_CORPSE &&
 	    IS_SET(container->value[CORPSE_FLAGS], PC_CORPSE))
 		writeCorpse(container);
 	return true;
@@ -405,7 +406,7 @@ static bool get_can_continue(P_char actor, uint64_t runtime_id, int room, P_obj 
 	if (find_character_by_runtime_id(runtime_id) != actor || !IS_ALIVE(actor) ||
 	    actor->in_room != room || !IS_AWAKE(actor) || IS_IMMOBILE(actor))
 		return false;
-	return !container || (find_live_item_uid(container_uid) == container &&
+	return !container || (find_live_object(container, container_uid) &&
 			      locker_container_access_allowed(actor, container) &&
 			      (OBJ_CARRIED_BY(container, actor) || OBJ_WORN_BY(container, actor) ||
 			       (OBJ_ROOM(container) && container->loc.room == room)));
@@ -416,7 +417,7 @@ static bool publish_container_get(P_char ch, P_obj o_obj, P_obj s_obj, int showi
 	LockerMovementAudit audit(ch, s_obj, NULL, o_obj);
 	if (!audit.Ready())
 		return false;
-	obj_from_obj(o_obj);
+	obj_from_obj_unsaved(o_obj);
 
 #if USE_SPACE
 	s_obj->space -= GET_OBJ_SPACE(o_obj);
@@ -441,11 +442,21 @@ static bool publish_container_get(P_char ch, P_obj o_obj, P_obj s_obj, int showi
 	}
 	obj_to_char(o_obj, ch);
 	audit.Commit();
+	if (GET_ITEM_TYPE(s_obj) == ITEM_STORAGE)
+	{
+		// The writer keeps this order, so no crash can leave the item with neither owner.
+		currency_transaction_save_first(ch);
+		writeSavedItem(s_obj);
+	}
 	if (haul)
 	{
-		P_obj delivered = find_live_item_uid(picked_uid);
+		P_obj delivered = find_live_object(o_obj, picked_uid);
 		if (delivered && OBJ_CARRIED_BY(delivered, ch))
+		{
 			haul->haul.push_back(picked_name);
+			if (showit && !slip && ch->in_room == haul->room)
+				act("$n gets $p from $P.", TRUE, ch, delivered, s_obj, TO_ROOM);
+		}
 		else
 		{
 			haul->failed = true;
@@ -475,6 +486,7 @@ void get(P_char ch, P_obj o_obj, P_obj s_obj, int showit)
 	int got_p = 0, got_g = 0, got_s = 0, got_c = 0, notall = 0;
 	char Gbuf3[MAX_STRING_LENGTH];
 	P_obj corpse = NULL;
+	const uint64_t source_uid = s_obj ? s_obj->obj_uid : 0;
 	bool slip = FALSE;
 	item_get_rejected = true;
 	if (ch && s_obj && !locker_container_access_allowed(ch, s_obj))
@@ -527,8 +539,7 @@ void get(P_char ch, P_obj o_obj, P_obj s_obj, int showit)
 
 	if (GET_CHAR_SKILL(ch, SKILL_SLIP))
 	{
-		if (number(0, 100) <
-		    BOUNDED(5, (GET_CHAR_SKILL(ch, SKILL_SLIP) + (GET_C_DEX(ch) / 10)), 95))
+		if (number(0, 100) < slip_get_threshold(ch))
 		{
 			slip = TRUE;
 		}
@@ -562,7 +573,7 @@ void get(P_char ch, P_obj o_obj, P_obj s_obj, int showit)
 	/* A triggered trap rejects pickup and may already have extracted ch. */
 	if (checkgetput(ch, o_obj))
 	{
-		if (corpse)
+		if (corpse && find_live_object(corpse, source_uid))
 			writeCorpse(corpse);
 		return;
 	}
@@ -785,7 +796,7 @@ publish_after_ack:
 		// writeCharacter(ch, 1, ch->in_room);
 
 		/* update player corpse file  (if needed) */
-		if (corpse)
+		if (corpse && !item_get_ack_publication)
 		{
 			writeCorpse(corpse);
 		}
@@ -839,7 +850,7 @@ publish_after_ack:
 		item_get_rejected = false;
 	}
 
-	if (corpse)
+	if (corpse && !item_get_ack_publication)
 		writeCorpse(corpse);
 
 	char_light(ch);
@@ -868,7 +879,7 @@ static bool do_get_commit_pickup_core(P_char ch, P_obj s_obj, P_obj o_obj, bool 
 	if (item_get_rejected)
 		return false;
 	// obj_to_char can consume crumble-on-loot items instead of delivering them.
-	if (!money && (find_live_item_uid(item_uid) != o_obj || !OBJ_CARRIED_BY(o_obj, ch)))
+	if (!money && (!find_live_object(o_obj, item_uid) || !OBJ_CARRIED_BY(o_obj, ch)))
 	{
 		item_get_rejected = true;
 		return false;
@@ -1375,18 +1386,12 @@ static bool bulk_get_source_matches(const bulk_get_state &state, P_obj container
 
 static void report_bulk_get(P_char actor, const bulk_get_state &state)
 {
-	if (state.announced && !state.corpse_name.empty())
+	if (!state.corpse_name.empty() && !state.haul.empty())
 	{
-		const bool incomplete = state.failed || !state.rejections.empty();
-		const std::string line =
-			"You finish sorting your haul from " + state.corpse_name +
-			(incomplete ? ".\r\nSome contents were not acquired.\r\nHaul:\r\n" :
-				      ".\r\nHaul:\r\n");
-		send_to_char(line.c_str(), actor);
-		if (state.haul.empty())
-			send_to_char("  Nothing acquired.\r\n", actor);
 		for (const std::string &item : state.haul)
-			send_to_char(("  " + item + "\r\n").c_str(), actor);
+			send_to_char(
+				("You get " + item + " from " + state.corpse_name + ".\r\n").c_str(),
+				actor);
 	}
 	else if (state.total > 1)
 	{
@@ -1418,7 +1423,7 @@ static P_obj resolve_synchronous_get_item(const synchronous_get_item &selected,
 					  const bulk_get_state &state, P_obj container)
 {
 	if (selected.item_uid)
-		return find_live_item_uid(selected.item_uid);
+		return find_live_object(selected.object, selected.item_uid);
 	P_obj contents = container ? container->contains : world[state.room].contents;
 	int safety = top_of_objt + 1;
 	for (P_obj object = contents; object && (!container || safety-- > 0);
@@ -1453,10 +1458,7 @@ static bool take_bulk_get_items(P_char actor, bulk_get_state &state, P_obj conta
 		if (selected.scrap)
 		{
 			if (MakeScrap(actor, object))
-			{
-				announce_corpse_bulk_get(actor, state, container);
 				++state.total;
-			}
 			else
 			{
 				state.failed = true;
@@ -1487,8 +1489,6 @@ static bool take_bulk_get_items(P_char actor, bulk_get_state &state, P_obj conta
 			return false;
 		if (item_get_rejected)
 			state.failed = true;
-		else
-			announce_corpse_bulk_get(actor, state, container);
 	}
 	return get_can_continue(actor, runtime_id, state.room, container, state.container_uid);
 }
@@ -1552,7 +1552,8 @@ static bool select_bulk_get_item(P_char actor, P_obj container, P_obj object, co
 	const bool scrap = object->condition <= 0;
 	if (!scrap && checkgetput(actor, object))
 	{
-		if (container && container->type == ITEM_CORPSE &&
+		if (container && find_live_object(container, state.container_uid) &&
+		    container->type == ITEM_CORPSE &&
 		    IS_SET(container->value[CORPSE_FLAGS], PC_CORPSE))
 			writeCorpse(container);
 		state.failed = true;
@@ -1652,6 +1653,11 @@ static void start_bulk_get(P_char actor, P_obj container, const char *filter, bo
 		send_to_char("That container lacks authoritative ownership.\r\n", actor);
 		return;
 	}
+	command_latency_note_bulk_items(state.synchronous_items.size());
+	const uint64_t container_uid = state.container_uid;
+	const bool save_corpse = container && !state.synchronous_items.empty() &&
+				 container->type == ITEM_CORPSE &&
+				 IS_SET(container->value[CORPSE_FLAGS], PC_CORPSE);
 	try
 	{
 		auto [found, inserted] = bulk_gets.emplace(actor_pid, std::move(state));
@@ -1671,6 +1677,9 @@ static void start_bulk_get(P_char actor, P_obj container, const char *filter, bo
 				"You can't collect everything right now; please try again.\r\n",
 				actor);
 	}
+	// Item moves leave this to the batch: one snapshot covers them all, whichever way it ended.
+	if (save_corpse && find_live_object(container, container_uid))
+		writeCorpse(container);
 }
 
 static void start_floor_bulk_get(P_char actor, const char *filter)
@@ -1831,8 +1840,8 @@ void do_get(P_char ch, char *argument, int cmd)
 								return;
 							if (item_get_rejected && next_obj)
 							{
-								next_obj = find_live_item_uid(
-									next_uid);
+								next_obj = find_live_object(
+									next_obj, next_uid);
 								if (next_obj &&
 								    (!OBJ_ROOM(next_obj) ||
 								     next_obj->loc.room !=
@@ -2160,7 +2169,7 @@ void do_get(P_char ch, char *argument, int cmd)
 						return;
 					if (item_get_rejected && next_obj)
 					{
-						next_obj = find_live_item_uid(next_uid);
+						next_obj = find_live_object(next_obj, next_uid);
 						if (next_obj && (!OBJ_INSIDE(next_obj) ||
 								 next_obj->loc.inside != s_obj))
 							next_obj = NULL;
@@ -4367,10 +4376,8 @@ void do_give(P_char ch, char *argument, int cmd)
 						     PLAYER_COMPONENT_STATUS |
 							     PLAYER_COMPONENT_EQUIPMENT |
 							     PLAYER_COMPONENT_INVENTORY);
-#ifndef __NO_MYSQL__
 		if (object_survived)
 			artifact_switch_check(ch, obj);
-#endif
 	}
 	/*
 	 * added by DTS 5/18/95 to solve light bug
@@ -4692,7 +4699,7 @@ void do_drink(P_char ch, char *argument, int /*cmd*/)
 			if ((temp->value[2] == LIQ_HOLYWATER && IS_GOOD(ch)) ||
 			    (temp->value[2] == LIQ_UNHOLYWAT && IS_EVIL(ch)))
 			{
-				healamt = MIN(GET_MAX_HIT(ch) - GET_HIT(ch), dice(3, 3));
+				healamt = std::min(GET_MAX_HIT(ch) - GET_HIT(ch), dice(3, 3));
 
 				send_to_char(
 					"You feel &+Wt&+wou&+Wc&+wh&+Wed&n by a higher power!\r\n",
@@ -4706,7 +4713,7 @@ void do_drink(P_char ch, char *argument, int /*cmd*/)
 				send_to_char(
 					"You are &+rbl&+Ra&+rs&+Rte&+rd&n by a higher power!\r\n",
 					ch);
-				GET_HIT(ch) = MAX(0, GET_HIT(ch) - dice(3, 3));
+				GET_HIT(ch) = std::max(0, GET_HIT(ch) - dice(3, 3));
 			}
 			else if (temp->value[3])
 			{ /*
@@ -5595,7 +5602,7 @@ int numb_artis_using(P_char ch)
 
 /*
  * Capacity is two hands (four for HAS_FOUR_HANDS), regardless of race.
- * Giant-class races, including minotaurs, get their weapon discount solely
+ * Huge players and giant-class NPCs get their weapon discount solely
  * from wield_item_size; an extra allowance here double-counts that benefit
  * and makes admission depend on equip order or whether WIELD is occupied.
  */
@@ -7439,7 +7446,8 @@ bool find_chance(P_char ch)
 	if (IS_TRUSTED(ch))
 		return TRUE;
 
-	if (has_innate(ch, INNATE_DRAGONMIND) && number(0, 1))
+	extern int dragonmind_roll(const Rolls &rolls);
+	if (has_innate(ch, INNATE_DRAGONMIND) && dragonmind_roll(live_rolls))
 		return TRUE;
 
 	if (((GET_C_INT(ch) + GET_C_WIS(ch) + GET_C_LUK(ch)) / 3) > number(1, 101))
@@ -7816,7 +7824,7 @@ void start_empty(P_char actor, P_obj source, P_obj target)
 		LockerMovementAudit audit(actor, source, target, content);
 		if (!audit.Ready())
 			break;
-		obj_from_obj(content);
+		obj_from_obj_unsaved(content);
 		obj_to_obj(content, target);
 		audit.Commit();
 		if (GET_ITEM_TYPE(target) == ITEM_QUIVER)
@@ -7833,9 +7841,12 @@ void start_empty(P_char actor, P_obj source, P_obj target)
 	mark_player_dirty_components(GET_PID(actor), PLAYER_COMPONENT_STATUS |
 							     PLAYER_COMPONENT_EQUIPMENT |
 							     PLAYER_COMPONENT_INVENTORY);
+	// Commit the new owner before the source drops the moved items.
+	if (GET_ITEM_TYPE(source) == ITEM_STORAGE)
+		currency_transaction_save_first(actor);
+	save_filled_container(target);
 	if (GET_ITEM_TYPE(source) == ITEM_STORAGE)
 		writeSavedItem(source);
-	save_filled_container(target);
 }
 }
 

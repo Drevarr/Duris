@@ -31,7 +31,7 @@ import tempfile
 import time
 import uuid
 
-import test_flatfile_combat_journey as journey
+import test_mariadb_combat_journey as journey
 
 ROOT = Path(__file__).resolve().parents[2]
 SECRET = "local-development-only-world-state-hmac-change-before-shared-use"
@@ -184,7 +184,7 @@ def run(binary: Path) -> None:
             client = journey.MudClient(port)
             journey.create_character(client, account="Roomclaimac", character="Roomclaimer",
                                      email="roomclaim@example.invalid")
-            client.send("save"); client.expect("Save complete for Roomclaimer.", timeout=60)
+            client.send("save"); client.expect("Saving Roomclaimer.", timeout=60)
             claimant = sql("SELECT pid FROM player_data WHERE name='Roomclaimer'")
             floor_root = sql("SELECT own.item_uid FROM item_current_owner own "
                              "JOIN player_items i ON i.obj_uid=own.item_uid "
@@ -209,7 +209,9 @@ def run(binary: Path) -> None:
             alert = wait_for("three failed captures raised no alert", 60,
                              lambda: re.search(ALERT, log("file")))
             reason, failures, sequence, age = alert.groups()
-            assert reason == "publish_failed" and failures == "3", alert.group(0)
+            # Redis loss can stop the upstream floor barrier before the world
+            # publisher runs. Both paths must report the actual failing stage.
+            assert reason in ("publish_failed", "floor_unavailable") and failures == "3", alert.group(0)
             last = acknowledged()[-1]
             assert int(sequence) == last >= first, (alert.group(0), last)
             assert 0 <= int(age) <= time.monotonic() - stopped + 10, alert.group(0)
@@ -244,7 +246,7 @@ def run(binary: Path) -> None:
                   "after the kill, past the 60 s it was configured with", flush=True)
             client = journey.reconnect_character(port, account="Roomclaimac", character="Roomclaimer")
             client.send("get bag"); client.expect("You get", timeout=20)
-            client.send("save"); client.expect("Save complete for Roomclaimer.", timeout=60)
+            client.send("save"); client.expect("Saving Roomclaimer.", timeout=60)
             assert sql(f"SELECT COUNT(*) FROM player_items WHERE pid={claimant} "
                        f"AND obj_uid={floor_root}") == "1", "matching room claim lost its floor UID"
             client.close()

@@ -11,7 +11,7 @@ from pathlib import Path
 import shutil
 import tempfile
 
-import test_flatfile_combat_journey as journey
+import test_mariadb_combat_journey as journey
 from run_item_pilot_journey import Server
 from run_paladin_balance_journey import command
 
@@ -87,7 +87,7 @@ def run(binary):
                 assert "Quest giver" not in output and "Quest references" not in output, output
                 assert "Pardon?" in output, output
             result["checks"].append("all five commands denied to a mortal")
-            mortal.send("save"); mortal.expect(f"Save complete for {journey.CHARACTER}.")
+            mortal.send("save"); mortal.expect(f"Saving {journey.CHARACTER}.")
             mortal.send("quit"); mortal.expect("ACCOUNT MENU", timeout=45)
             server.stop()
             journey.make_overlord(state, journey.CHARACTER)

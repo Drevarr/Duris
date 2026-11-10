@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Drive the 'pulse' command through a real flat-file server.
+"""Drive the 'pulse' command through a real MariaDB server.
 
 A disposable character is created in the minimal world and raised to OVERLORD while the
 server is down (creation refuses the god_list names that once did this), which is above
@@ -7,9 +7,9 @@ the Forger level the command needs for 'adjust' and 'save'. The journey lists th
 refuses badly formed and out-of-range values, adjusts one casting and one melee rate,
 checks the change reached the property table, saves, and checks the saved file. It also
 checks the six rebalanced races after reload and both Reflection races at levels 30/31. Run it
-explicitly with a fresh flat-file binary:
+under with_disposable_mariadb.sh with a fresh MariaDB binary:
 
-    python3 tests/async/run_racial_pulse_journey.py --server bin/server/dms_new
+    tests/async/with_disposable_mariadb.sh python3 tests/async/run_racial_pulse_journey.py --server bin/server/dms_new
 """
 
 from __future__ import annotations
@@ -23,7 +23,7 @@ import subprocess
 import tempfile
 import time
 
-import test_flatfile_combat_journey as journey
+import test_mariadb_combat_journey as journey
 from test_race_rebalance import STATS
 from test_racial_pulse import CAST, MELEE
 
@@ -76,7 +76,7 @@ def create_character(client: journey.MudClient) -> None:
     client.send("n")
     client.expect("Class Selection")
     client.send("w")
-    client.expect("Alignment only affects")
+    client.expect("Alignment Selection")
     client.send("g")
     client.expect("Your selection")
     client.send("p")
@@ -88,6 +88,12 @@ def create_character(client: journey.MudClient) -> None:
     client.expect("swap stats")
     client.send("n")
     client.expect("keep this character")
+    client.send("y")
+    client.expect("Please select an option")
+    client.send("1")
+    client.expect(CHARACTER)
+    client.send(CHARACTER)
+    client.expect("(Y/N)")
     client.send("y")
     client.expect("PRESS RETURN")
     client.send("")
@@ -225,16 +231,9 @@ def main() -> None:
     binary = parser.parse_args().server.resolve()
     require(binary.is_file() and os.access(binary, os.X_OK), f"not executable: {binary}")
     ROOT.joinpath("bin/tests").mkdir(parents=True, exist_ok=True)
-    with tempfile.TemporaryDirectory(prefix="duris-pulse-inspector-", dir=ROOT / "bin/tests") as tools, \
-            tempfile.TemporaryDirectory(prefix="duris-pulse-state-") as state_tmp, \
+    with journey.mariadb_authority() as (environment, sql), \
             tempfile.TemporaryDirectory(prefix="duris-pulse-run-") as run_tmp:
-        inspector = pathlib.Path(tools) / "inspector"
-        subprocess.run(["python3", "tests/async/test_flatfile_player_repository.py",
-                        "--build-inspector", str(inspector)], cwd=ROOT, check=True, timeout=180)
-        state_root, run_root = pathlib.Path(state_tmp), pathlib.Path(run_tmp)
-        state_root.chmod(0o700)
-        (state_root / "domains").mkdir(mode=0o700)
-        subprocess.run([str(inspector), str(state_root), "seed-combat"], check=True, timeout=30)
+        run_root = pathlib.Path(run_tmp)
         (run_root / "logs/log").mkdir(parents=True)
         (run_root / "logs/log/.gitignore").write_text("*\n!.gitignore\n")
         journey.make_fixture(run_root)
@@ -242,16 +241,14 @@ def main() -> None:
         journey.generate_certificate(run_root)
         (run_root / "journals/critical").mkdir(parents=True, mode=0o700)
         plain_port, tls_port, websocket_port = journey.available_ports()
-        environment = {
+        journey.import_help(run_root, environment)
+        environment.update({
             "PATH": os.environ.get("PATH", "/usr/bin:/bin"), "ENVIRONMENT": "local",
-            "PERSISTENCE_MODE": "flatfile-primary", "FLATFILE_STATE_DIR": str(state_root),
             "CRITICAL_COMMAND_JOURNAL_DIR": str(run_root / "journals/critical"),
             "LISTEN_ADDRESS": "127.0.0.1", "DURIS_TLS_PORT": str(tls_port),
             "DURIS_WEBSOCKET_LISTEN_ADDRESS": "127.0.0.1", "DURIS_WEBSOCKET_PORT": str(websocket_port),
             "REDIS": "FALSE", "CHAOS_MUD": "FALSE", "CREATION_ALL_CLASSES": "TRUE",
-        }
-        if os.environ.get("LD_LIBRARY_PATH"):
-            environment["LD_LIBRARY_PATH"] = os.environ["LD_LIBRARY_PATH"]
+        })
         output_path = run_root / "server.out"
         with output_path.open("w", encoding="utf-8") as output:
             def start() -> subprocess.Popen:
@@ -273,14 +270,14 @@ def main() -> None:
                 create_character(client)
                 # Creation refuses god_list names, so the OVERLORD that 'pulse adjust' and
                 # 'pulse save' need is an ordinary character raised while the server is down.
-                command(client, "save", f"Save complete for {CHARACTER}.")
+                command(client, "save", f"Saving {CHARACTER}.")
                 client.send("quit")
                 client.expect("ACCOUNT MENU", timeout=30)
                 client.close()
                 client = None
                 process.send_signal(signal.SIGTERM)
                 process.wait(timeout=30)
-                journey.make_overlord(state_root, CHARACTER)
+                journey.make_overlord(sql, CHARACTER)
                 process = start()
                 wait_for_boot(2)
                 client = journey.reconnect_character(plain_port, expected_room=None,

@@ -14,6 +14,7 @@ PRELUDE = r'''
 #include "core/prototypes.h"
 #include "core/utils.h"
 #include "combat/damage.h"
+#include "combat/attack_continuation.h"
 #include "magic/spells.h"
 #include "net/comm.h"
 #include <sanitizer/asan_interface.h>
@@ -29,6 +30,13 @@ static room_data rooms[1]{};
 P_room world = rooms;
 float dam_factor[LAST_DF + 1];
 static char_data actor{}, victim{}, witness{};
+P_obj object_list = nullptr;
+P_char find_character_by_runtime_id(uint64_t id) {
+    if (id == 1) return &actor;
+    if (id == 2) return &victim;
+    if (id == 3) return &witness;
+    return nullptr;
+}
 static descriptor_data descriptors[3]{};
 static pc_only_data players[3]{};
 static std::map<P_char, std::string> output;
@@ -163,6 +171,7 @@ static void reset(int terse) {
     P_char characters[] = {&actor, &victim, &witness};
     for (int i = 0; i < 3; ++i) {
         P_char ch = characters[i]; players[i] = {}; descriptors[i] = {};
+        ch->runtime_id = i + 1;
         ch->player.name = const_cast<char *>(names[i]);
         ch->player.race = RACE_HUMAN; ch->player.level = 56;
         ch->curr_stats.Str = 180;
@@ -300,11 +309,47 @@ def main():
     cpp, binary = build / "harness.cpp", build / "harness"
     functions = [("fight.c", "struct affected_type *get_ward_from_char("),
                  ("fight.c", "int check_damage_ward("),
+                 ("fight.c", "float flank_damage_modifier("),
+                 ("fight.c", "float circle_damage_modifier("),
+                 ("fight.c", "float dreadnaught_attack_factor("),
+                 ("fight.c", "float dreadnaught_melee_defense("),
+                 ("fight.c", "int displacement_absorb_roll("),
+                 ("fight.c", "float biofeedback_melee_share("),
+                 ("fight.c", "float stone_skin_melee_share("),
+                 ("fight.c", "float shadow_shield_melee_share("),
+                 ("fight.c", "float ironwood_melee_share("),
+                 ("fight.c", "float drakescale_aegis_melee_share("),
+                 ("fight.c", "int skin_spell_deduct("),
+                 ("fight.c", "float iceflow_armor_melee_share("),
+                 ("fight.c", "float negative_feedback_barrier_melee_share("),
+                 ("fight.c", "int fist_of_dragon_roll("),
                  ("fight.c", "int melee_damage("),
+                 ("actoff.c", "static int headbutt_position_lag("),
+                 ("actoff.c", "static int headbutt_immaterial_lag("),
+                 ("actoff.c", "static int headbutt_refused_lag("),
+                 ("actoff.c", "static int headbutt_backfire_lag("),
+                 ("actoff.c", "static double headbutt_miss_lag("),
+                 ("actoff.c", "static int headbutt_hit_lag("),
+                 ("actoff.c", "static int headbutt_backfire_rest("),
+                 ("actoff.c", "static int headbutt_miss_rest("),
+                 ("actoff.c", "static int headbutt_hit_rest("),
+                 ("actoff.c", "static int headbutt_backfire_damage("),
+                 ("actoff.c", "static int headbutt_miss_damage("),
+                 ("actoff.c", "static int headbutt_knockout("),
+                 ("actoff.c", "static int headbutt_hit_roll("),
+                 ("actoff.c", "static float headbutt_hit_damage("),
+                 ("actoff.c", "static float headbutt_smaller_factor("),
+                 ("actoff.c", "static float headbutt_larger_factor("),
+                 ("actoff.c", "static int headbutt_daze_lag("),
+                 ("actoff.c", "static int headbutt_daze_stun("),
+                 ("actoff.c", "static int headbutt_weak_daze("),
+                 ("actoff.c", "static int headbutt_weak_daze_roll("),
+                 ("actoff.c", "static int double_headbutt_threshold("),
+                 ("actoff.c", "static int double_headbutt_damage("),
                  ("actoff.c", "void do_headbutt(")]
-    cpp.write_text(PRELUDE + "\n" + "\n".join(extract_function(*f) for f in functions) + DRIVER)
+    cpp.write_text(PRELUDE + '\n#include "abilities/abilities.h"\nconst Rolls live_rolls = { dice, number };\n' + "\n".join(extract_function(*f) for f in functions) + DRIVER)
     subprocess.run(["g++", "-std=c++20", "-g", "-O1", "-fsanitize=address,undefined",
-                    "-fno-pie", "-no-pie", "-Isrc", str(cpp), str(HARNESS_STUBS),
+                    "-fno-pie", "-no-pie", "-Isrc", str(cpp), "src/combat/attack_continuation.c", str(HARNESS_STUBS),
                     "-o", str(binary)], cwd=ROOT, check=True)
     subprocess.run([str(binary)], check=True)
 

@@ -16,7 +16,12 @@ HARNESS = r"""
 #include "redis/redis_floor_runtime.h"
 #include "world/world_recovery_pipeline.h"
 #include "world/world_recovery_codec.h"
+#include "persistence/copyover.h"
 #include "item/encumbrance_policy.h"
+#include "economy/currency_command.h"
+#include "sql/sql_async.h"
+#include "player/player_load_repository.h"
+#include "item/named_set_origin.h"
 #include "player/player_snapshot.h"
 #include "player/player_load_items.h"
 #include "guild/artifact_guild_state.h"
@@ -47,6 +52,8 @@ const char *equipment_types[CUR_MAX_WEAR+1] = {};
 P_room world=rooms;
 extern const int top_of_world=1;
 P_index obj_index = indexes;
+zone_data *zone_table=nullptr;
+int top_of_zone_table=-1;
 P_obj object_list = nullptr;
 mm_ds pool = {};
 mm_ds *dead_obj_pool = &pool;
@@ -60,8 +67,20 @@ static size_t removed_wear_links=0;
 static std::map<uint64_t,size_t> removed_wear_links_by_uid;
 static std::vector<uint64_t> removed_floor_uids;
 static std::vector<persistence_job_write_fn> writes;
-static std::vector<std::vector<flatfile_artifact_record>> captures;
 static bool booting=false, writer_admission=true;
+std::string sql_format(const char *, ...) { return {}; }
+// Queued SQL lands on the same fixture writer queue as other persistence jobs.
+static bool queue_statements(std::shared_ptr<sql_write_receipt> receipt) {
+ if(!writer_admission) return false;
+ writes.push_back([receipt] {
+  if(receipt) { receipt->ok=true; receipt->finished=true; }
+  return player_save_apply_result{player_save_apply_outcome::applied,0,0};
+ });
+ return true;
+}
+bool sql_queue_statements_at(persistence_query_site, std::vector<std::string>) { return queue_statements(nullptr); }
+bool sql_queue_statements_at(persistence_query_site, std::vector<std::string>, std::shared_ptr<sql_write_receipt> receipt) { return queue_statements(receipt); }
+player_load_result player_load_repository_execute(MYSQL *, const player_load_request &) { return {}; }
 static player_save_worker_health writer_state={};
 player_save_worker_health player_save_worker_health_copy() { return writer_state; }
 static std::string source_diagnostics;
@@ -77,11 +96,6 @@ bool redis_invalidate_artifact_cache() {
  if(fail_invalidation) { fail_invalidation=false; throw std::bad_alloc(); }
  return true;
 }
-const char *persistence_mode_flatfile_root() { return "fixture"; }
-flatfile_artifact_result flatfile_artifact_snapshot_apply(const std::string &,
- const std::vector<flatfile_artifact_record> &records,std::string *) {
- captures.push_back(records); return flatfile_artifact_result::ok;
-}
 player_save_submit_result persistence_writer_submit(persistence_job_kind kind,uint64_t,size_t,
  persistence_job_write_fn write) {
  assert(kind==persistence_job_kind::artifact);
@@ -91,7 +105,7 @@ player_save_submit_result persistence_writer_submit(persistence_job_kind kind,ui
 }
 void drain() {
  for(auto &write:writes) assert(write().outcome==player_save_apply_outcome::applied);
- writes.clear(); assert(!artifact_save_pulse(false)); captures.clear();
+ writes.clear(); assert(!artifact_save_pulse(false));
 }
 unsigned long long persistence_next_item_uid() { return next_uid++; }
 void *_mm_get(mm_ds *source,const char *,int) { ++source->objs_used; return calloc(1,sizeof(obj_data)); }
@@ -183,8 +197,7 @@ P_obj get_obj_in_list_num(int number,P_obj list) {
 float get_property(const char *,double fallback) { return fallback; }
 int get_property(const char *,int fallback) { return fallback; }
 int real_room0(const int) { return 0; }
-int itemvalue(P_obj) { return 1; }
-bool item_load_check(P_obj,int,int) { return true; }
+bool item_load_check(P_obj,int) { return true; }
 void enhance_on_npc_item_reset_skipped(P_char,P_obj) {}
 int shop_keeper(P_char,P_char,int,char *) { return 0; }
 object_template parse_object_template(int index) {
@@ -233,7 +246,6 @@ static player_load_result read_fixture;
 bool player_load_request_valid(const player_load_request &request,uint64_t now) {
  return request.request_id && request.pid>0 && request.deadline_usec>now;
 }
-player_load_result flatfile_player_load_repository_execute_selected(const player_load_request &,void *) { return {}; }
 static player_load_result execute_read(const player_load_request &request,void *) {
  std::unique_lock<std::mutex> lock(read_mutex);
  auto result=read_fixture; result.request_id=request.request_id; result.pid=request.pid;
@@ -331,7 +343,7 @@ int main() {
  };
  fail_invalidation=true;
  assert(stage(true) && fail_invalidation); // canonical staging does not need the report cache
- fail_invalidation=false; artifact_save_pulse(true); drain();
+ fail_invalidation=false;
  obj_data invalid={}; invalid.R_num=-1; invalid.extra_flags=ITEM_ARTIFACT; invalid.obj_uid=123;
  assert(!artifact_begin_creation(&invalid) && errno==ENODATA && !clone_obj(&invalid));
  artifact_object_extracted(&invalid,true); assert(!artifact_is_canonical(&invalid));
@@ -668,6 +680,8 @@ source=source.replace("// TERMINAL_EXTRACTION", terminal_cleanup+"\n"+r"""
 static player_save_pipeline_result terminal_admission=player_save_pipeline_result::queued;
 int calculate_save_room(P_char,int,int room) { return room; }
 void locker_post_save_hook(P_char) {}
+void locker_return_norent_items(P_char) {}
+static void remove_norent_items(P_char) {}
 player_save_pipeline_result player_save_pipeline_request(P_char ch,player_component_mask_t components,int intent,int) {
  assert(ch->carrying && components==PLAYER_CHECKPOINT_COMPONENT_ALL && intent==RENT_CRASH);
  ++writer_state.submitted;
@@ -686,11 +700,12 @@ extract_function("handler.c","void extract_char_after_terminal_save(P_char ch)")
 extract_function("actoth.c","bool persistence_save_character_terminal(P_char ch, int type)")+"\n"+
 extract_function("actoth.c","bool persistence_save_all_characters_terminal(int type)"))
 source=source.replace("// ACTUAL_UNEQUIP",extract_function("handler.c","P_obj unequip_char("))
-source=source.replace("// EXTRACTION",extract_function("handler.c","void extract_obj(P_obj obj, int gone_for_good)")+"\n"+extract_function("handler.c","P_obj find_live_object(P_obj expected, uint64_t uid)"))
+source=source.replace("// EXTRACTION","static std::unordered_set<P_obj> live_objects;\nvoid remember_live_object(P_obj o) { live_objects.insert(o); }\nvoid forget_live_object(P_obj o) { live_objects.erase(o); }\n"+extract_function("handler.c","void extract_obj(P_obj obj, int gone_for_good)")+"\n"+extract_function("handler.c","P_obj find_live_object(P_obj expected, uint64_t uid)"))
 source=source.replace("// RECOVERY_TREE",extract_function("world_recovery_pipeline.c","P_obj find_object_uid(")+"\n"+extract_function("world_recovery_pipeline.c","struct planned_object")+";\n"+
  extract_function("world_recovery_pipeline.c","void replace_object_text(")+"\n"+
  extract_function("world_recovery_pipeline.c","P_obj materialize_object("))
 
+source += "\n" + extract_function("utility.c", "string strip_ansi(")
 source=source.replace("// CLONE",extract_function("actwiz.c","struct obj_data *clone_obj(P_obj obj)")+"\n"+extract_function("actwiz.c","void clone_container_obj(P_obj to, P_obj obj)"))
 reset=extract_function("db.c","void reset_zone(int zone, int force_item_repop)")
 parts=[]
@@ -702,7 +717,7 @@ for letter in "OPGE":
  parts.append(reset[start:after+following.start()])
 reset_harness=r"""
 int reset_command(reset_com &command,P_char mob,int respawn,int force_item_repop) {
- int last_cmd=1,ival=0,zone=0; P_obj obj=nullptr,obj_to=nullptr;
+ int last_cmd=1,zone=0; P_obj obj=nullptr,obj_to=nullptr;
  #define ZCMD command
  switch(command.command) {
  // RESET_CASES
@@ -757,15 +772,12 @@ void reset_matrix(const std::vector<artifact_population_template> &original) {
 """.replace("// RESET_CASES","\n".join(parts))
 source=source.replace("// NEST_CHECK",extract_function("handler.c","bool obj_can_nest("))
 source=source.replace("// RESET",reset_harness)
-restore_support=r"""
+restore_support = "".join(
+    extract_function("world_recovery_pipeline.c", f"struct {name}") + ";\n"
+    for name in ("planned_mob", "recovery_plan")
+) + r"""
 // Keep the actual restore coordinator; world planning/materialization I/O is
 // controlled here, while its callback uses the real artifact/constructor code.
-struct recovery_plan {
- std::vector<world_recovery_authority_item> authority_items;
- std::vector<int> mobs;
- std::vector<planned_object> objects;
- world_recovery_header header={};
-};
 bool fail_materialization=false,materializing=false,native_fixture=false,native_existing_fixture=false,native_existing_late_fail=false;
 planned_object native_existing_plan;
 bool world_recovery_read_copyover_object_record(const char *,size_t,world_recovery_copyover_tree *tree) {
@@ -2018,7 +2030,7 @@ static void *corpse_bulk_get(P_char,uint64_t) { return nullptr; }
 void CharWait(P_char,int) {}
 """+extract_function("actobj.c", "static void\ndo_get_finalize_container_success(")+r"""
 void corpse_bind_cases() {
- artifact_rows.clear(); artifact_binds.clear(); writes.clear(); captures.clear();
+ artifact_rows.clear(); artifact_binds.clear(); writes.clear();
  artifact_rows[900].identity_state=artifact_identity_state::absent;
  artifact_rows.at(900).population_reason=artifact_population_reason::complete;
  char_data owner={}; pc_only_data pc={}; owner.only.pc=&pc; pc.pid=77;
@@ -2026,7 +2038,7 @@ void corpse_bind_cases() {
  owner.player.racewar=1; owner.specials.act=PLR_MORTAL; owner.in_room=0;
  auto *canonical=read_object_for_creation(900,VIRTUAL); assert(canonical); obj_to_char(canonical,&owner);
  auto *alias=read_object(0,REAL); assert(alias); obj_to_char(alias,&owner);
- artifact_save_pulse(true); drain(); writes.clear(); captures.clear();
+ artifact_save_pulse(true); drain(); writes.clear();
  auto &row=artifact_rows.at(900); row.timer=time(nullptr)+60;
  artifact_binds[900]={88,123};
  obj_data corpse={}; corpse.type=ITEM_CORPSE; corpse.value[5]=2;
@@ -2050,11 +2062,10 @@ void corpse_bind_cases() {
 """)
 with tempfile.TemporaryDirectory(prefix="artifact-creation-",dir=output) as directory:
  cpp=Path(directory)/"creation.cpp"; binary=Path(directory)/"creation"; cpp.write_text(source)
- subprocess.run(["g++","-std=c++20","-Wall","-Wextra","-Werror","-D__NO_MYSQL__",
-  "-Isrc","-Isrc/no_mysql","-ffunction-sections","-fdata-sections","-fsanitize=address,undefined",
+ subprocess.run(["g++","-std=c++20","-Wall","-Wextra","-Werror","-Isrc",'-I/usr/include/mysql',"-ffunction-sections","-fdata-sections","-fsanitize=address,undefined",
   "-fno-sanitize-recover=all","-fno-omit-frame-pointer",str(cpp),"src/guild/artifact_population.c",
-  "src/item/item_transfer_command.c","src/item/item_ownership_runtime.c","src/guild/artifact_guild_state.c",
-  "src/guild/artifact_guild_command.c","src/persistence/critical_command.c","src/core/safe_format.c","src/player/player_load_topology.c","src/combat/trap_legacy.c",str(HARNESS_STUBS),"-Wl,--gc-sections","-lcrypto","-pthread",
+  "src/item/named_set_origin.c","src/item/random_equipment_tables.c","src/item/item_transfer_command.c","src/item/item_ownership_runtime.c","src/guild/artifact_guild_state.c",
+  "src/guild/artifact_guild_command.c","src/persistence/critical_command.c","src/core/safe_format.c","src/player/player_load_topology.c","src/combat/trap_legacy.c",str(HARNESS_STUBS),"-Wl,--gc-sections","-lmysqlclient","-lcrypto","-pthread",
   "src/player/player_load_pipeline.c","src/persistence/persistence_observability.c",
   "-o",str(binary)],cwd=ROOT,check=True)
  subprocess.run([str(binary)],cwd=ROOT,check=True,timeout=30)

@@ -1,6 +1,3 @@
-#include "flatfile/flatfile_player_snapshot_file.h"
-#include "flatfile/flatfile_store.h"
-#include <openssl/sha.h>
 #include "net/output_preference_state.h"
 #include "player/player_snapshot_codec.h"
 
@@ -49,6 +46,7 @@ static std::vector<player_item_snapshot> fixture()
 	parent.affects[0] = { 24, 25 };
 	parent.dynamic_affects.push_back({ 26, 27, 28 });
 	parent.extra_descriptions.push_back({ "runes", "glowing runes", true, { 29, 30 } });
+	parent.extra_descriptions.push_back({ "DURIS_NAMED_SET_ORIGIN_V1", "808", false, {} });
 	player_item_snapshot child = {};
 	child.parent_index = 0;
 	child.equipment_slot = -1;
@@ -95,9 +93,8 @@ static void put32(std::vector<uint8_t> &bytes, size_t at, uint32_t value)
 		bytes[at + index] = static_cast<uint8_t>(value >> (8 * index));
 }
 
-int main(int argc, char **argv)
+int main()
 {
-	require(argc == 2, "temporary file directory required");
 	const auto original = fixture();
 	std::vector<uint8_t> encoded;
 	require(player_item_snapshot_list_encode(original, &encoded) ==
@@ -112,7 +109,9 @@ int main(int argc, char **argv)
 			decoded[0].timers[0] == 12 && decoded[0].bitvectors[0] == 23 &&
 			decoded[0].affects[0][1] == 25 && decoded[0].dynamic_affects.size() == 1 &&
 			decoded[0].dynamic_affects[0].extra2 == 28 &&
-			decoded[0].extra_descriptions.size() == 1 &&
+			decoded[0].extra_descriptions.size() == 2 &&
+			decoded[0].extra_descriptions[1].keyword == "DURIS_NAMED_SET_ORIGIN_V1" &&
+			decoded[0].extra_descriptions[1].description == "808" &&
 			decoded[0].extra_descriptions[0].spell_ids ==
 				std::vector<int32_t>{ 29, 30 } &&
 			decoded[1].parent_index == 0 && decoded[1].object_uid == 101,
@@ -432,13 +431,14 @@ int main(int argc, char **argv)
 	// Every proper prefix of a whole snapshot is truncated too.
 	auto full = snapshot_fixture();
 	full.wallet_revision = 42;
+	full.creation_account = "Creator";
 	std::vector<uint8_t> current, other;
 	require(player_snapshot_encode(full, &current) == player_snapshot_codec_result::ok,
 		"the snapshot fixture did not encode");
 	require(player_snapshot_decode(current.data(), current.size(), &read_back) ==
 				player_snapshot_codec_result::ok &&
-			read_back.wallet_revision == 42,
-		"current snapshot lost its captured wallet revision");
+			read_back.wallet_revision == 42 && read_back.creation_account == "Creator",
+		"current snapshot lost its captured wallet revision or initial owner");
 	for (size_t length = 1; length < current.size(); ++length)
 		require(player_snapshot_decode(current.data(), length, &read_back) ==
 				player_snapshot_codec_result::truncated,
@@ -458,6 +458,9 @@ int main(int argc, char **argv)
 	const auto wire = [&](uint32_t version)
 	{
 		auto bytes = current;
+		if (version < 15)
+			bytes.resize(bytes.size() - sizeof(uint32_t) -
+				     full.creation_account.size());
 		if (version < 12)
 			bytes.resize(bytes.size() - 1);
 		if (version < 11)
@@ -509,59 +512,14 @@ int main(int argc, char **argv)
 					player_status_string_field::last_read_news_hash &&
 				read_back.status_strings.back().value.empty(),
 			"old snapshot did not default to unread news");
-
-		// Read the old payload through the real checksummed player-file envelope too.
-		using namespace flatfile_player_snapshot_file;
-		std::vector<uint8_t> file(player_magic.begin(), player_magic.end());
-		const auto append = [&file]<typename T>(T number)
-		{
-			for (size_t i = 0; i < sizeof(T); ++i)
-				file.push_back(static_cast<uint8_t>(number >> (8 * i)));
-		};
-		append(player_file_version);
-		append(static_cast<uint32_t>(bytes.size()));
-		append(full.pid);
-		append(full.revision);
-		append(full.components);
-		unsigned char digest[SHA256_DIGEST_LENGTH];
-		SHA256(bytes.data(), bytes.size(), digest);
-		file.insert(file.end(), digest, digest + sizeof(digest));
-		file.insert(file.end(), bytes.begin(), bytes.end());
-		std::string error;
-		const std::string filename = "legacy-" + std::to_string(version) + ".snapshot";
-		require(flatfile_atomic_write(argv[1], filename, file, &error), error);
-		require(flatfile_player_snapshot_read_file(argv[1], filename, full.pid, &read_back,
-							   &error) ==
-					flatfile_player_load_result::ok &&
-				read_back.schema_version == PLAYER_SNAPSHOT_SCHEMA_VERSION &&
-				std::any_of(read_back.status_integers.begin(),
-					    read_back.status_integers.end(),
-					    [](const auto &row)
-					    {
-						    return row.field ==
-								   player_status_field::
-									   learned_flight_stops &&
-							   row.is_unsigned &&
-							   row.unsigned_value == 0;
-					    }) &&
-				std::any_of(
-					read_back.status_integers.begin(),
-					read_back.status_integers.end(),
-					[](const auto &row)
-					{
-						return row.field ==
-							       player_status_field::
-								       divine_boon_delivery_seq &&
-						       row.is_unsigned && row.unsigned_value == 0;
-					}),
-			"old player file did not load with empty flight discoveries: " + error);
 	}
-	for (uint32_t version : { 9u, 10u, 11u, 12u })
+	for (uint32_t version : { 9u, 10u, 11u, 12u, 13u, 14u })
 	{
 		const auto bytes = wire(version);
 		require(player_snapshot_decode(bytes.data(), bytes.size(), &read_back) ==
 					player_snapshot_codec_result::ok &&
 				read_back.wallet_revision == (version >= 11 ? 42u : 0u) &&
+				read_back.creation_account.empty() &&
 				read_back.schema_version == PLAYER_SNAPSHOT_SCHEMA_VERSION,
 			"old snapshot did not default its absent wallet revision");
 	}
@@ -674,7 +632,8 @@ int main(int argc, char **argv)
 	changed.status_integers.clear();
 	require(player_snapshot_encode(changed, &other) == player_snapshot_codec_result::ok,
 		"partial legacy fixture did not encode");
-	other.resize(other.size() - sizeof(uint64_t) - 1);
+	other.resize(other.size() - sizeof(uint64_t) - 1 - sizeof(uint32_t) -
+		     changed.creation_account.size());
 	put32(other, 0, 7);
 	require(player_snapshot_decode(other.data(), other.size(), &read_back) ==
 				player_snapshot_codec_result::ok &&

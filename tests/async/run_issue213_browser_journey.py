@@ -18,7 +18,7 @@ import time
 import uuid
 
 from playwright.sync_api import sync_playwright
-import test_flatfile_combat_journey as journey
+import test_mariadb_combat_journey as journey
 from test_flight_network_journey import authority, command
 from run_world_quest_dual_backend import setup_run_root
 from run_issue213_onboarding_journey import authored_graph, guild_rooms, path_between
@@ -59,13 +59,11 @@ def full_world(args):
                 journey.create_character(staff, expected_room=None, account=GOD_ACCOUNT, character=GOD,
                                          email='browserward@example.invalid', hometown='t')
                 staff.send('save')
-                staff.expect('Save complete for ' + GOD + '.')
+                staff.expect('Saving ' + GOD + '.')
                 staff.close()
                 stop()
                 if sql:
                     sql(f"UPDATE player_data SET level=62,highest_level=62 WHERE name='{GOD}'")
-                else:
-                    journey.make_overlord(Path(environment['FLATFILE_STATE_DIR']), GOD)
                 boot()
                 yield {'runtime': str(runtime), 'plain': plain, 'tls': tls, 'websocket': websocket}, sql
             finally:
@@ -226,6 +224,7 @@ def exercise(server, sql, args, evidence):
                 page.wait_for_timeout(100)
         assert player_count() == before_count, 'forged hometown allocated a player'
         page.get_by_role('button', name='Create Character', exact=True).click()
+        page.get_by_role('button', name='Enter', exact=True).click()
         field = page.get_by_placeholder('Enter command...')
         field.wait_for(timeout=15000)
         god = journey.reconnect_character(server['plain'], expected_room=None, account=GOD_ACCOUNT, character=GOD)
@@ -262,7 +261,7 @@ def exercise(server, sql, args, evidence):
         expected = guild_rooms()[18][1]
         assert room() == expected
         send('save')
-        page.get_by_text('Save complete for ' + character + '.', exact=False).wait_for()
+        page.get_by_text('Saving ' + character + '.', exact=False).wait_for()
         saved = saved_state(command(god, 'stat char ' + character))
         assert [saved[key] for key in ('hometown', 'birthplace', 'original_birthplace')] == [expected] * 3, saved
         command(god, 'advance ' + character + ' 30')
@@ -285,7 +284,7 @@ def exercise(server, sql, args, evidence):
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--server', type=Path, required=True)
-    parser.add_argument('--backend', choices=('flatfile', 'mariadb'), default='flatfile')
+    parser.add_argument('--backend', choices=("mariadb",), default="mariadb")
     parser.add_argument('--frontend-url', required=True)
     parser.add_argument('--frontend-source', type=Path)
     parser.add_argument('--browser-executable', type=Path)
@@ -295,8 +294,6 @@ if __name__ == '__main__':
     args.output = (args.output or ROOT / f'bin/qualification/issue213/browser-{args.backend}.json').resolve()
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.inspector = ROOT / 'bin/qualification/issue213/player-inspector'
-    if args.backend == 'flatfile' and not args.inspector.exists():
-        subprocess.run(['python3', 'tests/async/test_flatfile_player_repository.py', '--build-inspector', str(args.inspector)], cwd=ROOT, check=True)
     evidence = {'backend': args.backend, 'source_commit': subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=ROOT, text=True).strip(),
                 'binary_sha256': hashlib.sha256(args.server.read_bytes()).hexdigest(),
                 'frontend_url': args.frontend_url, 'passed': False,

@@ -9,6 +9,8 @@
  */
 
 #include "core/prototypes.h"
+#include "item/named_set_origin.h"
+#include "persistence/copyover.h"
 #include "net/discord_petition.h"
 #include "account/creation_availability_config.h"
 #include "net/comm.h"
@@ -45,7 +47,6 @@
 #include "world/map.h"
 #include "core/mm.h"
 #include "item/objmisc.h"
-#include "persistence/persistence_mode.h"
 #include "redis/redis_presence_runtime.h"
 #include "redis/redis_floor_runtime.h"
 #include "player/player_save_pipeline.h"
@@ -496,8 +497,7 @@ static void read_player_loaded(P_char ch, P_char vict)
 	vict->only.pc->aggressive = -1;
 
 	/* insert in list */
-	vict->next = character_list;
-	character_list = vict;
+	character_list_add(vict);
 
 	// The load left vict in no room, its saved room in was_in_room.
 	char_to_room(vict, ch->in_room, -2);
@@ -1840,6 +1840,18 @@ void do_stat(P_char ch, char *argument, int cmd, P_obj object)
 				 "&+YKeywords: &N%s\n&+YLong description:\n%s\n",
 				 ((j->name) ? j->name : "None"),
 				 ((j->description) ? j->description : "None"));
+		const auto origin = named_set_origin(j);
+		if (origin.zone > 0)
+			checked_snprintf(o_buf + strlen(o_buf), MAX_STRING_LENGTH - strlen(o_buf),
+					 "&+YNamed set origin: &N#%d\n", origin.zone);
+		else if (origin.zone < 0)
+			strlcat(o_buf,
+				"&+RNamed set origin: invalid metadata; repair required.&n\n",
+				MAX_STRING_LENGTH);
+		else if (!origin.legacy_title.empty())
+			checked_snprintf(o_buf + strlen(o_buf), MAX_STRING_LENGTH - strlen(o_buf),
+					 "&+YNamed set origin: &Nambiguous legacy '%s' (HP only)\n",
+					 origin.legacy_title.c_str());
 
 		if (j->ex_description)
 		{
@@ -2016,47 +2028,14 @@ void do_stat(P_char ch, char *argument, int cmd, P_obj object)
 				 j->value[1], j->value[0], j->value[3]);
 			break;
 		case ITEM_WEAPON:
-		{
-			int spells[3];
-			char spell_list[512];
-
-			spells[0] = j->value[5] % 1000;
-			spells[1] = j->value[5] % 1000000 / 1000;
-			spells[2] = j->value[5] % 1000000000 / 1000000;
-
 			if ((j->value[0] < 1) || (j->value[0] > WEAPON_NUMCHUCKS))
 				strcpy(buf2, "&+RBUGGED!&N");
 			else
 				strcpy(buf2, weapon_types[j->value[0]].flagLong);
-
-			if (obj_index[j->R_num].func.obj == NULL && j->value[5])
-			{
-				if (skills[spells[0]].name)
-					strcpy(spell_list, skills[spells[0]].name);
-				if (spells[1] && skills[spells[1]].name)
-					APPENDF(spell_list, "&n, &+W%s", skills[spells[1]].name);
-				if (spells[2] && skills[spells[2]].name)
-					APPENDF(spell_list, "&n, &+W%s", skills[spells[2]].name);
-
-				if (j->value[5] / 1000000000)
-					snprintf(
-						buf1, MAX_STRING_LENGTH,
-						"&+YProcs one of &+W%d&+Y level &+W%s &+Yat &+W1/%d&+Y chance\n",
-						j->value[6], spell_list, j->value[7]);
-				else
-					snprintf(
-						buf1, MAX_STRING_LENGTH,
-						"&+YProcs all of &+W%d&+Y level &+W%s &+Yat &+W1/%d&+Y chance\n",
-						j->value[6], spell_list, j->value[7]);
-			}
-			else
-				*buf1 = 0;
 			checked_snprintf(buf, MAX_STRING_LENGTH,
-					 "%s&+YType: &n%s &+Ydice: &N%dD%d&N %s", buf1, buf2,
-					 j->value[1], j->value[2],
-					 j->value[4] ? "&+g(Poisoned)&n" : "");
+					 "&+YType: &n%s &+Ydice: &N%dD%d&N %s", buf2, j->value[1],
+					 j->value[2], j->value[4] ? "&+g(Poisoned)&n" : "");
 			break;
-		}
 		case ITEM_QUIVER:
 			snprintf(
 				buf, MAX_STRING_LENGTH,
@@ -2152,6 +2131,28 @@ void do_stat(P_char ch, char *argument, int cmd, P_obj object)
 			break;
 		}
 		strcat(o_buf, buf);
+
+		if (IS_MONK_PROC_GLOVE(j))
+			strcat(o_buf,
+			       "\n&+YActivates on a monk's barehand strikes when worn on the primary hands.&n");
+		if ((j->type == ITEM_WEAPON || IS_MONK_PROC_GLOVE(j)) && j->value[5] > 0 &&
+		    (IS_MONK_PROC_GLOVE(j) || obj_index[j->R_num].func.obj == nullptr))
+		{
+			char spell_list[512] = {};
+			for (int packed = j->value[5] % 1000000000, slot = 0; slot < 3;
+			     ++slot, packed /= 1000)
+			{
+				const int spell = packed % 1000;
+				if (spell > 0 && spell < MAX_SKILLS && skills[spell].name)
+					APPENDF(spell_list, "%s%s", *spell_list ? "&n, &+W" : "",
+						skills[spell].name);
+			}
+			checked_snprintf(
+				o_buf + strlen(o_buf), MAX_STRING_LENGTH - strlen(o_buf),
+				"\n&+YProcs %s of &+W%d&+Y level &+W%s &+Yat &+W1/%d&+Y chance\n",
+				j->value[5] / 1000000000 ? "one" : "all", j->value[6], spell_list,
+				j->value[7]);
+		}
 
 		if (!showed_vals)
 			snprintf(
@@ -4288,8 +4289,10 @@ static const char *scheduled_shutdown_type_name(int shutdown_type, bool uppercas
 		return uppercase ? "SHUTDOWN" : "shutdown";
 	case TimedShutdownData::PWIPE:
 		return uppercase ? "PWIPE" : "pwipe";
+	case TimedShutdownData::HOTBOOT:
+	case TimedShutdownData::AUTOREBOOT_HOTBOOT:
+		return uppercase ? "HOTBOOT" : "hotboot";
 	case TimedShutdownData::COPYOVER:
-	case TimedShutdownData::AUTOREBOOT_COPYOVER:
 		return uppercase ? "COPYOVER" : "copyover";
 	default:
 		return uppercase ? "REBOOT" : "reboot";
@@ -4336,11 +4339,14 @@ void timedShutdown(P_char, P_char, P_obj, void * /*data*/)
 		}
 	}
 	const bool manual = shutdownData.eShutdownType != TimedShutdownData::AUTOREBOOT &&
-			    shutdownData.eShutdownType != TimedShutdownData::AUTOREBOOT_COPYOVER;
+			    shutdownData.eShutdownType != TimedShutdownData::AUTOREBOOT_HOTBOOT;
 	const bool pending = shutdownData.eShutdownType == TimedShutdownData::PWIPE ||
 			     shutdownData.reboot_time != 0 || shutdownData.next_warning >= 0;
 	if (manual && pending &&
-	    (!issuer || !can_exec_cmd(issuer, CMD_SHUTDOWN) ||
+	    (!issuer ||
+	     !can_exec_cmd(issuer, shutdownData.eShutdownType == TimedShutdownData::COPYOVER ?
+					   CMD_COPYOVER :
+					   CMD_SHUTDOWN) ||
 	     (shutdownData.eShutdownType == TimedShutdownData::PWIPE &&
 	      GET_LEVEL(issuer) < OVERLORD)))
 	{
@@ -4389,21 +4395,25 @@ void timedShutdown(P_char, P_char, P_obj, void * /*data*/)
 			break;
 
 		case TimedShutdownData::COPYOVER:
+		case TimedShutdownData::HOTBOOT:
+			copyover_preserve_world = action == TimedShutdownData::HOTBOOT;
 			snprintf(buf, 500,
-				 "\r\n%s begins a copyover; your connection will be preserved.\r\n",
-				 shutdownData.IssuedBy);
+				 "\r\n%s begins a %s; please wait while the MUD restarts.\r\n",
+				 shutdownData.IssuedBy,
+				 scheduled_shutdown_type_name(action, false));
 			send_to_all(buf);
-			log_shutdown("Copyover");
+			log_shutdown(copyover_preserve_world ? "Hotboot" : "Copyover");
 			write_shutdown_info(shutdownData.IssuedBy, shutdownData.Reason);
 			shutdownflag = _copyover = 1;
 			break;
 
-		case TimedShutdownData::AUTOREBOOT_COPYOVER:
+		case TimedShutdownData::AUTOREBOOT_HOTBOOT:
+			copyover_preserve_world = true;
 			snprintf(
 				buf, 500,
 				"\r\nDuris fades into nothing, as the world begins its reconstruction...\r\n");
 			send_to_all(buf);
-			log_shutdown("Auto-reboot with copyover");
+			log_shutdown("Auto-reboot with hotboot");
 			shutdownflag = _autoboot = _copyover = 1;
 			break;
 
@@ -4465,7 +4475,7 @@ void timedShutdown(P_char, P_char, P_obj, void * /*data*/)
 		if (secs <= 1)
 		{
 			cancel_shutdown_ticks(timedShutdown);
-			if (issuer)
+			if (issuer && shutdownData.eShutdownType != TimedShutdownData::COPYOVER)
 			{
 				int old_level = GET_LEVEL(issuer);
 				issuer->player.level = MAXLVL;
@@ -4545,20 +4555,86 @@ void displayShutdownMsg(P_char ch)
 	send_to_char(buf, ch);
 }
 
+void do_copyover(P_char ch, char *argument, int /*cmd*/)
+{
+	if (IS_NPC(ch))
+		return;
+	char arg[MAX_INPUT_LENGTH];
+	argument = one_argument(argument, arg);
+	while (isspace(static_cast<unsigned char>(*argument)))
+		++argument;
+	if (*argument)
+	{
+		send_to_char("Syntax: copyover [seconds | cancel]\r\n", ch);
+		return;
+	}
+	if (!str_cmp(arg, "cancel"))
+	{
+		if (shutdownData.eShutdownType != TimedShutdownData::COPYOVER ||
+		    str_cmp(shutdownData.IssuedBy, GET_NAME(ch)))
+		{
+			send_to_char("You have no scheduled copyover to cancel.\r\n", ch);
+			return;
+		}
+		cancel_shutdown_ticks(timedShutdown);
+		shutdownData.eShutdownType = TimedShutdownData::NONE;
+		send_to_all("&+R*** Scheduled copyover cancelled. ***&n\r\n");
+		sql_log(ch, WIZLOG, "Copyover cancelled by %s", GET_NAME(ch));
+		return;
+	}
+	long seconds = 0;
+	if (*arg)
+	{
+		char *end = nullptr;
+		errno = 0;
+		seconds = strtol(arg, &end, 10);
+		if (errno || !end || *end || seconds < 0 || seconds > INT_MAX ||
+		    !isdigit(static_cast<unsigned char>(arg[0])))
+		{
+			send_to_char(
+				"Invalid copyover delay. Use a nonnegative whole number of seconds.\r\n",
+				ch);
+			return;
+		}
+	}
+	if (shutdownData.eShutdownType != TimedShutdownData::NONE)
+	{
+		send_to_char("A restart or shutdown is already scheduled; cancel it first.\r\n",
+			     ch);
+		return;
+	}
+	shutdownData.eShutdownType = TimedShutdownData::COPYOVER;
+	shutdownData.reboot_time = seconds ? time(nullptr) + seconds : 0;
+	shutdownData.next_warning = -1;
+	strlcpy(shutdownData.IssuedBy, GET_NAME(ch), sizeof shutdownData.IssuedBy);
+	strlcpy(shutdownData.Reason, "Fresh-world copyover", sizeof shutdownData.Reason);
+	sql_log(ch, WIZLOG, "Copyover initiated by %s in %ld seconds", GET_NAME(ch), seconds);
+	timedShutdown(nullptr, nullptr, nullptr, nullptr);
+}
+
 void do_shutdown(P_char ch, char *argument, int /*cmd*/)
 {
 	char buf[100], arg[MAX_STRING_LENGTH];
 	if (IS_NPC(ch))
 		return;
 	argument = one_argument(argument, arg);
+	if (!str_cmp(arg, "copyover"))
+	{
+		send_to_char(
+			"Use copyover for a fresh world, or shutdown hotboot to preserve the world.\r\n",
+			ch);
+		return;
+	}
+	if (shutdownData.eShutdownType == TimedShutdownData::COPYOVER)
+	{
+		send_to_char(
+			"A copyover is scheduled; its initiator can use copyover cancel first.\r\n",
+			ch);
+		return;
+	}
 	const bool pwipe = !str_cmp(arg, "pwipe");
 	if (pwipe)
 	{
-		if (!persistence_mode_requires_mysql())
-		{
-			send_to_char("Pwipe is unavailable in flatfile-primary mode.\r\n", ch);
-			return;
-		}
 		if (GET_LEVEL(ch) < OVERLORD)
 		{
 			send_to_char(
@@ -4610,19 +4686,19 @@ void do_shutdown(P_char ch, char *argument, int /*cmd*/)
 
 	if (shutdownData.eShutdownType == TimedShutdownData::AUTOREBOOT)
 	{
-		if (!str_cmp(arg, "copyover"))
+		if (!str_cmp(arg, "hotboot"))
 		{
-			shutdownData.eShutdownType = TimedShutdownData::AUTOREBOOT_COPYOVER;
-			send_to_all("&+R*** Code will copyover at auto reboot. ***&N\n");
+			shutdownData.eShutdownType = TimedShutdownData::AUTOREBOOT_HOTBOOT;
+			send_to_all("&+R*** Code will hotboot at auto reboot. ***&N\n");
 		}
 		return;
 	}
-	if (shutdownData.eShutdownType == TimedShutdownData::AUTOREBOOT_COPYOVER)
+	if (shutdownData.eShutdownType == TimedShutdownData::AUTOREBOOT_HOTBOOT)
 	{
-		if (!str_cmp(arg, "copyover"))
+		if (!str_cmp(arg, "hotboot"))
 		{
 			shutdownData.eShutdownType = TimedShutdownData::AUTOREBOOT;
-			send_to_all("&+R*** Code will no longer copyover at auto reboot. ***&N\n");
+			send_to_all("&+R*** Code will no longer hotboot at auto reboot. ***&N\n");
 		}
 		return;
 	}
@@ -4637,8 +4713,8 @@ void do_shutdown(P_char ch, char *argument, int /*cmd*/)
 			requested = TimedShutdownData::REBOOT;
 		else if (!str_cmp(arg, "autoreboot"))
 			requested = TimedShutdownData::AUTOREBOOT;
-		else if (!str_cmp(arg, "copyover"))
-			requested = TimedShutdownData::COPYOVER;
+		else if (!str_cmp(arg, "hotboot"))
+			requested = TimedShutdownData::HOTBOOT;
 		else if (pwipe)
 			requested = TimedShutdownData::PWIPE;
 		else if (!crash)
@@ -4662,13 +4738,13 @@ void do_shutdown(P_char ch, char *argument, int /*cmd*/)
 	if (!*arg)
 	{
 		send_to_char(
-			"Syntax: shutdown <ok | reboot | copyover | autoreboot> [minutes] [reason]\r\n"
+			"Syntax: shutdown <ok | reboot | hotboot | autoreboot> [minutes] [reason]\r\n"
 			"        shutdown pwipe confirm yes\r\n"
 			"\r\n"
 			"Examples:\r\n"
 			"  shutdown reboot                    - Immediate reboot\r\n"
 			"  shutdown reboot 5 emergency patch  - Reboot in 5 minutes with reason\r\n"
-			"  shutdown copyover fixing bug       - Hot restart with reason\r\n"
+			"  shutdown hotboot fixing bug       - Hot restart with reason\r\n"
 			"  shutdown ok server maintenance     - Stop without restart\r\n"
 			"\r\n"
 			"Manual countdowns cancel when the issuer leaves play, disconnects or loses permission.\r\n"
@@ -4968,6 +5044,22 @@ void do_switch(P_char ch, char *argument, int cmd)
 	}
 }
 
+bool return_from_staff_switch(P_desc d)
+{
+	if (!d || !d->character || !d->original || IS_NPC(d->original) ||
+	    d->original->only.pc->switched != d->character || IS_MORPH(d->character))
+		return false;
+	P_char controlled = d->character;
+	send_to_char("You return to your original body.\n", controlled);
+	d->character = d->original;
+	d->original = nullptr;
+	d->character->only.pc->switched = nullptr;
+	d->character->desc = d;
+	controlled->desc = nullptr;
+	gmcp_session_update(d);
+	return true;
+}
+
 void do_return(P_char ch, char * /*argument*/, int /*cmd*/)
 {
 	/*  if(CHAR_POLYMORPH_OBJ(ch))
@@ -4994,21 +5086,7 @@ void do_return(P_char ch, char * /*argument*/, int /*cmd*/)
 		send_to_char("Use \"shape me\" to return to your normal form.\n", ch);
 		return;
 	}
-	if (ch->desc->original->only.pc->switched)
-	{
-		P_char switched_mob = ch->desc->character; // Save reference to the mob
-
-		send_to_char("You return to your original body.\n", ch);
-
-		ch->desc->character = ch->desc->original;
-		ch->desc->original = 0;
-		ch->desc->character->only.pc->switched = 0;
-
-		ch->desc->character->desc = ch->desc;
-		gmcp_session_update(ch->desc);
-		switched_mob->desc = 0; // Clear the MOB's desc, not ch->desc
-	}
-	else /* switched body due to shape change  */
+	if (!return_from_staff_switch(ch->desc))
 		send_to_char("No effect.\n", ch);
 }
 
@@ -6120,6 +6198,7 @@ void do_restore(P_char ch, char *argument, int cmd)
 					for (j = 1; j <= MAX_CIRCLE; j++)
 						victim->specials.undead_spell_slots[j] =
 							max_spells_in_circle(victim, j);
+					gmcp_spell_preparation_changed(victim);
 				}
 				GET_COND(victim, FULL) = IS_TRUSTED(victim) ? -1 : 24;
 				GET_COND(victim, THIRST) = IS_TRUSTED(victim) ? -1 : 24;
@@ -6227,6 +6306,7 @@ void do_restore(P_char ch, char *argument, int cmd)
 			for (i = 1; i <= MAX_CIRCLE; i++)
 				victim->specials.undead_spell_slots[i] =
 					max_spells_in_circle(victim, i);
+			gmcp_spell_preparation_changed(victim);
 		}
 		if (GET_STAT(victim) < STAT_SLEEPING)
 			SET_POS(victim, GET_POS(victim) + STAT_NORMAL);
@@ -7809,66 +7889,21 @@ void do_finger(P_char ch, char *arg, int /*cmd*/)
 
 void do_decline(P_char ch, char *arg, int /*cmd*/)
 {
-	char Gbuf2[MAX_STRING_LENGTH], f_a[MAX_STRING_LENGTH], Gbuf1[MAX_STRING_LENGTH];
-	P_desc d, i;
-
-	arg = skip_spaces(arg);
-	if (!*arg)
-	{
-		send_to_char("Usage: decline <charname> [reason]\n", ch);
-		return;
-	}
-	arg = one_argument(arg, f_a);
-	for (d = descriptor_list; d; d = d->next)
+	char name[MAX_INPUT_LENGTH];
+	arg = one_argument(skip_spaces(arg), name);
+	if (!*name)
+		return send_to_char("Usage: decline <charname> [reason]\n", ch);
+	for (P_desc d = descriptor_list; d; d = d->next)
 		if (STATE(d) == CON_ACCEPTWAIT && d->character &&
-		    !str_cmp(GET_NAME(d->character), f_a))
+		    !str_cmp(GET_NAME(d->character), name))
 		{
-			if (!arg || !*arg)
-			{
-				SEND_TO_Q(
-					"\n\nYour new character application has been declined. It is highly probable\n",
-					d);
-				SEND_TO_Q(
-					"that either your name does not suit fantasy theme, or something else is\n"
-					"inappropriate to the theme Duris strives to maintain.\n\n",
-					d);
-				SEND_TO_Q("Please enter another, more suitable fantasy name:", d);
-			}
-			else
-			{
-				SEND_TO_Q(
-					"\n\nYour new character application has been declined.\nReason supplied was:",
-					d);
-				SEND_TO_Q(arg, d);
-				SEND_TO_Q("\n\nPlease enter another, more suitable fantasy name:",
-					  d);
-			}
-			d->character->only.pc->prestige = 0;
-			logit(LOG_NEWCHAR, "%s declined new char %s (%s): %s.", GET_NAME(ch),
-			      GET_NAME(d->character), (*d->host ? d->host : "UNKNOWN"),
-			      (arg ? arg : "NO REASON GIVEN"));
-			snprintf(Gbuf1, MAX_STRING_LENGTH,
-				 "&+c*** STATUS: %s declined new player %s. (%s)\n", GET_NAME(ch),
-				 GET_NAME(d->character), arg);
-			snprintf(Gbuf2, MAX_STRING_LENGTH,
-				 "&+c*** STATUS: Someone declined new player %s. (%s)\n",
-				 GET_NAME(d->character), arg);
-			for (i = descriptor_list; i; i = i->next)
-				if (!i->connected && i->character &&
-				    IS_SET(i->character->specials.act, PLR_PETITION) &&
-				    IS_TRUSTED(i->character))
-				{
-					if (!CAN_SEE(i->character, ch))
-						send_to_char(Gbuf2, i->character);
-					else
-						send_to_char(Gbuf1, i->character);
-					//    deny_name(GET_NAME(d->character));
-					STATE(d) = CON_NEW_NAME;
-				}
-
-			deny_name(GET_NAME(d->character));
-
-			return;
+			if (!decline_kept_character(d, arg))
+				return send_to_char(
+					"That application is still saving. Please retry shortly.\n",
+					ch);
+			logit(LOG_NEWCHAR, "%s requested decline of %s: %s", GET_NAME(ch), name,
+			      arg);
+			return send_to_char("Saving the character cancellation.\n", ch);
 		}
 	send_to_char("Decline what new player's application?\n", ch);
 }
@@ -7892,7 +7927,7 @@ void do_approve(P_char ch, char *arg, int /*cmd*/)
 			 "&+cAC: Post-creation approval system is now %s.\n",
 			 approve_modes[approve_mode]);
 		send_to_char(Gbuf1, ch);
-		if (approve_mode == APPROVE_ON)
+		// Already-kept applications still need a decision when new approvals are off.
 		{
 			send_to_char("List of characters needing approval:\n", ch);
 			for (d1 = descriptor_list; d1; d1 = d1->next)
@@ -7986,16 +8021,25 @@ void do_approve(P_char ch, char *arg, int /*cmd*/)
 			if (STATE(d1) == CON_ACCEPTWAIT && d1->character &&
 			    !str_cmp(GET_NAME(d1->character), arg))
 			{
-				logit(LOG_NEWCHAR, "%s approved new char %s from %s.", GET_NAME(ch),
-				      GET_NAME(d1->character), (*d1->host ? d1->host : "UNKNOWN"));
+				if (!approve_kept_character(d1))
+				{
+					send_to_char(
+						"Approval could not be saved; the application remains pending.\n",
+						ch);
+					return;
+				}
+				logit(LOG_NEWCHAR, "%s requested approval of new char %s from %s.",
+				      GET_NAME(ch), GET_NAME(d1->character),
+				      (*d1->host ? d1->host : "UNKNOWN"));
 				snprintf(Gbuf1, MAX_STRING_LENGTH,
-					 "&+c*** STATUS: %s approved new player %s from %s.\n",
+					 "&+c*** STATUS: %s is approving new player %s from %s.\n",
 					 GET_NAME(ch), GET_NAME(d1->character),
 					 *d1->host ? d1->host : "&+WUNKNOWN&n");
-				snprintf(Gbuf2, MAX_STRING_LENGTH,
-					 "&+c*** STATUS: Someone approved new player %s from %s.\n",
-					 GET_NAME(d1->character),
-					 *d1->host ? d1->host : "&+WUNKNOWN&n");
+				snprintf(
+					Gbuf2, MAX_STRING_LENGTH,
+					"&+c*** STATUS: Someone is approving new player %s from %s.\n",
+					GET_NAME(d1->character),
+					*d1->host ? d1->host : "&+WUNKNOWN&n");
 
 				for (d2 = descriptor_list; d2; d2 = d2->next)
 				{
@@ -8009,14 +8053,6 @@ void do_approve(P_char ch, char *arg, int /*cmd*/)
 							send_to_char(Gbuf1, d2->character);
 					}
 				}
-
-				SEND_TO_Q(
-					"\nYour application for character has been approved. Welcome into ranks of\nthe players of Duris!\n\n",
-					d1);
-				SEND_TO_Q("\n*** PRESS RETURN:\n", d1);
-				STATE(d1) = CON_WELCOME;
-				approve_name(GET_NAME(d1->character));
-				schedule_chaos_new_character_kit_before_entry(d1->character);
 
 				return;
 			}
@@ -8116,9 +8152,19 @@ struct obj_data *clone_obj(P_obj obj)
 				  "clone_source_exists", "vnum=%d", OBJ_VNUM(obj));
 		return nullptr;
 	}
+	const auto origin = named_set_origin(obj);
+	if (origin.zone < 0)
+	{
+		persistence_alert(AVATAR, "named_set_origin", "clone_obj", "none", "none",
+				  "invalid_origin", "vnum=%d has invalid named set metadata",
+				  OBJ_VNUM(obj));
+		return nullptr;
+	}
 	ocopy = read_object(obj->R_num, REAL);
 	if (!ocopy)
 		return nullptr;
+	if (origin.zone > 0)
+		set_named_set_origin(ocopy, origin.zone);
 	/* copy  */
 	if (obj->name)
 	{
@@ -11614,7 +11660,6 @@ void which_stat(P_char ch, char *argument)
 // The names that logged in from the address (% as a wildcard), read on the writer.
 void whois_ip(P_char ch, char *ip_address)
 {
-#ifndef __NO_MYSQL__
 	const std::string address = ip_address;
 	sql_read_for(
 		ch,
@@ -11648,10 +11693,6 @@ void whois_ip(P_char ch, char *ip_address)
 			}
 			send_to_char(".\n", live);
 		});
-#else
-	(void)ip_address;
-	send_to_char("This command requires MySQL support which is not compiled in.\n", ch);
-#endif
 }
 
 void do_whois(P_char ch, char *arg, int /*cmd*/)
@@ -11685,13 +11726,10 @@ void do_whois(P_char ch, char *arg, int /*cmd*/)
 			send_to_char("Please enter a valid ip address.\n", ch);
 			return;
 		}
-#ifndef __NO_MYSQL__
 		send_to_char_f(ch, "&=LWIP Address: '%s'&N\n", ip_address);
-#endif
 		whois_ip(ch, ip_address);
 		return;
 	}
-#ifndef __NO_MYSQL__
 	const int pid = get_player_pid_from_name(name);
 	if (pid < 1)
 	{
@@ -11742,9 +11780,6 @@ void do_whois(P_char ch, char *arg, int /*cmd*/)
 			send_to_char_f(live, "&=LWIP Address: '%s'&N\n", last.c_str());
 			whois_ip(live, last.data());
 		});
-#else
-	send_to_char("This command requires MySQL support which is not compiled in.\n", ch);
-#endif
 }
 
 char *food_modifiers(P_obj food)
@@ -12319,7 +12354,9 @@ struct line_info
 // To sort the players by zone in where command using qsort.
 int where_compare(const void *line1, const void *line2)
 {
-	return ((line_info *)line1)->room_number > ((line_info *)line2)->room_number;
+	const int room1 = ((const line_info *)line1)->room_number;
+	const int room2 = ((const line_info *)line2)->room_number;
+	return (room1 > room2) - (room1 < room2);
 }
 
 // Does a lookup and shows where things are in game.
@@ -12336,7 +12373,7 @@ void do_where(P_char ch, char *argument, int /*cmd*/)
 	P_char t_ch;
 
 	int line_count;
-	struct line_info lines[MAX_CONNECTIONS];
+	struct line_info lines[MAX_CONNECTIONS + 1]; // One extra row for the truncation warning.
 
 	buf[0] = 0;
 	length = 0;
@@ -12359,6 +12396,7 @@ void do_where(P_char ch, char *argument, int /*cmd*/)
 	if (!*argument)
 	{
 		strcpy(buf, "Players:\n--------\n");
+		send_to_char(buf, ch);
 
 		for (d = descriptor_list; d; d = d->next)
 		{
@@ -12457,6 +12495,7 @@ void do_where(P_char ch, char *argument, int /*cmd*/)
 			strcpy(buf, "Players (&+Rbuggy&n):\n--------------\n");
 		}
 
+		send_to_char(buf, ch);
 		for (d = descriptor_list; d; d = d->next)
 		{
 			t_ch = d->character;
@@ -12622,6 +12661,7 @@ void do_where(P_char ch, char *argument, int /*cmd*/)
 	if (is_abbrev(argument, "zone"))
 	{
 		strcpy(buf, "Players in this zone:\n---------------------\n");
+		length = strlen(buf);
 
 		for (d = descriptor_list; d; d = d->next)
 		{
@@ -12653,6 +12693,7 @@ void do_where(P_char ch, char *argument, int /*cmd*/)
 						snprintf(buf2, MAX_STRING_LENGTH,
 							 "   ...the list is too long...\n");
 						strcat(buf, buf2);
+						break;
 					}
 					strcat(buf, buf2);
 					length = strlen(buf);
@@ -12663,7 +12704,10 @@ void do_where(P_char ch, char *argument, int /*cmd*/)
 		return;
 	}
 	else if (is_abbrev(argument, "trap"))
+	{
 		do_traplist(ch, argument, 0);
+		return;
+	}
 
 	args = one_argument(argument, buf);
 	if (is_abbrev(buf, "stat"))

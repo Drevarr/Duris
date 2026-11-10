@@ -205,6 +205,35 @@ static void reload_and_targets() {
         assert(calls[0].target==((std::string(target)=="activator" || std::string(target)=="holder")?s.actor->runtime_id:0));
     }
 }
+static void gate_lightning_admission() {
+    for(int spell:{SPELL_GATE,SPELL_CALL_LIGHTNING}) for(const char *call:{"spell","wand"}) {
+        studio_scene s(true);
+        skills[spell].spell_pointer=first_spell;
+        skills[spell].targets=spell==SPELL_GATE?TAR_IGNORE|TAR_NOCOMBAT:TAR_AREA|TAR_OFFAREA|TAR_AGGRO;
+        auto root=cJSON_Parse(document().c_str()); assert(root);
+        auto entry=cJSON_GetArrayItem(cJSON_GetObjectItemCaseSensitive(root,"abilities"),0);
+        cJSON_ReplaceItemInObjectCaseSensitive(entry,"id",cJSON_CreateNumber(124));
+        cJSON_ReplaceItemInObjectCaseSensitive(entry,"trigger",cJSON_CreateString("use"));
+        cJSON_ReplaceItemInObjectCaseSensitive(entry,"mode",cJSON_CreateString("active"));
+        auto effect=cJSON_GetArrayItem(cJSON_GetObjectItemCaseSensitive(entry,"effects"),0);
+        cJSON_ReplaceItemInObjectCaseSensitive(effect,"spell",cJSON_CreateNumber(spell));
+        cJSON_ReplaceItemInObjectCaseSensitive(effect,"target",cJSON_CreateString("room"));
+        cJSON_ReplaceItemInObjectCaseSensitive(effect,"call",cJSON_CreateString(call));
+        char *json=cJSON_PrintUnformatted(root); std::string error;
+        const bool supported=spell==SPELL_CALL_LIGHTNING && !strcmp(call,"spell");
+        assert(studio_abilities_load(json,error)==supported);
+        cJSON_free(json); cJSON_Delete(root);
+        trigger.actions[0].num=124;
+        if(!supported) {
+            assert(error.find("call mode")!=std::string::npos);
+            assert(catalog.count(123)==1 && !catalog.count(124) && publications==1);
+        }
+        s.fire(); advance();
+        assert(debits==(supported?1:0) && mana_reserve==(supported?0:1000));
+        assert(cooldowns.size()==(supported?1:0) && calls.size()==(supported?1:0));
+        if(supported) assert(calls[0].type==SPELL_TYPE_SPELL && !calls[0].target);
+    }
+}
 static void multi_effect_lifetime() {
     for(int transition:{1,2,4,5}) {
         studio_scene s;
@@ -252,7 +281,7 @@ static void parser() {
 }
 int main() {
     nevent_bind_game_thread(); ne_dead_event_pool=&test_pool; fake_clock_ns=1000000000ULL; ne_events();
-    bridge_and_payment(); reload_and_targets(); multi_effect_lifetime(); parser();
+    bridge_and_payment(); reload_and_targets(); gate_lightning_admission(); multi_effect_lifetime(); parser();
     std::puts("Studio abilities: parser, original identities, legacy precedence, payment, cooldown, reload and targets passed");
 }
 '''
@@ -271,9 +300,9 @@ with tempfile.TemporaryDirectory(prefix="duris-studio-runtime-") as directory:
     harness = harness.replace("// INSERT_FIRE", function(studio,"static int sp_fire("))
     harness = harness.replace("// INSERT_OBJECT_BRIDGE", function(studio,"int studioproc_obj("))
     source.write_text(platform+fixture+boundary+harness.replace("INSERT_JSON",json.dumps(sample)))
-    subprocess.run(["g++", "-std=c++20", "-O1", "-g", "-D__NO_MYSQL__", "-ffunction-sections", "-fdata-sections",
+    subprocess.run(["g++", "-std=c++20", "-O1", "-g", "-ffunction-sections", "-fdata-sections",
                     "-fsanitize=address,undefined", "-fno-omit-frame-pointer", "-pthread", "-no-pie",
-                    "-I"+str(ROOT / "src"), str(source), str(ROOT / "src/persistence/latency_trace.c"),
+                    "-I"+str(ROOT / "src"), "-I/usr/include/mysql", str(source), str(ROOT / "src/persistence/latency_trace.c"),
                     str(ROOT / "src/item/studio_ability_model.c"), "-lcjson", "-Wl,--gc-sections", str(HARNESS_STUBS), "-o", str(binary)], check=True)
     subprocess.run([str(binary)], check=True, env=dict(os.environ,
         ASAN_OPTIONS="detect_leaks=1:halt_on_error=1", UBSAN_OPTIONS="halt_on_error=1:print_stacktrace=1",

@@ -15,7 +15,7 @@ import signal
 import subprocess
 import tempfile
 
-import test_flatfile_combat_journey as journey
+import test_mariadb_combat_journey as journey
 from test_flight_network_journey import authority, command
 from run_racial_pulse_journey import paged
 from run_world_quest_dual_backend import setup_run_root, wait_for_boot
@@ -34,7 +34,7 @@ def run(binary, evidence_path):
         runtime = Path(tmp)
         _, critical, output_path = setup_run_root(runtime)
         process, clients = None, []
-        with authority('flatfile', runtime) as (env, _), output_path.open('w') as output:
+        with authority('mariadb', runtime) as (env, sql), output_path.open('w') as output:
             plain, tls, websocket = journey.available_ports()
             env.update(CRITICAL_COMMAND_JOURNAL_DIR=str(critical), DURIS_TLS_PORT=str(tls),
                        DURIS_WEBSOCKET_PORT=str(websocket),
@@ -126,9 +126,9 @@ def run(binary, evidence_path):
                     journey.create_character(client, expected_room=None, account=account,
                                              character=name, email=name.lower() + '@example.invalid')
                     client.send('save')
-                    client.expect('Save complete for ' + name + '.', timeout=60)
+                    client.expect('Saving ' + name + '.', timeout=60)
                 stop()
-                journey.make_overlord(Path(env['FLATFILE_STATE_DIR']), GOD)
+                journey.make_overlord(sql, GOD)
                 boot()
                 god, player = login(GOD, GOD_ACCOUNT), login(PLAYER, ACCOUNT)
                 cmd(god, 'vis 0')
@@ -283,7 +283,7 @@ def run(binary, evidence_path):
 
                 visit(300000)
                 player.send('save')
-                player.expect(f'Save complete for {PLAYER}.', timeout=60)
+                player.expect(f'Saving {PLAYER}.', timeout=60)
                 stop()
                 boot()
                 god, player = login(GOD, GOD_ACCOUNT), login(PLAYER, ACCOUNT)

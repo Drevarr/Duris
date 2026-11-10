@@ -9,11 +9,13 @@ import re
 import subprocess
 
 from _paths import ROOT, HARNESS_STUBS, extract_function, source
+from _innate_numbers import with_innate_numbers
 
 prelude = r'''
 #include "core/prototypes.h"
 #include "core/utils.h"
 #include "magic/spells.h"
+#include "abilities/abilities.h"
 #include "classes/necromancy.h"
 #include "combat/damage.h"
 #include "combat/dam_mods.h"
@@ -24,6 +26,8 @@ prelude = r'''
 #include "world/buildings.h"
 #include "world/events.h"
 #include "player/pet_restore_runtime.h"
+#include "persistence/persistence_checkpoint.h"
+#include "redis/redis_floor_runtime.h"
 #include "net/comm.h"
 #include <cassert>
 #include <cstring>
@@ -46,13 +50,15 @@ static std::vector<int> delays;
 static unsigned rng=1;
 static int variant, draws, infuse, delivered_damage, blind_count, immolate_count, ward;
 static uint damage_flags;
-static bool saved, missing, staff;
+static bool saved, missing, staff, unholy, shadows;
+static int died, unlinked;
 static P_char owner;
 int GET_CLASS(P_char ch,uint cls) { return (ch->player.m_class&cls)!=0; }
 int GET_CHAR_SKILL_P(P_char,int id) { return id==SKILL_INFUSE_LIFE?infuse:0; }
-bool has_innate(P_char ch,int id) { return id==INNATE_FIRE_AURA && GET_RACE(ch)==RACE_F_ELEMENTAL; }
+bool has_innate(P_char ch,int id) { return (id==INNATE_UNHOLY_ALLIANCE && unholy) || (id==INNATE_FIRE_AURA && GET_RACE(ch)==RACE_F_ELEMENTAL); }
 int number(int low,int high) { ++draws; rng=rng*1664525+1013904223; return low==0&&high==2?variant:low+int(rng%unsigned(high-low+1)); }
 int dice(int count,int sides) { int result=0; while(count--) result+=number(1,sides); return result; }
+const Rolls live_rolls = { dice, number };
 int BOUNDED(int low,int value,int high) { return std::max(low,std::min(value,high)); }
 int STAT_INDEX(int) { return 10; }
 float get_property(const char *,double fallback) { return fallback; }
@@ -69,7 +75,15 @@ bool blind(P_char,P_char,int) { ++blind_count; return true; }
 void spell_immolate(int,P_char,char *,int,P_char,P_obj) { ++immolate_count; }
 bool ac_can_see(P_char,P_char,bool) { return true; }
 P_char get_linked_char(P_char ch,ush_int type) { return type==LNK_PET?ch->following:nullptr; }
-P_obj get_globe(P_char) { return nullptr; }
+P_obj get_globe(P_char) { static obj_data globe{}; return shadows ? &globe : nullptr; }
+void hold_durable_pet_items(P_char) {}
+void unequip_all(P_char) {}
+void obj_from_char(P_obj) { assert(false); }
+void obj_to_room(P_obj,int) { assert(false); }
+void redis_log_floor_drop(P_obj,int) { assert(false); }
+void mark_player_dirty_components(int,player_component_mask_t) {}
+void stop_follower(P_char pet) { ++unlinked; pet->following=nullptr; pet->specials.affected_by &= ~AFF_CHARM; }
+void die(P_char ch,P_char killer) { assert(ch==killer); ++died; }
 void remove_plushit_bits(P_char) {}
 void MonkSetSpecialDie(P_char ch) { ch->points.damnodice=3; ch->points.damsizedice=7; }
 bool has_air_staff_arti(P_char) { return staff; }
@@ -84,7 +98,6 @@ affected_type *affect_to_char(P_char ch,affected_type *af) {
 void apply_achievement(P_char mob,int type) { auto *af=new affected_type{}; af->type=type; af->duration=-1; af->next=mob->affected; mob->affected=af; }
 void add_follower(P_char mob,P_char ch) { auto *follow=new follow_type{}; follow->follower=mob; follow->next=ch->followers; ch->followers=follow; mob->following=ch; }
 void MobStartFight(P_char,P_char) {}
-void event_pet_death(P_char,P_char,P_obj,void *) {}
 nevent_schedule_result add_event(event_func,int delay,P_char,P_char,P_obj,int,const void *,int) { delays.push_back(delay); return {}; }
 char *str_dup(const char *text) { auto *p=strdup(text); assert(strings.insert(p).second); return p; }
 void str_free(const char *text) { assert(strings.erase(text)==1); free(const_cast<char *>(text)); }
@@ -121,6 +134,8 @@ functions = [
     ('affects.c','bool affected_by_spell('),
     ('magic.c','const char *elemental_summon_failure_message('),
     ('magic.c','const char *elemental_form_failure_message('),
+    *(('magic.c', f'static int fire_form_{number}(')
+      for number in ('duration', 'armor_class', 'strength', 'dexterity', 'agility', 'constitution')),
     ('magic.c','void spell_fire_form('),
     ('magic.c','static void make_fire_mephit('),
     ('magic.c','bool can_conjure_lesser_elem('),
@@ -132,17 +147,48 @@ functions = [
     ('mobact.c','void clearMemory('),
     ('necromancy.c','int setup_pet('),
     ('necromancy.c','void schedule_pet_death('),
+    ('necromancy.c','void charm_broken('),
+    ('necromancy.c','void event_pet_death('),
     ('pet_restore_runtime.c','void summoned_pet_mark('),
     ('pet_restore_runtime.c','bool summoned_pet_capture('),
     ('pet_restore_runtime.c','bool summoned_pet_apply('),
     ('pet_restore_runtime.c','void summoned_pet_restore_lifetime('),
     ('magic.c','static void schedule_elemental_death('),
+    ('magic.c','static int conjure_elemental_charisma('),
+    ('magic.c','static bool conjure_refused_to_summoner('),
+    ('magic.c','static int conjure_elemental_stronger_level('),
+    ('magic.c','static int conjure_elemental_weaker_level('),
+    ('magic.c','static int conjure_elemental_level('),
+    ('magic.c','static int conjure_elemental_hit_points('),
+    ('magic.c','static int conjure_elemental_roll_bonus('),
+    ('magic.c','static int conjure_elemental_home_hit_points('),
+    ('magic.c','static int conjure_elemental_home_roll_bonus('),
     ('magic.c','void spell_conjour_elemental('),
     ('magic.c','void conjure_specialized('),
+    ('magic.c','static int conjure_greater_elemental_level('),
+    ('magic.c','static int conjure_greater_elemental_hit_points('),
+    ('magic.c','static int conjure_greater_elemental_hitroll('),
+    ('magic.c','static int conjure_greater_elemental_damroll('),
     ('magic.c','void spell_conjour_greater_elemental('),
+    ('magic.c','static int fireball_damage('),
+    ('magic.c','static int fireball_failed_save('),
+    ('magic.c','static bool fireball_passes_globes('),
     ('magic.c','void spell_fireball('),
+    ('magic.c','static int solar_flare_damage('),
+    ('magic.c','static bool solar_flare_boosted('),
+    ('magic.c','static int solar_flare_boost('),
+    ('magic.c','static int solar_flare_blindness('),
+    ('magic.c','static int solar_flare_blind_roll('),
+    ('magic.c','static int solar_flare_immolate_roll('),
     ('magic.c','void spell_solar_flare('),
 ]
+ether = source('ethermancer.c').read_text()
+# Charm lengths are game ticks: no summon may count them as real minutes.
+assert '(duration + 1) * 60 * 4' not in source('magic.c').read_text(errors='replace') + ether
+functions += [('ethermancer.c', match.group()) for match in re.finditer(
+    r'^static int (?:conjured_elemental_|conjure_air_|conjure_void_|conjure_ice_)[^\n]+', ether, re.M)]
+functions += [('ethermancer.c', 'void '+name+'(') for name in
+              ('spell_conjure_air', 'spell_conjure_void_elemental', 'spell_conjure_ice_elemental')]
 damage_source = extract_function('fight.c','int spell_damage(')
 absorb = damage_source[damage_source.index('\tif (type == SPLDAM_FIRE'):damage_source.index('\tif (type == SPLDAM_COLD')]
 memory = damage_source[damage_source.index('\t// Training dummies are deliberately'):damage_source.index('\n\t///////\n\t// Special Conditions',damage_source.index('\t// Training dummies are deliberately'))]
@@ -178,7 +224,7 @@ start=mods.index('MAKE_DAM_MOD_PRED(){ if (damageType != SPLDAM_COLD) return;')
 opening=mods.index('{',start); depth=1; end=opening+1
 while depth:
     depth+=(mods[end]=='{')-(mods[end]=='}'); end+=1
-cold='dam_mod_predicate cold_response = '+mods[start:end]+';\n'
+cold=extract_function('dam_mods.c','static double fire_race_cold_mod(')+'\ndam_mod_predicate cold_response = '+mods[start:end]+';\n'
 
 driver = r'''
 static void clear(P_char ch) {
@@ -213,6 +259,15 @@ static void roundtrip(P_char pet,P_char caster) {
     pet_restore_state state; assert(pet_restore_state_decode(encoded,&state));
     assert(summoned_pet_matches_prototype(state.kind,GET_VNUM(pet)));
     assert(state.charm_expires_at>time(nullptr) && state.death_expires_at>time(nullptr));
+    auto *charm = pet->affected;
+    while (charm && charm->type != SPELL_CHARM_PERSON) charm = charm->next;
+    assert(charm && charm->duration > 0);
+    const int charm_pulses = charm->duration * PULSES_IN_TICK;
+    assert(delays.back() >= charm_pulses + 2 * WAIT_MIN);
+    assert(delays.back() <= charm_pulses + 11 * WAIT_MIN);
+    const auto remaining = state.charm_expires_at - time(nullptr);
+    assert(remaining <= charm->duration * SECS_PER_MUD_HOUR);
+    assert(remaining >= charm->duration * SECS_PER_MUD_HOUR - 1);
     auto *restored=read_mobile(GET_VNUM(pet),REAL);
     assert(summoned_pet_apply(restored,state)); recalc_intrinsic(restored);
     assert(restored->specials.affected_by2==pet->specials.affected_by2);
@@ -224,6 +279,9 @@ static void roundtrip(P_char pet,P_char caster) {
     const auto before=delays;
     summoned_pet_restore_lifetime(restored,caster,state);
     assert(restored->only.npc->pet_charm_expires_at==state.charm_expires_at);
+    auto *restored_charm = restored->affected;
+    while (restored_charm && restored_charm->type != SPELL_CHARM_PERSON) restored_charm = restored_charm->next;
+    assert(restored_charm && restored_charm->duration == charm->duration);
     assert(restored->only.npc->pet_death_expires_at==state.death_expires_at);
     assert(!strcmp(restored->player.name,pet->player.name));
     assert(delays.size()==before.size()+1 && delays.back()>0);
@@ -255,6 +313,36 @@ int main() {
         roundtrip(pets[0],&fire);
         clear(&fire);
     }
+    // Exercise every conjured-elemental handler with finite control and both
+    // permanent-charm exceptions. Advance through control loss and cleanup.
+    for (auto summon : {spell_conjour_elemental, spell_conjour_greater_elemental,
+                        spell_conjure_air, spell_conjure_void_elemental, spell_conjure_ice_elemental})
+      for (bool specialized : {false,true}) for (int permanent : {0,1,2,3}) {
+        npc_only_data npc_owner{};
+        fire.specials.act=permanent==3 ? ACT_ISNPC : 0;
+        if(permanent==3) fire.only.npc=&npc_owner; else fire.only.pc=&pc;
+        fire.player.m_class = summon==spell_conjure_air || summon==spell_conjure_void_elemental || summon==spell_conjure_ice_elemental ? CLASS_ETHERMANCER : CLASS_CONJURER;
+        fire.player.spec = !specialized ? 0 : fire.player.m_class==CLASS_CONJURER ? SPEC_FIRE : summon==spell_conjure_air ? SPEC_TEMPESTMAGUS : summon==spell_conjure_void_elemental ? SPEC_STARMAGUS : SPEC_FROSTMAGUS;
+        unholy=permanent==1; shadows=permanent==2; rng=215; staff=true;
+        char plain[]=""; summon(56,&fire,plain,0,nullptr,nullptr);
+        assert(pets.size()==1 && fire.followers && pets[0]->following==&fire);
+        auto *pet=pets[0]; auto *charm=get_spell_from_char(pet,SPELL_CHARM_PERSON);
+        assert(charm);
+        if(permanent) { assert(charm->duration==-1 && delays.empty()); }
+        else {
+          const int charm_pulses=charm->duration * PULSES_IN_TICK;
+          assert(delays.size()==1 && delays[0]>=charm_pulses+2*WAIT_MIN && delays[0]<=charm_pulses+11*WAIT_MIN);
+          const int cleanup=delays[0]; died=unlinked=0;
+          char_link_data link{}; link.type=LNK_PET; link.linking=pet; link.linked=&fire;
+          charm_broken(&link);
+          assert(unlinked==1 && !pet->following && !died && delays.size()==1);
+          assert(cleanup>charm_pulses);
+          event_pet_death(pet,nullptr,nullptr,nullptr); assert(died==1);
+        }
+        clear(&fire);
+      }
+    unholy=shadows=staff=false; fire.specials.act=0; fire.only.pc=&pc;
+    fire.player.m_class=CLASS_CONJURER; fire.player.spec=SPEC_FIRE;
     // Actual cap helpers see the same elemental identities in both modes.
     char option[]="mephit";
     for(int i=0;i<3;++i) spell_conjour_elemental(56,&fire,option,0,nullptr,nullptr);
@@ -315,7 +403,7 @@ int main() {
 
 build=ROOT/'bin/tests/conjurer-fire'; build.mkdir(parents=True,exist_ok=True)
 cpp,binary=build/'harness.cpp',build/'harness'
-cpp.write_text(prelude+'\n'.join(extract_function(file,sig) for file,sig in functions)+damage_path+retaliation+recalc+cold+driver)
+cpp.write_text(with_innate_numbers(prelude+'\n'.join(extract_function(file,sig) for file,sig in functions)+damage_path+retaliation+recalc+cold+driver))
 subprocess.run(['g++','-std=c++20','-g','-ffunction-sections','-fdata-sections','-fsanitize=address,undefined',
                 '-fno-omit-frame-pointer','-fno-pie','-no-pie','-I'+str(ROOT/'src'),str(cpp),str(HARNESS_STUBS),
                 str(ROOT/'src/player/pet_restore_state.c'),

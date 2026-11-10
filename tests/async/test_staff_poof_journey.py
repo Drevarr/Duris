@@ -10,7 +10,7 @@ import subprocess
 import tempfile
 import time
 
-import test_flatfile_combat_journey as journey
+import test_mariadb_combat_journey as journey
 from test_flight_network_journey import authority, command
 
 ROOT = journey.ROOT
@@ -69,7 +69,7 @@ def run(server):
 
             def save(client, name=STAFF):
                 client.send('save')
-                client.expect('Save complete for ' + name + '.', timeout=30)
+                client.expect('Saving ' + name + '.', timeout=30)
                 command(client, 'look')
 
             def relog(client):

@@ -13,9 +13,11 @@ from _paths import ROOT, HARNESS_STUBS, extract_function
 
 hit = extract_function('fight.c', 'bool hit(')
 start = hit.index('\tif (!IS_FIGHTING(ch))')
-end = hit.index('\n\t/* The blind and eyeless', start)
+end = hit.index('\n\tconst auto monk_glove', start)
 hit_start = hit[start:end]
-melee = extract_function('fight.c', 'int melee_damage(')
+melee = ''.join(extract_function('fight.c', signature) for signature in (
+    'int skin_spell_deduct(', 'float iceflow_armor_melee_share(',
+    'float negative_feedback_barrier_melee_share(', 'int melee_damage('))
 start = melee.index('\tif (!IS_FIGHTING(ch)')
 end = melee.index('\n\tdragonfist = FALSE;', start)
 melee_start = melee[start:end]

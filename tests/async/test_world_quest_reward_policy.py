@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Contracts for bartender quest rewards.
 
-Rewards still come from the quest's zone, but never quest items and never the zone's most
-valuable items; each completed quest pays a personal reward batch;
+Rewards come from the quest's zone, including its most valuable items and ordinary items
+that static quests reference; each completed quest pays a personal reward batch;
 quests may be shared with four companions; and the fee is a property.
 """
 
@@ -34,87 +34,65 @@ def _run_harness(body: str, prefix: str) -> None:
         subprocess.run([str(binary)], cwd=ROOT, check=True)
 
 
-def test_value_ceiling_withholds_the_most_valuable_share() -> None:
-    _run_harness(r'''
+def test_catalog_keeps_every_source_eligible_item() -> None:
+    _run_harness(r"""
 #include "world/world_quest_policy_math.h"
-#include <climits>
-int main() {
-    // Nothing to withhold: every item is below the ceiling.
-    if (world_quest_reward_value_ceiling({}, 20) != INT_MAX) return 1;
-    if (world_quest_reward_value_ceiling({5, 9, 30}, 0) != INT_MAX) return 2;
-    // Rounded up, so a zone's single most valuable item is always withheld.
-    if (world_quest_reward_value_ceiling({40}, 20) != 40) return 3;
-    if (world_quest_reward_value_ceiling({10, 20, 30, 40, 50}, 20) != 50) return 4;
-    if (world_quest_reward_value_ceiling({10, 20, 30, 40, 50, 60}, 20) != 50) return 5;
-    // Items tied with the cheapest withheld item are withheld with it.
-    if (world_quest_reward_value_ceiling({10, 50, 50, 50, 20}, 20) != 50) return 6;
-    // 100 percent or more withholds everything: nothing is below the cheapest item.
-    if (world_quest_reward_value_ceiling({7, 3, 9}, 100) != 3) return 7;
-    if (world_quest_reward_value_ceiling({7, 3, 9}, 250) != 3) return 8;
-    // A zone whose items are all worth the same has no top tier: nothing is withheld,
-    // rather than the tie emptying the zone.
-    if (world_quest_reward_value_ceiling({100, 100, 100, 100, 100}, 20) != INT_MAX) return 9;
-    if (world_quest_reward_value_ceiling({50, 50}, 20) != INT_MAX) return 10;
-    // A cheaper item keeps the zone stocked, so the tied top tier is withheld as usual.
-    if (world_quest_reward_value_ceiling({10, 100, 100, 100, 100}, 20) != 100) return 11;
-    return 0;
-}
-''', "duris-world-quest-ceiling-")
-
-
-def test_withholding_configuration_bounds() -> None:
-    _run_harness(r'''
-#include "world/world_quest_policy_math.h"
+#include <array>
 #include <cassert>
-#include <limits>
+#include <vector>
+constexpr int TOTALLVLS = 62;
+constexpr int VIRTUAL = 0;
+struct object_data { int ivalue; bool eligible; };
+using P_obj = object_data *;
+struct object_probe_guard { P_obj value; };
+struct quest_reward_profile { int vnum = 0; int ivalue = 0; };
+struct quest_zone_profile {
+    std::vector<quest_reward_profile> rewards;
+    std::vector<int> reward_vnums;
+    std::array<std::vector<int>, TOTALLVLS> reward_vnums_by_level;
+    std::array<int, TOTALLVLS> reward_count{};
+    std::array<double, TOTALLVLS> reward_average{};
+};
+struct index_entry { int virtual_number; };
+// Zone 0 has tied top-value items and one the source filter rejects; zone 1 has one item.
+static object_data objects[] = {{10, true}, {40, true}, {40, true}, {90, false}, {25, true}};
+static index_entry obj_index[] = {{100}, {101}, {102}, {103}, {200}};
+static int top_of_objt = 4;
+static std::vector<quest_zone_profile> quest_zones(2);
+static int zone_for_vnum(int vnum) { return vnum / 100 - 1; }
+static P_obj read_object(int vnum, int) { return &objects[vnum >= 200 ? 4 : vnum - 100]; }
+static bool source_eligible_reward(P_obj obj) { return obj->eligible; }
+static int itemvalue(P_obj obj) { return obj->ivalue; }
+""" + extract_function("world/world_quest_policy.c", "void load_reward_profiles(") + r"""
 int main() {
-    for (int percent = 5; percent <= 25; ++percent)
-        assert(world_quest_reward_withheld_percent(percent) == percent);
-    assert(world_quest_reward_withheld_percent(-100) == 5);
-    assert(world_quest_reward_withheld_percent(0) == 5);
-    assert(world_quest_reward_withheld_percent(100) == 25);
-    assert(world_quest_reward_withheld_percent(17.9) == 17);
-    assert(world_quest_reward_withheld_percent(4.9) == 5);
-    assert(world_quest_reward_withheld_percent(std::numeric_limits<double>::max()) == 25);
-    assert(world_quest_reward_withheld_percent(std::numeric_limits<double>::infinity()) == 20);
-    assert(world_quest_reward_withheld_percent(-std::numeric_limits<double>::infinity()) == 20);
-    assert(world_quest_reward_withheld_percent(std::numeric_limits<double>::quiet_NaN()) == 20);
-    std::vector<int> values;
-    for (int value = 1; value <= 20; ++value) values.push_back(value);
-    assert(world_quest_reward_value_ceiling(values, 5) == 20);
-    assert(world_quest_reward_value_ceiling(values, 20) == 17);
-    assert(world_quest_reward_value_ceiling(values, 25) == 16);
+    load_reward_profiles();
+    assert((quest_zones[0].reward_vnums == std::vector<int>{100, 101, 102}));
+    assert((quest_zones[1].reward_vnums == std::vector<int>{200}));
+    // The floor still applies: only the tied 40s satisfy 2 * value >= 61.
+    assert((quest_zones[0].reward_vnums_by_level[61] == std::vector<int>{101, 102}));
+    assert(quest_zones[0].reward_count[61] == 2 && quest_zones[0].reward_average[61] == 40);
+    assert(quest_zones[0].reward_count[20] == 3 && quest_zones[0].reward_average[20] == 30);
+    assert(quest_zones[1].reward_count[50] == 1 && quest_zones[1].reward_count[51] == 0);
 }
-''', "duris-world-quest-withholding-")
+""", "duris-world-quest-catalog-")
 
 
-def test_catalog_never_offers_quest_items() -> None:
-    collect = extract_function("world/world_quest_policy.c",
-                               "std::unordered_set<int> collect_quest_item_vnums(")
-    assert "complete->receive" in collect and "complete->give" in collect
-    assert collect.count("goal->goal_type == QUEST_GOAL_ITEM") == 2
-    load = extract_function("world/world_quest_policy.c", "void load_reward_profiles(")
-    assert "collect_quest_item_vnums()" in load
-    eligible = load.index("if (!source_eligible_reward(probe.value))")
-    excluded = load.index("if (quest_items.count(obj_index[rnum].virtual_number))")
-    pooled = load.index("quest_zones[zone].rewards.push_back(profile);")
-    assert eligible < excluded < pooled
+def test_longstanding_source_exclusions_remain() -> None:
+    eligible = extract_function("world/world_quest_policy.c", "bool source_eligible_reward(")
+    for exclusion in ("IS_OBJ_STAT2(obj, ITEM2_QUESTITEM)", "IS_ARTIFACT(obj)",
+                      'isname("_noquest_", obj->name)', "IS_SET(obj->extra_flags, ITEM_NORENT)",
+                      # A mortal drawing one of these fails the whole reward batch.
+                      "IS_OBJ_STAT2(obj, ITEM2_CRUMBLELOOT)"):
+        assert exclusion in eligible, exclusion
 
 
-def test_catalog_withholds_top_value_items_before_pools_and_scores() -> None:
-    load = extract_function("world/world_quest_policy.c", "void load_reward_profiles(")
-    assert '"world.quest.reward.top.withheld.percent", 20.000' in load
-    assert "world_quest_reward_withheld_percent(configured)" in load
-    ceiling = load.index("world_quest_reward_value_ceiling(values, withheld.percent)")
-    assert "if (reward.ivalue >= ceiling)" in load
-    # Unleveled pool, per-level pools and the zone scores' inputs all come after it.
-    assert ceiling < load.index("zone.reward_vnums.push_back(reward.vnum);")
-    assert ceiling < load.index("zone.reward_vnums_by_level[level].push_back(reward.vnum);")
-    first_loop = load[: load.index("world_quest_reward_value_ceiling")]
-    assert "reward_vnums.push_back" not in first_loop
+def test_removed_restrictions_stay_removed() -> None:
     policy = source("world/world_quest_policy.c").read_text()
-    assert policy.index("load_reward_profiles(withheld);") < policy.index("load_zone_scores();")
-    assert "withheld_quest_items=%zu" in policy and "withheld_top_value=%zu" in policy
+    assert "collect_quest_item_vnums" not in policy and "quest_index" not in policy
+    assert "withheld" not in policy
+    assert "withheld" not in source("world/world_quest_policy_math.h").read_text()
+    assert "world.quest.reward.top.withheld.percent" not in PROPERTIES
+    assert policy.index("load_reward_profiles();") < policy.index("load_zone_scores();")
 
 
 def test_nofear_block_reads_the_fourth_affect_field() -> None:
@@ -156,30 +134,40 @@ def test_independent_bonus_rolls() -> None:
 #include <cmath>
 #include <climits>
 static unsigned outcomes = 0;
-static int calls = 0, roll = 11;
+static int calls = 0, expected_high = 0, fixed = 0;
 int number(int low, int high) {
-    assert(low == 1 && high == 100);
-    return (outcomes >> calls++) & 1 ? 10 : roll;
+    assert(low == 1 && high == expected_high);
+    if (fixed) { ++calls; return fixed; }
+    return (outcomes >> calls++) & 1 ? 1 : high;
 }
 ''' + extract_function("world_quest.c", "static int world_quest_roll_item_count(") + r'''
+// Enumerates every roll sequence, so the distribution is exact rather than sampled.
+static void check_quota(int quota) {
+    const double p=1.0/(quota+1);
+    double mass=0, mean=0;
+    expected_high=quota+1;
+    for (outcomes=0; outcomes<(1u<<(quota-1)); ++outcomes) {
+        calls=0;
+        const int count=world_quest_roll_item_count(quota);
+        const int successes=__builtin_popcount(outcomes);
+        assert(calls==quota-1 && count==1+successes && count>=1 && count<=quota);
+        const double probability=std::pow(p,successes)*std::pow(1-p,quota-1-successes);
+        mass+=probability; mean+=count*probability;
+    }
+    assert(std::abs(mass-1)<1e-12);
+    assert(std::abs(mean-2.0*quota/(quota+1))<1e-12);
+}
 int main() {
-    assert(world_quest_roll_item_count(1) == 1 && calls == 0);
+    for (int quota=1; quota<=9; ++quota) check_quota(quota);
+    check_quota(12);
+    expected_high=0;
+    calls=0;
     for (int invalid : {0, -1, INT_MAX})
         assert(world_quest_roll_item_count(invalid) == 0 && calls == 0);
-    double mass=0, mean=0, one=0;
-    for (outcomes=0; outcomes<256; ++outcomes) {
-        calls=0; roll=11;
-        int count=world_quest_roll_item_count(9);
-        assert(calls==8 && count>=1 && count<=9);
-        int successes=__builtin_popcount(outcomes);
-        assert(count==1+successes);
-        double probability=std::pow(0.1,successes)*std::pow(0.9,8-successes);
-        mass+=probability; mean+=count*probability;
-        if (count==1) one+=probability;
-    }
-    assert(std::abs(mass-1)<1e-12 && std::abs(mean-1.8)<1e-12);
-    assert(std::abs(one-0.43046721)<1e-12);
-    outcomes=0; calls=0; roll=10;
+    // Only an exact 1 is a bonus: 2 at the same quota pays nothing, and all 1s pay every item.
+    expected_high=19; fixed=2; calls=0;
+    assert(world_quest_roll_item_count(18)==1 && calls==17);
+    fixed=1; calls=0;
     assert(world_quest_roll_item_count(18)==18 && calls==17);
 }
 ''', "duris-world-quest-bonus-")
@@ -210,17 +198,15 @@ def test_bartender_fee_is_a_property() -> None:
 def test_properties_ship_the_documented_defaults() -> None:
     section = PROPERTIES[PROPERTIES.index("[worldQuest]"):]
     section = section[: section.index("\n[", 1)].splitlines()
-    for line in ("world.quest.share.max=4.000", "world.quest.cost.per.level=20.000",
-                 "world.quest.reward.top.withheld.percent=5.000"):
+    for line in ("world.quest.share.max=4.000", "world.quest.cost.per.level=20.000"):
         assert line in section, line
 
 
 if __name__ == "__main__":
     tests = [
-        test_value_ceiling_withholds_the_most_valuable_share,
-        test_withholding_configuration_bounds,
-        test_catalog_never_offers_quest_items,
-        test_catalog_withholds_top_value_items_before_pools_and_scores,
+        test_catalog_keeps_every_source_eligible_item,
+        test_longstanding_source_exclusions_remain,
+        test_removed_restrictions_stay_removed,
         test_nofear_block_reads_the_fourth_affect_field,
         test_kill_quests_pay_a_batch_on_completion,
         test_independent_bonus_rolls,

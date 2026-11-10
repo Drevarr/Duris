@@ -38,7 +38,6 @@
  * not drag the guild or world headers into unrelated translation units. */
 struct char_data;
 
-#ifndef __NO_MYSQL__
 #include "sql/sql_work.h"
 #include <memory>
 #include <string>
@@ -52,7 +51,6 @@ bool kingdom_queue_guild_save(int assoc_id, std::vector<std::string> statements,
 			      std::shared_ptr<sql_write_receipt> receipt);
 sql_work kingdom_guild_save_work(int assoc_id, std::vector<std::string> statements);
 void kingdom_guild_save_completed(int assoc_id, const std::shared_ptr<sql_write_receipt> &receipt);
-#endif
 
 /* ------------------------------------------------------------------ *
  * Lifecycle -- called from the boot and shutdown paths
@@ -61,6 +59,9 @@ void kingdom_guild_save_completed(int assoc_id, const std::shared_ptr<sql_write_
 /* Load config and persisted realms, and build the in-memory index. Safe to
  * call when the feature is disabled: it reads the config, logs, and returns. */
 void kingdom_initialize(void);
+// Read config and bind object callbacks only, assuming a healthy configured boot.
+// Offline valuation uses this without loading realms, objects, or scheduled work.
+void kingdom_initialize_object_bindings(void);
 
 /* Release everything. Idempotent. */
 void kingdom_shutdown(void);

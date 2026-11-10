@@ -12,65 +12,58 @@ ROOT = Path(__file__).resolve().parents[2]
 HARNESS = r'''
 #include "item/item_ownership_runtime.h"
 #include "economy/collector_command.h"
-#include "economy/shop_trade_command.h"
+#include "sql/item_owner_rows.h"
+#include "persistence/dupe_log.h"
+#include <cstdlib>
+#include <cstring>
 
 #include <cassert>
 
-// SHOP_PUBLICATION
+static int rejected_rows;
+void dupe_log_item(const char *event, uint64_t, int32_t,
+                   const item_owner_identity &, const item_owner_identity &)
+{
+    assert(!strcmp(event, "load_skipped"));
+    ++rejected_rows;
+}
+/* SQL_ROW_HELPERS */
 
 int main()
 {
-	// Ordinary sale after unseen handoffs, followed by buyback. Exercise the
-	// actual shop adapter and actual cache, both empty and misleadingly in step.
-	for (bool cached : {false, true}) {
-		item_ownership_runtime_reset();
-		shop_trade_payload sale = {};
-		sale.action = shop_trade_action::sell_store;
-		sale.player_pid = 42; sale.shop_id = 7;
-		sale.selected_item_uid = sale.target_root_item_uid = 400;
-		sale.item_count = 1;
-		sale.items[0] = {400,400,0,1,800,item_custody_state::active};
-		if (cached) assert(item_ownership_runtime_hydrate(
-			{400,400,0,{item_owner_type::player,42,0},1,1,800,item_custody_state::active}));
-		shop_trade_result sold = {};
-		sold.action = sale.action; sold.item_count = 1;
-		sold.player_owner_revision = 8; sold.counterparty_owner_revision = 2;
-		sold.item_uids[0] = 400; sold.item_revisions[0] = 9;
-		assert(publish_ownership(sale,sold));
-		item_ownership_runtime_entry entry = {};
-		assert(item_ownership_runtime_lookup(400,&entry) && entry.item_revision == 9 &&
-		       entry.owner.type == item_owner_type::shopkeeper && entry.owner.id == 8);
-		sale.action = shop_trade_action::buy_existing;
-		sale.items[0].expected_item_revision = 9;
-		sold.action = sale.action; sold.item_revisions[0] = 10;
-		sold.player_owner_revision = 9; sold.counterparty_owner_revision = 3;
-		assert(publish_ownership(sale,sold));
-		assert(item_ownership_runtime_lookup(400,&entry) && entry.item_revision == 10 &&
-		       entry.owner.type == item_owner_type::player && entry.owner.id == 42);
-	}
-	// A stocked container purchase is a supported multi-item boundary. Its
-	// descendants keep their own revisions rather than inheriting the maximum.
-	item_ownership_runtime_reset();
-	{
-		const item_owner_identity shop = {item_owner_type::shopkeeper,8,0};
-		assert(item_ownership_runtime_hydrate({400,400,0,shop,8,1,800,item_custody_state::active}));
-		assert(item_ownership_runtime_hydrate({401,400,400,shop,2,1,801,item_custody_state::active}));
-		shop_trade_payload buy = {};
-		buy.action = shop_trade_action::buy_existing; buy.player_pid = 42; buy.shop_id = 7;
-		buy.selected_item_uid = buy.target_root_item_uid = 400; buy.item_count = 2;
-		buy.items[0] = {400,400,0,8,800,item_custody_state::active};
-		buy.items[1] = {401,400,400,2,801,item_custody_state::active};
-		shop_trade_result bought = {};
-		bought.action = buy.action; bought.item_count = 2;
-		bought.player_owner_revision = 1; bought.counterparty_owner_revision = 2;
-		bought.item_uids[0] = 400; bought.item_uids[1] = 401;
-		bought.item_revisions[0] = 9; bought.item_revisions[1] = 3;
-		assert(publish_ownership(buy,bought));
-		item_ownership_runtime_entry entry = {};
-		assert(item_ownership_runtime_lookup(400,&entry) && entry.item_revision == 9);
-		assert(item_ownership_runtime_lookup(401,&entry) && entry.item_revision == 3 &&
-		       entry.root_item_uid == 400 && entry.parent_item_uid == 400);
-	}
+    {
+        item_ownership_runtime_reset();
+        const char *row[] = {"901", "0", "1", "42", "0", "7", "100", "1", "3"};
+        assert(sql_persistence_item_owner_fields_match(901, "player", 42, 0, row));
+        item_ownership_runtime_entry loaded{};
+        assert(item_ownership_runtime_lookup(901, &loaded));
+        assert(loaded.root_item_uid == 901 && loaded.parent_item_uid == 0 &&
+               loaded.owner.type == item_owner_type::player && loaded.owner.id == 42 &&
+               loaded.owner.context_id == 0 && loaded.item_revision == 7 &&
+               loaded.vnum == 100 && loaded.state == item_custody_state::active &&
+               loaded.owner_revision == 3);
+        assert(!sql_persistence_item_owner_fields_match(901, "player", 43, 0, row));
+        assert(!sql_persistence_item_owner_fields_match(901, "player", 42, 1, row));
+        assert(rejected_rows == 2);
+        assert(!sql_persistence_item_owner_fields_match(901, "unknown", 42, 0, row));
+        // A later cache revision survives an older ordered read's publication.
+        row[5] = "8"; row[8] = "4";
+        assert(sql_persistence_item_owner_fields_match(901, "player", 42, 0, row));
+        row[5] = "7"; row[8] = "3";
+        assert(sql_persistence_item_owner_fields_match(901, "player", 42, 0, row));
+        assert(item_ownership_runtime_lookup(901, &loaded) &&
+               loaded.item_revision == 8 && loaded.owner_revision == 4);
+        // Loader acceptance of retired/unversioned/absent rows must not hydrate
+        // an active movement authority entry.
+        item_ownership_runtime_reset();
+        row[7] = "2";
+        assert(sql_persistence_item_owner_fields_match(901, "player", 42, 0, row));
+        assert(!item_ownership_runtime_lookup(901, &loaded));
+        row[7] = "1"; row[8] = nullptr;
+        assert(sql_persistence_item_owner_fields_match(901, "player", 42, 0, row));
+        assert(!item_ownership_runtime_lookup(901, &loaded));
+        assert(sql_persistence_item_owner_fields_match(901, "player", 42, 0, nullptr));
+        assert(!item_ownership_runtime_lookup(901, &loaded));
+    }
 	item_ownership_runtime_reset();
 	const item_transfer_result extended = { 100, 1, 11, 1, 6, 7, true };
 	std::array<uint8_t, ITEM_TRANSFER_RESULT_BYTES> encoded = {};
@@ -429,12 +422,15 @@ int main()
 '''
 
 
-with tempfile.TemporaryDirectory(prefix="duris-item-ownership-runtime-") as temp_dir:
+(ROOT / "bin/tests").mkdir(parents=True, exist_ok=True)
+with tempfile.TemporaryDirectory(prefix="duris-item-ownership-runtime-", dir=ROOT / "bin/tests") as temp_dir:
 	source = Path(temp_dir) / "item_ownership_runtime_test.cpp"
 	binary = Path(temp_dir) / "item_ownership_runtime_test"
-	source.write_text(HARNESS.replace("// SHOP_PUBLICATION", "\n".join(
-		extract_function("shop_trade_transaction.c", signature)
-		for signature in ("bool buying(", "bool publish_ownership("))))
+	helpers = "\n".join(extract_function("sql.c", signature) for signature in (
+        "static item_owner_type sql_persistence_owner_type(",
+        "static bool sql_persistence_owner_row_matches(",
+        "bool sql_persistence_item_owner_fields_match("))
+	source.write_text(HARNESS.replace("/* SQL_ROW_HELPERS */", helpers))
 	subprocess.run(
 		[
 			"g++",

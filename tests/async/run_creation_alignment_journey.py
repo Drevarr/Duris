@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Real creation/alignment/save/restart/relogin on disposable persistence.
 
-Run with --backend flatfile or under with_disposable_mariadb.sh for mariadb.
+Run under with_disposable_mariadb.sh with --backend mariadb.
 No checkout environment, shared account, database or running MUD is used.
 """
 import argparse
@@ -16,10 +16,14 @@ import time
 from test_character_stat_choice_journey import WebSocketClient
 from test_flight_network_journey import authority
 from run_world_quest_dual_backend import setup_run_root
-import test_flatfile_combat_journey as journey
+import test_mariadb_combat_journey as journey
 
 ROOT = journey.ROOT
 PASSWORD = journey.PASSWORD
+ARACHDRATHOS = "Arachdrathos"
+ARACHDRATHOS_ENTRY = 36329
+ARACHDRATHOS_ROOM = "The Tavern of the Decapitated Dwarves"
+HOME_FIELDS = ("hometown", "birthplace", "original_birthplace")
 SOURCES = iter(range(10, 250))
 
 
@@ -103,7 +107,7 @@ def ready(client, race):
 def save(client, name):
     message = client.command("game", "save", "text")
     deadline = time.monotonic() + 20
-    while "Save complete for " + name + "." not in json.dumps(message):
+    while "Saving " + name + "." not in json.dumps(message):
         assert time.monotonic() < deadline, message
         message = client.receive()
 
@@ -151,6 +155,7 @@ def create(server, name, race_name, class_name, alignment, *, rejects=True, expe
         created = client.command("create_character", data)
         assert created["status"] == "created" and created["alignment"] == alignment, created
         assert created["hardcore"] is False and created["newbie"] is True
+        client.enter_created_character(name)
         rooms = [m["data"]["num"] for m in client.messages if m.get("package") == "Room.Info"]
         if "Plane" in home["name"]:
             assert rooms[-1] == (91200 if alignment == "evil" and race["faction"] == "neutral" else 22800), rooms
@@ -171,7 +176,10 @@ def create(server, name, race_name, class_name, alignment, *, rejects=True, expe
 
 def browser_case(server, args, name, race, cls, alignment, *, relog=False):
     """Exercise the paired, unmodified website; only its HTTP shell is a fixture."""
-    from playwright.sync_api import sync_playwright
+    from playwright.sync_api import expect, sync_playwright
+    tiefling = race == "Tiefling"
+    hometown = ARACHDRATHOS if tiefling else "Plane of Life (Beginner Introduction)"
+    entry_room = ARACHDRATHOS_ENTRY if tiefling else 22800
     args.artifacts.mkdir(parents=True, exist_ok=True)
     with sync_playwright() as playwright:
         browser = playwright.chromium.launch(headless=True, executable_path=str(args.browser_executable) if args.browser_executable else None)
@@ -225,7 +233,7 @@ def browser_case(server, args, name, race, cls, alignment, *, relog=False):
             page.get_by_role("button", name="Create New Character", exact=True).click()
             page.get_by_role("button", name="New Player", exact=False).click()
             page.get_by_role("button", name="Next", exact=True).click()
-            if race == "Thri-Kreen":
+            if race in ("Thri-Kreen", "Tiefling"):
                 page.get_by_role("tab", name="Neutral", exact=False).click()
             page.get_by_role("button", name=race, exact=True).click()
             page.get_by_role("button", name="Next", exact=True).click()
@@ -246,7 +254,9 @@ def browser_case(server, args, name, race, cls, alignment, *, relog=False):
                 page.set_viewport_size({"width": 1280, "height": 900})
                 page.get_by_role("button", name="Next", exact=True).click()
             page.get_by_role("heading", name="Choose Your Hometown").wait_for()
-            page.get_by_role("button", name="Plane of Life", exact=False).click()
+            page.get_by_role("button", name=hometown, exact=True).click()
+            if tiefling:
+                expect(page.get_by_role("button", name="Nax", exact=True)).to_have_count(0)
             page.get_by_role("button", name="Next", exact=True).click()
             page.get_by_role("heading", name="Choose Your Stat Rolling System").wait_for()
             page.get_by_role("button", name="Next", exact=True).click()
@@ -265,9 +275,11 @@ def browser_case(server, args, name, race, cls, alignment, *, relog=False):
             page.locator("#name").fill(name)
             page.get_by_text("Name is available!", exact=True).wait_for()
             page.get_by_role("button", name="Next", exact=True).click()
+            expect(page.get_by_text(hometown, exact=True)).to_be_visible()
             page.screenshot(path=str(args.artifacts / (name + "-review.png")))
             before = server["count"]()
             page.get_by_role("button", name="Create Character", exact=True).click()
+            page.get_by_role("button", name="Enter", exact=True).click()
         field = page.get_by_placeholder("Command (↑ to repeat)")
         try:
             field.wait_for(timeout=20000)
@@ -277,16 +289,20 @@ def browser_case(server, args, name, race, cls, alignment, *, relog=False):
         field.fill("save")
         field.press("Enter")
         deadline = time.monotonic() + 20
-        while "Save complete for " + name + "." not in json.dumps(frames):
+        while "Saving " + name + "." not in json.dumps(frames):
             assert time.monotonic() < deadline, (frames[-5:], page.locator("body").inner_text())
             page.wait_for_timeout(100)
         record = server["saved"](name)
-        assert record["alignment"] == {"evil": -1000, "neutral": 0}[alignment] and record["racewar"] == 1
-        assert record["birthplace"] == record["original_birthplace"] == 22800
+        assert record["alignment"] == {"evil": -1000, "neutral": 0}[alignment]
+        assert record["racewar"] == (2 if tiefling else 1)
+        assert [record[key] for key in HOME_FIELDS] == [entry_room] * 3, record
+        rooms = [frame["data"]["num"] for frame in frames if frame.get("package") == "Room.Info"]
+        assert rooms[0] == entry_room, rooms
         if not relog:
             assert server["count"]() == before + 1
             created = next(frame for frame in frames if frame.get("type") == "create_character")
-            assert created["alignment"] == alignment and created["faction"] == "good", created
+            assert created["alignment"] == alignment and created["faction"] == ("evil" if tiefling else "good"), created
+            assert created["hometown"] == hometown, created
         relevant_errors = [error for error in errors if not error.startswith("[VUE_ROUTER_R0025]")]
         assert not relevant_errors, relevant_errors
         if errors:
@@ -303,7 +319,8 @@ def run(args):
         browser_cases = (("Webnecro", "Human", "Necromancer", "evil"),
                          ("Webdruid", "Human", "Druid", "neutral"),
                          ("Webrogue", "Human", "Rogue", "evil"),
-                         ("Webneutral", "Thri-Kreen", "Warrior", "neutral"))
+                         ("Webneutral", "Thri-Kreen", "Warrior", "neutral"),
+                         ("Webtiefling", "Tiefling", "Warrior", "evil"))
         if args.frontend_url:
             for case in browser_cases:
                 records[case[0]] = browser_case(server, args, *case)
@@ -321,14 +338,31 @@ def run(args):
                 journey.create_character(client, expected_room=None, class_name=cls,
                                          account=name, character=name, email=name + "@example.invalid", hometown="p")
                 client.send("save")
-                client.expect("Save complete for " + name + ".")
+                client.expect("Saving " + name + ".")
                 record = server["saved"](name)
                 assert record["alignment"] == alignment and record["racewar"] == 1, record
                 records[name] = record
             finally:
                 client.close()
+        client = journey.MudClient(server["plain"], source_host="127.0.0.3")
+        try:
+            journey.create_character(client, expected_room=ARACHDRATHOS_ROOM, account="Teltiefling",
+                                     character="Teltiefling", email="teltiefling@example.invalid",
+                                     race_name="f", alignment="e", hometown="A", expected_hometown=ARACHDRATHOS)
+            client.send("save")
+            client.expect("Saving Teltiefling.")
+            record = server["saved"]("Teltiefling")
+            assert record["alignment"] == -1000 and record["racewar"] == 2, record
+            assert [record[key] for key in HOME_FIELDS] == [ARACHDRATHOS_ENTRY] * 3, record
+        finally:
+            client.close()
         server["stop"]()
         server["boot"]()
+        client = journey.reconnect_character(server["plain"], expected_room=ARACHDRATHOS_ROOM,
+                                             account="Teltiefling", character="Teltiefling",
+                                             source_host="127.0.0.3")
+        client.close()
+        print("PASS Telnet Tiefling hometown, entry, persistence and reconnect", flush=True)
         # An evil-aligned Human still records good-side admission. The same
         # account cannot immediately create an evil-side Thri-kreen.
         client = websocket_client(server)
@@ -384,7 +418,7 @@ def run(args):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--backend", choices=("flatfile", "mariadb"), required=True)
+    parser.add_argument("--backend", choices=("mariadb",), required=True)
     parser.add_argument("--server", type=Path, required=True)
     parser.add_argument("--inspector", type=Path, required=True)
     parser.add_argument("--browser-executable", type=Path, help="use an installed Chromium binary")

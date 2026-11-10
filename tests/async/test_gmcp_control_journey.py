@@ -12,13 +12,12 @@ import hashlib
 import json
 from pathlib import Path
 import re
-import tempfile
 import time
 
-from test_account_recovery_journey import ACCOUNT, OLD_PASSWORD, ROOT, IsolatedServer, MudClient, build_flatfile_server, require
+from test_account_recovery_journey import ACCOUNT, OLD_PASSWORD, ROOT, IsolatedServer, MudClient, require
 from test_game_loop_session_journey import CHARACTER, create_character, reconnect_character
-from test_creation_prompt_journey import reboot, start_character, reply, finish_character_choices
-from test_flatfile_combat_journey import make_overlord
+from test_creation_prompt_journey import MENU, play_saved_character, reboot, start_character, reply, finish_character_choices
+from test_mariadb_combat_journey import make_overlord
 from test_character_stat_choice_journey import WebSocketClient
 
 
@@ -334,7 +333,7 @@ def item_journey(client):
     snapshot("eq", before)
     before = len(telnet_packets(client))
     client.send("save")
-    client.expect(f"Save complete for {CHARACTER}.")
+    client.expect(f"Saving {CHARACTER}.")
     drain(client)
     require(not any(name == "Char.Items.List" for name, _ in telnet_packets(client)[before:]),
             "ordinary save invented an item revision")
@@ -387,11 +386,11 @@ def run(binary, evidence):
             played = [data for name, data in telnet_packets(client) if name == "Duris.Session" and data["state"] == "playing"]
             require({(state["context"], state["generation"]) for state in played} == {(entry["context"], "1")}, "negotiation/preference replayed character entry")
             client.send("save")
-            client.expect(f"Save complete for {CHARACTER}.", timeout=20)
+            client.expect(f"Saving {CHARACTER}.", timeout=20)
             client.close()
             client = None
             server.shutdown()
-            make_overlord(server.state_root, CHARACTER)
+            make_overlord(server.sql, CHARACTER)
             reboot(server)
             client = MudClient(server.plain_port)
             negotiate(client)
@@ -454,14 +453,15 @@ def run(binary, evidence):
             reply(client, "y", "meet these criteria?")
             reply(client, "y", "Your selection")
             finish_character_choices(client)
-            reply(client, "y", "PRESS RETURN")
+            reply(client, "y", MENU)
+            play_saved_character(client, SECOND_CHARACTER)
             reply(client, "", "Your starter kit is ready")
             client.expect("Pos: standing >")
             wait_telnet(client, "Duris.Time", before, lambda state: state["hour"] == 10)
             reentered = wait_telnet(client, "Duris.Session", before, lambda state: state["state"] == "playing")
             require(reentered["context"] == reconnected["context"] and reentered["generation"] == "2" and reentered["character"]["name"] == SECOND_CHARACTER, "same-socket A/account/B transition has wrong identity")
             client.send("save")
-            client.expect(f"Save complete for {SECOND_CHARACTER}.")
+            client.expect(f"Saving {SECOND_CHARACTER}.")
             client.close()
             client = None
             server.shutdown()
@@ -503,9 +503,13 @@ def run(binary, evidence):
             require(websocket_entry["context"] != reentered["context"], "WebSocket reused the Telnet context")
             require(0 <= state["hour"] <= 23 and state["process"] == websocket_entry["process"], f"wrong WebSocket clock scope: {state}")
             before = len(websocket.messages)
-            send_websocket(websocket, "Core.Supports.Add", ["Char.Items 1"])
+            send_websocket(websocket, "Core.Supports.Add", ["Char.Items 1", "Char.SpellPreparation 1"])
             wait_websocket(websocket, "Duris.Capabilities", lambda value: "Char.Items" in value["supported"], after=before)
-            send_websocket(websocket, "Duris.Subscribe", ["Duris.Time 1", "Char.Items 1"])
+            send_websocket(websocket, "Duris.Subscribe",
+                           ["Duris.Time 1", "Char.Items 1", "Char.SpellPreparation 1"])
+            websocket_preparation = wait_websocket(websocket, "Char.SpellPreparation", after=before)
+            require(websocket_preparation == {"state": "complete", "estimatedSeconds": 0},
+                    "WebSocket did not receive the idle preparation snapshot")
             websocket_items = wait_websocket(websocket, "Char.Items.List", lambda value:
                 value["location"] == "inv" and value["complete"], after=before)
             require(websocket_items["context"] == websocket_entry["context"] and
@@ -539,11 +543,8 @@ def run(binary, evidence):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--server", type=Path)
+    parser.add_argument("--server", type=Path, required=True)
     parser.add_argument("--evidence", type=Path)
     args = parser.parse_args()
-    build_root = ROOT / "bin/tests"
-    build_root.mkdir(parents=True, exist_ok=True)
-    with tempfile.TemporaryDirectory(prefix="gmcp-control-", dir=build_root) as build:
-        run(args.server.resolve() if args.server else build_flatfile_server(Path(build)), args.evidence)
+    run(args.server.resolve(), args.evidence)
     print("booted GMCP control/time/session and combat state journey passed")

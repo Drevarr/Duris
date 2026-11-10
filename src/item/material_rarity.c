@@ -11,11 +11,19 @@
 #include <string.h>
 #include <sys/stat.h>
 #include <sys/types.h>
+#include <string>
+#include <openssl/evp.h>
+
+#ifndef DURIS_SOURCE_REVISION
+#define DURIS_SOURCE_REVISION "unavailable"
+#endif
 
 #include "world/db.h"
 #include "core/defines.h"
 #include "item/material_rarity.h"
 #include "item/objmisc.h"
+#include "item/item_value.h"
+#include "world/object_template.h"
 #include "core/prototypes.h"
 #include "core/structs.h"
 #include "economy/tradeskill.h"
@@ -33,6 +41,77 @@ typedef struct material_rarity_tally
 
 extern P_index obj_index;
 extern int top_of_objt;
+extern int mini_mode;
+extern int no_specials;
+
+static bool report_fingerprint(FILE *report, const char *label, const char *path, bool required)
+{
+	FILE *file = fopen(path, "rb");
+	if (!file)
+	{
+		if (!required && errno == ENOENT)
+		{
+			fprintf(report, "%s=absent\n", label);
+			return true;
+		}
+		fprintf(stderr, "material rarity report: cannot fingerprint %s: %s\n", path,
+			strerror(errno));
+		return false;
+	}
+	EVP_MD_CTX *context = EVP_MD_CTX_new();
+	bool ok = context && EVP_DigestInit_ex(context, EVP_sha256(), nullptr) == 1;
+	unsigned char buffer[8192], digest[EVP_MAX_MD_SIZE];
+	unsigned int length = 0;
+	size_t count;
+	while (ok && (count = fread(buffer, 1, sizeof(buffer), file)) != 0)
+		ok = EVP_DigestUpdate(context, buffer, count) == 1;
+	ok = ok && !ferror(file) && EVP_DigestFinal_ex(context, digest, &length) == 1;
+	if (fclose(file) != 0)
+		ok = false;
+	EVP_MD_CTX_free(context);
+	if (!ok)
+	{
+		fprintf(stderr, "material rarity report: fingerprint failed for %s\n", path);
+		return false;
+	}
+	fprintf(report, "%s=", label);
+	for (unsigned int i = 0; i < length; ++i)
+		fprintf(report, "%02x", digest[i]);
+	fputc('\n', report);
+	return true;
+}
+
+static bool report_provenance(FILE *report)
+{
+	fprintf(report, "formula_revision=%s\nsource_revision=%s\n", ITEM_VALUE_FORMULA_REVISION,
+		DURIS_SOURCE_REVISION);
+	fprintf(report, "context=configured-healthy-boot\nmini_mode=%d\nno_specials=%d\n",
+		mini_mode, no_specials);
+	bool ok = report_fingerprint(report, "binary_sha256", "/proc/self/exe", true);
+	ok = report_fingerprint(report, "objects_sha256",
+				mini_mode ? "areas_mini/mini.obj" : OBJ_FILE, top_of_objt >= 0) &&
+	     ok;
+	ok = report_fingerprint(report, "properties_sha256", "lib/duris.properties",
+				top_of_objt >= 0) &&
+	     ok;
+	ok = report_fingerprint(report, "studio_sha256", "areas/world.trg", false) && ok;
+	ok = report_fingerprint(report, "item_abilities_sha256", "lib/item_abilities.json",
+				false) &&
+	     ok;
+	ok = report_fingerprint(report, "kingdom_config_sha256", "lib/kingdom.cfg", false) && ok;
+	if (mini_mode != 1 && top_of_objt >= 0)
+	{
+		ok = report_fingerprint(report, "mobiles_sha256",
+					mini_mode ? "areas_mini/mini.mob" : MOB_FILE, true) &&
+		     ok;
+		ok = report_fingerprint(report, "rooms_sha256", WORLD_FILE, true) && ok;
+		ok = report_fingerprint(report, "zones_sha256",
+					mini_mode ? "areas_mini/mini.zon" : ZONE_FILE, true) &&
+		     ok;
+	}
+	fputc('\n', report);
+	return ok;
+}
 
 static void csv_field(FILE *file, const char *value)
 {
@@ -130,31 +209,27 @@ static int material_family_is_mapped(int material)
 	}
 }
 
-static int material_template_exists(int vnum)
+static const object_template *material_template(int vnum)
 {
-	P_obj raw = read_object(vnum, VIRTUAL);
-	if (!raw)
-		return FALSE;
-	extract_obj(raw);
-	return TRUE;
+	return cache_object_template(vnum) ? find_object_template(vnum) : nullptr;
 }
 
 static void material_template_name(int vnum, char *out, size_t out_size)
 {
-	P_obj raw = read_object(vnum, VIRTUAL);
-	if (!raw)
+	const auto *prototype = material_template(vnum);
+	if (!prototype)
 	{
 		snprintf(out, out_size, "missing material template %d", vnum);
 		return;
 	}
-	display_name(out, out_size, raw->short_description);
-	extract_obj(raw);
+	display_name(out, out_size, prototype->short_description.c_str());
 }
 
-static void write_exclusion(FILE *file, P_obj obj, int vnum, const char *reason, int ival)
+static void write_exclusion(FILE *file, const object_template *obj, int vnum, const char *reason,
+			    int ival)
 {
 	char name[MAX_STRING_LENGTH];
-	display_name(name, sizeof(name), obj->short_description);
+	display_name(name, sizeof(name), obj->short_description.c_str());
 	fprintf(file, "%d,%d,%d,", vnum, obj->material, ival);
 	csv_field(file, reason);
 	fputc(',', file);
@@ -162,9 +237,8 @@ static void write_exclusion(FILE *file, P_obj obj, int vnum, const char *reason,
 	fputc('\n', file);
 }
 
-void write_material_rarity_report(const char *output_dir)
+bool write_material_rarity_report(const char *output_dir)
 {
-	char summary_path[512], recipes_path[512], exclusions_path[512], readme_path[512];
 	char source_name[MAX_STRING_LENGTH], low_name[MAX_STRING_LENGTH],
 		high_name[MAX_STRING_LENGTH];
 	FILE *summary = NULL, *recipes = NULL, *exclusions = NULL, *readme = NULL;
@@ -172,6 +246,7 @@ void write_material_rarity_report(const char *output_dir)
 	long total_material_units = 0;
 	long qualifying_templates = 0;
 	long excluded_templates = 0;
+	bool complete = true;
 	int rnum;
 
 	if (!output_dir || !*output_dir)
@@ -180,17 +255,14 @@ void write_material_rarity_report(const char *output_dir)
 	{
 		fprintf(stderr, "material rarity report: cannot create %s: %s\n", output_dir,
 			strerror(errno));
-		return;
+		return false;
 	}
 
-	snprintf(summary_path, sizeof(summary_path), "%s/material-rarity-summary.csv", output_dir);
-	snprintf(recipes_path, sizeof(recipes_path), "%s/material-rarity-recipes.csv", output_dir);
-	snprintf(exclusions_path, sizeof(exclusions_path), "%s/material-rarity-exclusions.csv",
-		 output_dir);
-	snprintf(readme_path, sizeof(readme_path), "%s/material-rarity-README.txt", output_dir);
-
-	if (!(summary = fopen(summary_path, "w")) || !(recipes = fopen(recipes_path, "w")) ||
-	    !(exclusions = fopen(exclusions_path, "w")) || !(readme = fopen(readme_path, "w")))
+	const std::string path(output_dir);
+	if (!(summary = fopen((path + "/material-rarity-summary.csv").c_str(), "w")) ||
+	    !(recipes = fopen((path + "/material-rarity-recipes.csv").c_str(), "w")) ||
+	    !(exclusions = fopen((path + "/material-rarity-exclusions.csv").c_str(), "w")) ||
+	    !(readme = fopen((path + "/material-rarity-README.txt").c_str(), "w")))
 	{
 		fprintf(stderr, "material rarity report: cannot open output in %s: %s\n",
 			output_dir, strerror(errno));
@@ -202,7 +274,7 @@ void write_material_rarity_report(const char *output_dir)
 			fclose(exclusions);
 		if (readme)
 			fclose(readme);
-		return;
+		return false;
 	}
 
 	memset(tally, 0, sizeof(tally));
@@ -212,37 +284,39 @@ void write_material_rarity_report(const char *output_dir)
 
 	for (rnum = 0; rnum <= top_of_objt; ++rnum)
 	{
-		P_obj obj = read_object(rnum, REAL);
+		const auto *obj = material_template(obj_index[rnum].virtual_number);
 		int ival, low_vnum, high_vnum, high_quantity, low_quantity;
 		int vnum;
 
 		if (!obj)
-			continue;
+		{
+			fprintf(stderr, "material rarity report: cannot parse object template %d\n",
+				obj_index[rnum].virtual_number);
+			complete = false;
+			break;
+		}
 		vnum = obj_index[rnum].virtual_number;
-		ival = itemvalue(obj);
+		ival = itemvalue(*obj);
 		if (ival < 1)
 		{
 			write_exclusion(exclusions, obj, vnum, "nonpositive-itemvalue", ival);
 			excluded_templates++;
-			extract_obj(obj);
 			continue;
 		}
 		if (!material_family_is_mapped(obj->material))
 		{
 			write_exclusion(exclusions, obj, vnum, "unmapped-material-family", ival);
 			excluded_templates++;
-			extract_obj(obj);
 			continue;
 		}
 
-		low_vnum = get_matstart(obj);
+		low_vnum = material_start_vnum(obj->material);
 		high_vnum = low_vnum + 4;
 		if (low_vnum < MATERIAL_RARITY_MIN_VNUM || high_vnum > MATERIAL_RARITY_MAX_VNUM ||
-		    !material_template_exists(low_vnum) || !material_template_exists(high_vnum))
+		    !material_template(low_vnum) || !material_template(high_vnum))
 		{
 			write_exclusion(exclusions, obj, vnum, "missing-material-template", ival);
 			excluded_templates++;
-			extract_obj(obj);
 			continue;
 		}
 
@@ -250,7 +324,7 @@ void write_material_rarity_report(const char *output_dir)
 		 * points, with the remainder represented by lowest-quality units. */
 		high_quantity = (ival + 4) / 5;
 		low_quantity = (ival + 4) - (high_quantity * 5);
-		display_name(source_name, sizeof(source_name), obj->short_description);
+		display_name(source_name, sizeof(source_name), obj->short_description.c_str());
 		material_template_name(low_vnum, low_name, sizeof(low_name));
 		material_template_name(high_vnum, high_name, sizeof(high_name));
 
@@ -279,7 +353,6 @@ void write_material_rarity_report(const char *output_dir)
 			fputc('\n', recipes);
 		}
 		qualifying_templates++;
-		extract_obj(obj);
 	}
 
 	fprintf(summary,
@@ -308,11 +381,22 @@ void write_material_rarity_report(const char *output_dir)
 		"Scope: static object templates only. This is not reset frequency, loot probability,\n");
 	fprintf(readme, "player stock, replenishment rate, or economic scarcity.\n");
 
-	fclose(summary);
-	fclose(recipes);
-	fclose(exclusions);
-	fclose(readme);
+	bool ok = report_provenance(readme) && complete;
+	for (FILE *file : { summary, recipes, exclusions, readme })
+	{
+		const bool write_failed = ferror(file);
+		if (fclose(file) != 0 || write_failed)
+			ok = false;
+	}
+	if (!ok)
+	{
+		fprintf(stderr,
+			"material rarity report: output failed in %s; discard partial files\n",
+			output_dir);
+		return false;
+	}
 	fprintf(stderr,
 		"material rarity report: %ld qualifying templates, %ld ingredient contributions written to %s\n",
 		qualifying_templates, total_material_units, output_dir);
+	return true;
 }

@@ -4451,8 +4451,8 @@ int varon(P_obj obj, P_char ch, int cmd, char *arg)
 		act("glimpse of thought, you realize that death has won this day... ", FALSE, ch, 0,
 		    victim, TO_VICT);
 
-		act("$n points his disruptor at $N, and pulls the trigger with a grin.", TRUE, ch,
-		    0, victim, TO_NOTVICT);
+		act("$n points $s disruptor at $N, and pulls the trigger with a grin.", TRUE, ch, 0,
+		    victim, TO_NOTVICT);
 		act("The disruptor glows and blasts forth a bright beam of radiant energy.", TRUE,
 		    ch, 0, victim, TO_NOTVICT);
 		act("The beam strikes $N in the chest, who screams in unbelievable ", TRUE, ch, 0,
@@ -4464,101 +4464,16 @@ int varon(P_obj obj, P_char ch, int cmd, char *arg)
 		act("$N's body is gone, leaving only a horrible memory behind..", TRUE, ch, 0,
 		    victim, TO_NOTVICT);
 
-		die(victim, ch);
 		if (GET_LEVEL(ch) > 50)
 		{
 			statuslog(ch->player.level,
 				  "%s got wasted by Miax's cool disruptor just now, aawww.",
 				  GET_NAME(victim));
 		}
+		die(victim, ch);
 		return TRUE;
 	}
 	return FALSE;
-}
-
-/*
-   item proc
- */
-int gesen(P_obj obj, P_char ch, int cmd, char *arg)
-{
-	P_char vict;
-
-	if (cmd == CMD_SET_PERIODIC)
-	{
-		return FALSE;
-	}
-
-	vict = legacy_proc_arg<P_char>(arg);
-	if (cmd == CMD_MELEE_HIT || !IS_ALIVE(ch) || !OBJ_WORN_POS(obj, WIELD) ||
-	    obj->loc.wearing != ch || !IS_ALIVE(vict))
-	{
-		return FALSE;
-	}
-
-	// 1/10 chance.
-	if (!number(0, 9))
-	{
-		act("&+YThe hammer glows and flies from your hand, striking &n$N&+Y with a crash!\r\n"
-		    "&+yTwirling wildly, it arcs back around and returns to your hand..",
-		    FALSE, ch, obj, vict, TO_CHAR);
-		act("&+Y$n's hammer glows and flies through the air, striking &n$N&+Y with a crash!\r\n"
-		    "&+yTwirling around in the air, it arcs and returns to $n's grasp.",
-		    FALSE, ch, obj, vict, TO_ROOM);
-		spell_harm(51, ch, 0, SPELL_TYPE_SPELL, vict, 0);
-	}
-	else
-	{
-		if (!GET_OPPONENT(ch))
-		{
-			set_fighting(ch, vict);
-		}
-	}
-	// Do the normal hit damage as well.
-	if (GET_OPPONENT(ch))
-	{
-		return FALSE;
-	}
-	else
-	{
-		return TRUE;
-	}
-}
-
-int secret_door(P_obj obj, P_char ch, int cmd, char *arg)
-{
-	int dam = obj->value[1];
-	char Gbuf1[MAX_STRING_LENGTH];
-
-	/*
-	   check for periodic event calls
-	 */
-	if (cmd == CMD_SET_PERIODIC)
-		return FALSE;
-
-	if (!obj || !ch || !arg)
-		return (FALSE);
-
-	if (cmd != CMD_ENTER)
-		return (FALSE);
-
-	one_argument(arg, Gbuf1);
-	if (!isname(Gbuf1, obj->name))
-		return (FALSE);
-
-	act("You step through the $q.", FALSE, ch, obj, 0, TO_CHAR);
-	act("$n steps through the $q.", FALSE, ch, obj, 0, TO_ROOM);
-
-	if (!IS_TRUSTED(ch))
-	{
-		if (GET_HIT(ch) > dam)
-			GET_HIT(ch) -= dam;
-		else
-			GET_HIT(ch) = dam;
-		StartRegen(ch, regen_resource::hit);
-	}
-	teleport_to(ch, real_room(obj->value[0]), 0);
-
-	return (TRUE);
 }
 
 int verzanan_portal(P_obj obj, P_char ch, int cmd, char *arg)

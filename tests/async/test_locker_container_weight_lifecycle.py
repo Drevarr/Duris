@@ -29,6 +29,7 @@ handler = "\n".join(extract_function("world/handler.c", signature) for signature
     "void obj_to_obj(",
     "static void append_obj_to_list(",
     "void obj_to_obj_at_end(",
+    "void obj_from_obj_unsaved(",
     "void obj_from_obj(",
 ))
 files = "\n".join(extract_function("core/files.c", signature) for signature in (
@@ -47,7 +48,9 @@ chests = "\n".join(extract_function("item/storage_lockers.c", signature) for sig
     "bool EqApplyChest::ItemFits(",
     "bool EqAffectChest::ItemFits(",
 ))
-loader = SQL[SQL.index("#define MAX_CONTAINER_LOAD_DEPTH"):SQL.index(
+slot_loader = extract_function("sql_player.c", "static bool sql_set_item_affect(")
+instance_loader = extract_function("sql_player.c", "static void sql_restore_item_instance_fields(")
+loader = instance_loader + "\n" + slot_loader + "\n" + SQL[SQL.index("#define MAX_CONTAINER_LOAD_DEPTH"):SQL.index(
     "/* The statement that deletes the personal", SQL.index("#define MAX_CONTAINER_LOAD_DEPTH"))]
 
 harness = r'''
@@ -73,6 +76,7 @@ harness = r'''
 #include "sql/sql_work.h"
 #include "sql/sql.h"
 #include "sql/item_extra_descr_codec.h"
+#include <algorithm>
 #include <cassert>
 #include <cstdio>
 #include <cstdlib>
@@ -227,7 +231,6 @@ bool sql_persistence_item_owner_fields_match(
     unsigned long long, const char *, unsigned long long, unsigned long long, const char *const *) {
     return true;
 }
-static void sql_set_item_affects(P_obj, const std::vector<std::pair<int, int>> &) {}
 static void sql_add_item_extra_descr(P_obj, const char *, const char *, const char *, int,
                                    extra_descr_data **) {}
 
@@ -522,7 +525,7 @@ static void worn_recalculation() {
 
 static sql_row item_row(int id, int vnum, int parent, int weight, int reduction = 0) {
     sql_row row;
-    row.fields.resize(40);
+    row.fields.resize(44);
     for (auto [column, value] : std::vector<std::pair<int, int>>{
              {1, id}, {2, vnum}, {3, weight}, {8, vnum == 3 ? ITEM_TREASURE : ITEM_CONTAINER},
              {13, reduction}, {29, 7}, {30, parent}})
