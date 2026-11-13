@@ -1922,6 +1922,7 @@ char affect_total(P_char ch, int kill_ch)
 	// Add class modifiers for pulse and damage.
 	if (IS_PC(ch))
 	{
+		ch->specials.damage_mod = player_racial_damage_multiplier(ch_race);
 		if (IS_MULTICLASS_PC(ch))
 		{
 			ch->specials.base_combat_round +=
@@ -2798,10 +2799,11 @@ void obj_affect_remove(P_obj obj, struct obj_affect *af)
 void event_obj_affect(P_char, P_char, P_obj obj, void *data)
 {
 	struct obj_affect *af = *((struct obj_affect **)data);
+	int type = af->type;
 
 	obj_affect_remove(obj, af);
 
-	if (af->type == TAG_OBJ_DECAY)
+	if (type == TAG_OBJ_DECAY)
 	{
 		const char *trace = getenv("DURIS_CORPSE_TRACE");
 		if (trace && *trace && strcmp(trace, "0") != 0 && obj && obj->type == ITEM_CORPSE)
@@ -3048,8 +3050,7 @@ void initialize_links()
 	define_link(LNK_GRAPPLED, "GRAPPLED", NULL, LNKFLG_ROOM);
 	define_link(LNK_CIRCLING, "CIRCLING", NULL, LNKFLG_ROOM | LNKFLG_EXCLUSIVE);
 	define_link(LNK_SNG_HEALING, "SONG_HEALING", song_broken, LNKFLG_AFFECT | LNKFLG_ROOM);
-	define_link(LNK_DRAGOON_MOUNT, "DRAGOON_MOUNT", charm_broken,
-		    LNKFLG_AFFECT | LNKFLG_EXCLUSIVE);
+	define_link(LNK_DRAGOON_MOUNT, "DRAGOON_MOUNT", NULL, LNKFLG_AFFECT | LNKFLG_EXCLUSIVE);
 	define_link(LNK_PLANT_PARALYSIS, "PLANT_PARALYSIS", NULL, LNKFLG_AFFECT);
 	define_link(LNK_TAUNT, "TAUNT", NULL, LNKFLG_AFFECT);
 
@@ -3464,6 +3465,14 @@ void remove_link(P_char ch, struct char_link_data *clda)
 //=================================================================================
 
 //---------------------------------------------------------------------------------
+float player_racial_damage_multiplier(int race)
+{
+	char key[128];
+	snprintf(key, sizeof(key), "damage.totalOutput.playerRacial.%s",
+		 race_names_table[race].no_spaces);
+	return combat_by_race[race][1] * get_property(key, 1.0);
+}
+
 void update_damage_data()
 {
 	char buf[128];

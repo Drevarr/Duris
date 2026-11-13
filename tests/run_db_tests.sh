@@ -76,6 +76,10 @@ assassin_combat $DB python3 tests/async/test_assassin_combat_journey.py --server
 conjurer_gameplay $DB python3 tests/async/test_conjurer_gameplay_journey.py --server SERVER_BINARY
 shambler_reflection $DB python3 tests/async/test_shambler_reflection_journey.py --server SERVER_BINARY
 minor_creation_instrument $DB python3 tests/async/test_minor_creation_instrument_journey.py --server SERVER_BINARY
+bard_support $DB python3 tests/async/test_bard_support_journey.py --server SERVER_BINARY
+bard_disharmonist $DB python3 tests/async/test_bard_disharmonist_journey.py --server SERVER_BINARY
+issue904_qol $DB python3 tests/async/run_issue904_qol_journey.py --server SERVER_BINARY
+issue1021_reports $DB python3 tests/async/run_issue1021_journey.py --server SERVER_BINARY
 generated_npc $DB python3 tests/async/test_generated_npc_journey.py --server SERVER_BINARY
 generated_npc_redis $DB python3 tests/async/test_generated_npc_journey.py --server SERVER_BINARY --mode redis
 chaos_new_character_kit $DB python3 tests/async/test_mariadb_chaos_new_character_kit.py --server SERVER_BINARY
@@ -99,6 +103,9 @@ epic_training_journey $DB python3 tests/async/test_mysql_epic_training_journey.p
 telemetry_posthog_gameplay python3 tests/async/run_telemetry_player_journey.py --backend mariadb
 world_restart_crash $DB python3 tests/async/run_world_restart_journey.py SERVER_BINARY crash
 coin_denominations $DB python3 tests/async/test_mysql_coin_denomination_journey.py --server SERVER_BINARY
+auction_item_journey $DB python3 tests/async/test_mysql_auction_item_journey.py
+auction_money_journey $DB python3 tests/async/test_mysql_auction_money_journey.py
+smith_payment_journey $DB python3 tests/async/test_mysql_smith_payment_journey.py
 critical_command_schema tests/async/run_critical_command_schema_mysql.sh
 corpse_trap_restart $DB python3 tests/async/test_corpse_trap_restart_journey.py SERVER_BINARY mariadb
 playtime $DB python3 tests/async/test_mysql_playtime_journey.py --server SERVER_BINARY

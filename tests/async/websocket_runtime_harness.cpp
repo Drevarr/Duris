@@ -391,6 +391,62 @@ int main()
 		inflateEnd(&inbound_inflater);
 		return fail("compressed fragmented message was corrupted or not reset");
 	}
+	/* A nonempty Ping between compressed fragments is echoed raw and leaves the message intact. */
+	fragment_payload = nullptr;
+	if (websocket_parse_frame(&d, (const char *)compressed_first, compressed_first_len,
+				  &fragment_payload, &fragment_payload_len, &compressed_opcode,
+				  &compressed_fin) < 0 ||
+	    compressed_fin || !d.ws_compressed_message)
+	{
+		free(fragment_payload);
+		inflateEnd(&inbound_inflater);
+		return fail("compressed first fragment was not retained before interposed ping");
+	}
+	fragmented_text_len = fragment_payload_len;
+	memcpy(fragmented_text, fragment_payload, fragment_payload_len);
+	free(fragment_payload);
+	fragment_payload = nullptr;
+	while (recv(pair[1], output, sizeof(output), MSG_DONTWAIT) > 0)
+	{
+	}
+	const unsigned char interposed_ping[] = { 0x89, 0x82, 0x11,	   0x22,
+						  0x33, 0x44, 0xff ^ 0x11, 0xff ^ 0x22 };
+	if (websocket_parse_frame(&d, (const char *)interposed_ping, sizeof(interposed_ping),
+				  &fragment_payload, &fragment_payload_len, &compressed_opcode,
+				  &compressed_fin) != (int)sizeof(interposed_ping) ||
+	    !d.ws_compressed_message)
+	{
+		free(fragment_payload);
+		inflateEnd(&inbound_inflater);
+		return fail("interposed ping disturbed the compressed message state");
+	}
+	const unsigned char interposed_pong[] = { 0x8a, 0x02, 0xff, 0xff };
+	ssize_t interposed_len = recv(pair[1], output, sizeof(output), MSG_DONTWAIT);
+	if (interposed_len != (ssize_t)sizeof(interposed_pong) ||
+	    memcmp(output, interposed_pong, sizeof(interposed_pong)) != 0)
+	{
+		inflateEnd(&inbound_inflater);
+		return fail("interposed ping payload was not echoed unchanged");
+	}
+	if (websocket_parse_frame(&d, (const char *)compressed_second, compressed_second_len,
+				  &fragment_payload, &fragment_payload_len, &compressed_opcode,
+				  &compressed_fin) < 0 ||
+	    !compressed_fin ||
+	    fragmented_text_len + fragment_payload_len >= sizeof(fragmented_text))
+	{
+		free(fragment_payload);
+		inflateEnd(&inbound_inflater);
+		return fail("compressed continuation failed after interposed ping");
+	}
+	memcpy(fragmented_text + fragmented_text_len, fragment_payload, fragment_payload_len);
+	fragmented_text_len += fragment_payload_len;
+	fragmented_text[fragmented_text_len] = '\0';
+	free(fragment_payload);
+	if (strcmp(fragmented_text, "fragmented-compressed") != 0 || d.ws_compressed_message)
+	{
+		inflateEnd(&inbound_inflater);
+		return fail("interposed ping corrupted the compressed message");
+	}
 	if (write(pair[1], compressed_first, compressed_first_len) !=
 		    (ssize_t)compressed_first_len ||
 	    write(pair[1], compressed_second, compressed_second_len) !=
@@ -800,6 +856,68 @@ int main()
 	    memcmp(drained, close_frame, sizeof(close_frame)) != 0)
 		return fail("queued close frame was corrupted or reordered");
 
+	/* RFC 6455 5.5.1: nothing follows our Close. Data queued behind it is dropped, and
+	 * data framed after it is never sent. */
+	while (write(pressure_pair[0], fill, sizeof(fill)) > 0)
+	{
+	}
+	pressure.ws_state = WS_STATE_OPEN;
+	if (websocket_send_text(&pressure, "one") < 0 ||
+	    websocket_send_text(&pressure, "two") < 0 || pressure.ws_output_len == 0)
+		return fail("data was not queued behind backpressure before close");
+	websocket_close(&pressure, 1000, "bye");
+	if (websocket_send_text(&pressure, "late") < 0 || pressure.ws_output_len != 0)
+		return fail("data queued before or after a close would follow the close frame");
+	while (read(pressure_pair[1], drained, sizeof(drained)) > 0)
+	{
+	}
+	if (websocket_flush_output(&pressure) < 0)
+		return fail("close after dropped data did not flush");
+	close_len = read(pressure_pair[1], drained, sizeof(drained));
+	if (close_len != (ssize_t)sizeof(close_frame) ||
+	    memcmp(drained, close_frame, sizeof(close_frame)) != 0)
+		return fail("a data frame followed the close frame");
+
+	/* Backpressure clears before the close: the close's own flush must not drain the data
+	 * still queued behind it. */
+	while (write(pressure_pair[0], fill, sizeof(fill)) > 0)
+	{
+	}
+	pressure.ws_state = WS_STATE_OPEN;
+	if (websocket_send_text(&pressure, "one") < 0 ||
+	    websocket_send_text(&pressure, "two") < 0 || pressure.ws_output_len == 0)
+		return fail("data was not queued behind backpressure before writable close");
+	while (read(pressure_pair[1], drained, sizeof(drained)) > 0)
+	{
+	}
+	websocket_close(&pressure, 1000, "bye");
+	close_len = read(pressure_pair[1], drained, sizeof(drained));
+	if (close_len != (ssize_t)sizeof(close_frame) ||
+	    memcmp(drained, close_frame, sizeof(close_frame)) != 0 || pressure.ws_output_len != 0)
+		return fail("the close's own flush sent data queued behind it");
+
+	/* A data frame already partly on the wire finishes before the close; later ones drop.
+	 * Two bytes of "one" (0x81 0x03) are on the wire, as a partial write leaves them. */
+	while (write(pressure_pair[0], fill, sizeof(fill)) > 0)
+	{
+	}
+	pressure.ws_state = WS_STATE_OPEN;
+	if (websocket_send_text(&pressure, "one") < 0 || websocket_send_text(&pressure, "two") < 0)
+		return fail("data was not queued for the partial-frame close");
+	pressure.ws_output_offset = 2;
+	pressure.ws_output_frame_left = 3;
+	websocket_close(&pressure, 1000, "bye");
+	while (read(pressure_pair[1], drained, sizeof(drained)) > 0)
+	{
+	}
+	if (websocket_flush_output(&pressure) < 0 || pressure.ws_output_len != 0)
+		return fail("partial frame and close did not flush");
+	unsigned char finish_then_close[] = { 'o', 'n', 'e', 0x88, 0x05, 0x03, 0xE8, 'b', 'y', 'e' };
+	close_len = read(pressure_pair[1], drained, sizeof(drained));
+	if (close_len != (ssize_t)sizeof(finish_then_close) ||
+	    memcmp(drained, finish_then_close, sizeof(finish_then_close)) != 0)
+		return fail("a partly sent frame was cut, or a later frame followed the close");
+
 	while (write(pressure_pair[0], fill, sizeof(fill)) > 0)
 	{
 	}
@@ -843,6 +961,168 @@ int main()
 		return fail("websocket_free left stale output or heartbeat state");
 	close(pressure_pair[0]);
 	close(pressure_pair[1]);
+
+	/* A control frame queued mid-frame waits for that data frame to finish (RFC 6455 5.4). */
+	int split_pair[2];
+	if (socketpair(AF_UNIX, SOCK_STREAM, 0, split_pair) != 0)
+		return fail("split-frame socketpair");
+	int split_flags = fcntl(split_pair[0], F_GETFL, 0);
+	int large_send_buffer = 1 << 18;
+	if (split_flags < 0 || fcntl(split_pair[0], F_SETFL, split_flags | O_NONBLOCK) < 0 ||
+	    setsockopt(split_pair[0], SOL_SOCKET, SO_SNDBUF, &large_send_buffer,
+		       sizeof(large_send_buffer)) != 0)
+		return fail("configure split-frame socket");
+	descriptor_data split{};
+	split.descriptor = split_pair[0];
+	split.websocket = 1;
+	split.ws_state = WS_STATE_OPEN;
+	static unsigned char split_payload[WS_MAX_FLUSH_BYTES + 1000];
+	memset(split_payload, 'x', sizeof(split_payload));
+	if (websocket_send_binary(&split, split_payload, sizeof(split_payload)) != 0 ||
+	    split.ws_output_offset == 0 || split.ws_output_offset >= split.ws_output_len)
+		return fail("flush budget did not leave a data frame partially transmitted");
+	if (websocket_send_pong(&split, "p", 1) != 0 || split.ws_output_len != 0 ||
+	    split.ws_output_frame_left != 0 || split.ws_control_output_len != 0)
+		return fail("partial data frame and queued pong did not flush");
+	const size_t split_header = 10;
+	const size_t split_total = split_header + sizeof(split_payload) + 3;
+	static unsigned char split_wire[split_header + sizeof(split_payload) + 3];
+	size_t split_read = 0;
+	while (split_read < split_total)
+	{
+		ssize_t got =
+			read(split_pair[1], split_wire + split_read, split_total - split_read);
+		if (got <= 0)
+			return fail("read split-frame output");
+		split_read += (size_t)got;
+	}
+	if (split_wire[0] != 0x82 || split_wire[1] != 127 ||
+	    memcmp(split_wire + split_header, split_payload, sizeof(split_payload)) != 0 ||
+	    memcmp(split_wire + split_header + sizeof(split_payload), "\x8a\x01p", 3) != 0)
+		return fail("control frame was inserted inside a partially transmitted data frame");
+	websocket_free(&split);
+	close(split_pair[0]);
+	close(split_pair[1]);
+
+	/* A Pong retained behind the per-read frame budget is handled without new bytes. */
+	int budget_pair[2];
+	if (socketpair(AF_UNIX, SOCK_STREAM, 0, budget_pair) != 0)
+		return fail("frame-budget socketpair");
+	int budget_flags = fcntl(budget_pair[0], F_GETFL, 0);
+	if (budget_flags < 0 || fcntl(budget_pair[0], F_SETFL, budget_flags | O_NONBLOCK) < 0)
+		return fail("set nonblocking frame-budget socket");
+	descriptor_data budgeted{};
+	budgeted.descriptor = budget_pair[0];
+	budgeted.websocket = 1;
+	budgeted.ws_state = WS_STATE_OPEN;
+	budgeted.ws_handshake_done = 1;
+	budgeted.ws_ping_outstanding = 1;
+	unsigned char burst[(WS_MAX_FRAMES_PER_READ + 1) * 6] = { 0 };
+	for (int i = 0; i <= WS_MAX_FRAMES_PER_READ; i++)
+	{
+		burst[i * 6] = i < WS_MAX_FRAMES_PER_READ ? 0x89 : 0x8a;
+		burst[i * 6 + 1] = 0x80;
+	}
+	if (write(budget_pair[1], burst, sizeof(burst)) != (ssize_t)sizeof(burst))
+		return fail("write frame-budget burst");
+	if (websocket_process_input(&budgeted) != 0 || budgeted.ws_pong_received ||
+	    budgeted.ws_fragment_len != 6 || !websocket_has_pending(&budgeted))
+		return fail("frame budget did not retain the trailing pong");
+	if (websocket_process_input(&budgeted) != 0 || !budgeted.ws_pong_received ||
+	    budgeted.ws_ping_outstanding || budgeted.ws_fragment_len != 0)
+		return fail("retained pong was stranded until more bytes arrived");
+	websocket_free(&budgeted);
+	close(budget_pair[0]);
+	close(budget_pair[1]);
+
+	/* Frames handled before a protocol error are not replayed by a later service. */
+	int failed_pair[2];
+	if (socketpair(AF_UNIX, SOCK_STREAM, 0, failed_pair) != 0)
+		return fail("failed-input socketpair");
+	int failed_flags = fcntl(failed_pair[0], F_GETFL, 0);
+	if (failed_flags < 0 || fcntl(failed_pair[0], F_SETFL, failed_flags | O_NONBLOCK) < 0)
+		return fail("set nonblocking failed-input socket");
+	descriptor_data failed_input{};
+	failed_input.descriptor = failed_pair[0];
+	failed_input.websocket = 1;
+	failed_input.ws_state = WS_STATE_OPEN;
+	failed_input.ws_handshake_done = 1;
+	const unsigned char ping_then_rsv2[] = { 0x89, 0x80, 0, 0, 0, 0, 0xa1, 0x80, 0, 0, 0, 0 };
+	if (write(failed_pair[1], ping_then_rsv2, sizeof(ping_then_rsv2)) !=
+	    (ssize_t)sizeof(ping_then_rsv2))
+		return fail("write failed-input frames");
+	if (websocket_process_input(&failed_input) != -1)
+		return fail("RSV2 frame after a ping was accepted");
+	websocket_process_input(&failed_input);
+	unsigned char failed_reply[16];
+	if (websocket_has_pending(&failed_input) ||
+	    read(failed_pair[1], failed_reply, sizeof(failed_reply)) != 2)
+		return fail("frames handled before a protocol error were replayed");
+	websocket_free(&failed_input);
+	close(failed_pair[0]);
+	close(failed_pair[1]);
+
+	/* The close summary keeps the first cause: an abrupt peer EOF is not a protocol error. */
+	int eof_pair[2];
+	if (socketpair(AF_UNIX, SOCK_STREAM, 0, eof_pair) != 0)
+		return fail("peer-EOF socketpair");
+	descriptor_data eof_peer{};
+	eof_peer.descriptor = eof_pair[0];
+	eof_peer.websocket = 1;
+	eof_peer.ws_state = WS_STATE_OPEN;
+	eof_peer.ws_handshake_done = 1;
+	close(eof_pair[1]);
+	if (websocket_process_input(&eof_peer) != -1)
+		return fail("peer EOF was not reported");
+	websocket_close(&eof_peer, WS_CLOSE_PROTOCOL_ERROR, "Protocol error");
+	if (!eof_peer.ws_close_cause || strcmp(eof_peer.ws_close_cause, "Peer EOF") != 0)
+		return fail("peer EOF close cause was overwritten or missing");
+	websocket_free(&eof_peer);
+	if (eof_peer.ws_close_cause)
+		return fail("websocket_free left a stale close cause");
+	close(eof_pair[0]);
+
+	/* A ping queued under backpressure and drained by later game output accepts its pong. */
+	int ping_pair[2];
+	if (socketpair(AF_UNIX, SOCK_STREAM, 0, ping_pair) != 0)
+		return fail("queued-ping socketpair");
+	int ping_flags = fcntl(ping_pair[0], F_GETFL, 0);
+	if (ping_flags < 0 || fcntl(ping_pair[0], F_SETFL, ping_flags | O_NONBLOCK) < 0 ||
+	    fcntl(ping_pair[1], F_SETFL, fcntl(ping_pair[1], F_GETFL, 0) | O_NONBLOCK) < 0)
+		return fail("set nonblocking queued-ping socket");
+	setsockopt(ping_pair[0], SOL_SOCKET, SO_SNDBUF, &small_send_buffer,
+		   sizeof(small_send_buffer));
+	while (write(ping_pair[0], fill, sizeof(fill)) > 0)
+	{
+	}
+	descriptor_data heartbeat{};
+	heartbeat.descriptor = ping_pair[0];
+	heartbeat.websocket = 1;
+	heartbeat.ws_state = WS_STATE_OPEN;
+	heartbeat.ws_handshake_done = 1;
+	if (websocket_send_ping(&heartbeat) != 0 || heartbeat.ws_control_output_len == 0)
+		return fail("ping was not queued under backpressure");
+	heartbeat.ws_ping_queued = 1; /* as the session-input phase records it */
+	while (read(ping_pair[1], drained, sizeof(drained)) > 0)
+	{
+	}
+	if (websocket_send_text(&heartbeat, "game output") != 0 ||
+	    heartbeat.ws_control_output_len != 0 || heartbeat.ws_ping_queued ||
+	    !heartbeat.ws_ping_outstanding || heartbeat.ws_last_ping == 0)
+		return fail("queued ping drained by game output did not become outstanding");
+	const char masked_pong[] = { (char)0x8a, (char)0x80, 0, 0, 0, 0 };
+	char *pong_payload = nullptr;
+	size_t pong_payload_len = 0;
+	int pong_opcode = 0;
+	int pong_fin = 0;
+	if (websocket_parse_frame(&heartbeat, masked_pong, sizeof(masked_pong), &pong_payload,
+				  &pong_payload_len, &pong_opcode,
+				  &pong_fin) != (int)sizeof(masked_pong) ||
+	    !heartbeat.ws_pong_received || heartbeat.ws_ping_outstanding)
+		return fail("pong for a ping drained by game output was ignored");
+	websocket_free(&heartbeat);
+	close(ping_pair[0]);
+	close(ping_pair[1]);
 
 	d.ws_compressed_message = 1;
 	d.ws_error_code = WS_CLOSE_MESSAGE_TOO_BIG;

@@ -2276,13 +2276,17 @@ void command_interpreter(P_char ch, char *argument)
 				{
 					send_to_char("You reappear, visible to all.\r\n",
 						     exec_char);
-					affect_from_char(ch, SPELL_CONCEALMENT);
+					affect_from_char(exec_char, SPELL_CONCEALMENT);
 				}
 				// Kill hide if applicable
 				if (((cmd != CMD_LOOK) && (cmd != CMD_LISTEN) &&
 				     (cmd != CMD_SNEAK) && (cmd != CMD_GLANCE) &&
 				     (cmd != CMD_READ) && (cmd != CMD_STEAL) && (cmd != CMD_SCAN) &&
-				     IS_SET(exec_char->specials.affected_by, AFF_HIDE)))
+				     IS_SET(exec_char->specials.affected_by, AFF_HIDE)) &&
+				    !((cmd == CMD_PLAY || cmd == CMD_WAIL) &&
+				      *skip_spaces(argument + begin + look_at) &&
+				      player_bard(exec_char, SPEC_SCOUNDREL, 30) &&
+				      IS_AFFECTED3(exec_char, AFF3_SINGING)))
 				{
 					// Ambush.. allows one to stay hidden through tackle/backstab/headbutt?
 					if (affected_by_spell(exec_char, SKILL_AMBUSH))
@@ -2505,6 +2509,11 @@ void command_interpreter(P_char ch, char *argument)
 
 				((*cmd_info[cmd].command_pointer)(exec_char,
 								  argument + begin + look_at, cmd));
+
+				// A failed song switch may stop singing; only a continuing song keeps Hide.
+				if ((cmd == CMD_PLAY || cmd == CMD_WAIL) && IS_ALIVE(exec_char) &&
+				    !IS_AFFECTED3(exec_char, AFF3_SINGING))
+					REMOVE_BIT(exec_char->specials.affected_by, AFF_HIDE);
 
 				// If mobs should and can aggro the executor of the above command.
 				if ((cmd_info[cmd].check_aggro) && IS_ALIVE(exec_char) &&
@@ -2836,9 +2845,12 @@ bool special(P_char ch, int cmd, char *arg)
 
 	/*
 	 * special in room?
+	 *
+	 * A proc may kill or extract ch and still return FALSE (Charon, exit traps).
+	 * Stop there: ch->in_room is NOWHERE and the command must not run.
 	 */
 	if (world[ch->in_room].funct)
-		if ((*world[ch->in_room].funct)(ch->in_room, ch, cmd, arg))
+		if ((*world[ch->in_room].funct)(ch->in_room, ch, cmd, arg) || !IS_ALIVE(ch))
 			return (1);
 
 	/*
@@ -2849,7 +2861,8 @@ bool special(P_char ch, int cmd, char *arg)
 		if (ch->equipment[j] && (ch->equipment[j]->R_num >= 0) &&
 		    obj_index[ch->equipment[j]->R_num].func.obj)
 			if ((*obj_index[ch->equipment[j]->R_num].func.obj)(ch->equipment[j], ch,
-									   cmd, arg))
+									   cmd, arg) ||
+			    !IS_ALIVE(ch))
 				return (1);
 	}
 	/*
@@ -2860,7 +2873,7 @@ bool special(P_char ch, int cmd, char *arg)
 	{
 		next_obj = i->next_content;
 		if ((i->R_num >= 0) && obj_index[i->R_num].func.obj)
-			if ((*obj_index[i->R_num].func.obj)(i, ch, cmd, arg))
+			if ((*obj_index[i->R_num].func.obj)(i, ch, cmd, arg) || !IS_ALIVE(ch))
 				return (1);
 	}
 	if (!ALONE(ch))
@@ -2880,7 +2893,8 @@ bool special(P_char ch, int cmd, char *arg)
 			    (!IS_IMMOBILE(k) ||
 			     (IS_NPC(k) && (GET_VNUM(k) == OUTPOST_BUILDING_MOB))))
 			{
-				if ((*mob_index[GET_RNUM(k)].func.mob)(k, ch, cmd, arg))
+				if ((*mob_index[GET_RNUM(k)].func.mob)(k, ch, cmd, arg) ||
+				    !IS_ALIVE(ch))
 				{
 					return (1);
 				}
@@ -2892,7 +2906,8 @@ bool special(P_char ch, int cmd, char *arg)
 		for (k = world[ch->in_room].people; k; k = k->next_in_room)
 			if ((k != ch) && IS_NPC(k) && !training_dummy_is(k) && IS_AWAKE(k) &&
 			    mob_index[GET_RNUM(k)].qst_func)
-				if ((*mob_index[GET_RNUM(k)].qst_func)(k, ch, cmd, arg))
+				if ((*mob_index[GET_RNUM(k)].qst_func)(k, ch, cmd, arg) ||
+				    !IS_ALIVE(ch))
 					return (1);
 	}
 	/*
@@ -2902,7 +2917,7 @@ bool special(P_char ch, int cmd, char *arg)
 	{
 		next_obj = i->next_content;
 		if ((i->R_num >= 0) && obj_index[i->R_num].func.obj)
-			if ((*obj_index[i->R_num].func.obj)(i, ch, cmd, arg))
+			if ((*obj_index[i->R_num].func.obj)(i, ch, cmd, arg) || !IS_ALIVE(ch))
 				return (1);
 	}
 
@@ -3172,7 +3187,7 @@ void assign_command_pointers(void)
 	CMD_N(CMD_APPLY, STAT_RESTING + POS_PRONE, do_apply_poison, 0, TRUE);
 	CMD_N(CMD_ARTIFACTS, STAT_SLEEPING + POS_PRONE, do_artifact_sql, 0, FALSE);
 	CMD_N(CMD_RAID, STAT_SLEEPING + POS_PRONE, do_raid, 0, FALSE); // Raidable?
-	CMD_N(CMD_DISMISS, STAT_NORMAL + POS_STANDING, do_dismiss, 0, TRUE);
+	CMD_N(CMD_DISMISS, STAT_NORMAL + POS_SITTING, do_dismiss, 0, TRUE);
 	CMD_N(CMD_DISAPPEAR, STAT_RESTING + POS_SITTING, do_disappear, 0, TRUE);
 	CMD_N(CMD_ASSIST, STAT_NORMAL + POS_STANDING, do_assist, 0, TRUE);
 	CMD_N(CMD_DICE, STAT_NORMAL + POS_STANDING, do_dice, 0, TRUE);
@@ -3339,7 +3354,8 @@ void assign_command_pointers(void)
 	CMD_N(CMD_INFUSE, STAT_NORMAL + POS_PRONE, do_infuse, 0, TRUE);
 	CMD_N(CMD_GATHER, STAT_NORMAL + POS_PRONE, do_gather, 0, TRUE);
 	CMD_N(CMD_AREA, STAT_RESTING + POS_PRONE, do_area, 0, FALSE);
-	CMD_N(CMD_DEATHS_DOOR, STAT_NORMAL + POS_PRONE, do_deaths_door, 25, FALSE);
+	CMD_N(CMD_DEATHS_DOOR, STAT_NORMAL + POS_PRONE, do_deaths_door, MIN_LEVEL_FOR_ATTRIBUTES,
+	      FALSE);
 	CMD_N(CMD_SMOKE, STAT_RESTING + POS_PRONE, do_smoke, 1, TRUE);
 	CMD_N(CMD_MIXPOISON, STAT_NORMAL + POS_STANDING, do_mixpoison, 0, TRUE);
 	/*

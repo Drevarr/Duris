@@ -8,6 +8,7 @@
  * ***************************************************************************
  */
 
+#include "item/item_value.h"
 #include "core/prototypes.h"
 #include "item/named_set_origin.h"
 #include "persistence/copyover.h"
@@ -1953,10 +1954,34 @@ void do_stat(P_char ch, char *argument, int cmd, P_obj object)
 					 buf2);
 		}
 
+		item_value_breakdown valuation;
+		const int score = itemvalue(j, &valuation);
 		checked_snprintf(
 			o_buf + strlen(o_buf), MAX_STRING_LENGTH - strlen(o_buf),
-			"&+YWeight: &N%d&+Y lbs   Value: &N%s   &+YCondition: &N%d   &+YItem Value: &N%d\n", //%d(%d%%)\n",
-			j->weight, comma_string((long)(j->cost)), j->condition, itemvalue(j));
+			"&+YWeight: &N%d&+Y lbs   Value: &N%s   &+YCondition: &N%d   &+YItem Value: &N%d\n",
+			j->weight, comma_string((long)(j->cost)), j->condition, score);
+		checked_snprintf(
+			o_buf + strlen(o_buf), MAX_STRING_LENGTH - strlen(o_buf),
+			"&+YIval base terms:&N flags %.6g, applies %.6g, type %.6g, packed %.6g, native %.6g = %.6g\n"
+			"&+YMultiplier checkpoints:&N wear %.6g, flags %.6g, applies %.6g, type %.6g, final %.6g; unrounded %.6g\n"
+			"&+YIval policy:&N proc %s (%s), utility %s, native melee suppressed %s, coverage %s\n",
+			valuation.flags_base, valuation.applies_base, valuation.type_base,
+			valuation.packed_credit, valuation.native_base, valuation.base,
+			valuation.after_wear, valuation.after_flags, valuation.after_applies,
+			valuation.after_type, valuation.multiplier, valuation.unrounded,
+			valuation.native_proc_name ? valuation.native_proc_name : "unresolved",
+			item_value_proc_policy_name(valuation.native_proc_policy),
+			valuation.utility_override ? "yes" : "no",
+			valuation.native_melee_suppressed ? "yes" : "no",
+			valuation.context_complete ? "complete" : "unpriced/estimated");
+		checked_snprintf(
+			o_buf + strlen(o_buf), MAX_STRING_LENGTH - strlen(o_buf),
+			"&+YUnpriced inputs:&N affects %llx/%llx/%llx/%llx/%llx, apply slots %x, type %s, dynamic %s\n",
+			valuation.unpriced_affects[0], valuation.unpriced_affects[1],
+			valuation.unpriced_affects[2], valuation.unpriced_affects[3],
+			valuation.unpriced_affects[4], valuation.unpriced_apply_slots,
+			valuation.unpriced_type ? "yes" : "no",
+			valuation.unpriced_dynamic_effects ? "yes" : "no");
 		//, j->max_condition, (int) (((float) j->condition / j->max_condition) * 100)); wipe2011
 
 		checked_snprintf(
@@ -5905,6 +5930,7 @@ static void do_start_impl(P_char ch, int nomsg, bool grant_newbie_kit)
 			GET_PLAYER_LOG(ch)->reset_export_window();
 		SET_BIT(ch->specials.act2, PLR2_SHOW_QUEST);
 		SET_BIT(ch->specials.act2, PLR2_BOON);
+		SET_BIT(ch->specials.act2, PLR2_NEWBIEEQ);
 		SET_BIT(ch->specials.act2, PLR2_SHIPMAP);
 		if (!GET_CLASS(ch, CLASS_PALADIN))
 		{
@@ -7276,8 +7302,15 @@ void do_secret(P_char ch, char *argument, int /*cmd*/)
 		send_to_char("Secretize what?\n", ch);
 }
 
+// Staff searches share keyword/compound matching and ignore description colors.
+static bool staff_name_matches(const char *pattern, const char *keywords, const char *description)
+{
+	return isname(pattern, keywords) ||
+	       (description && isname(pattern, strip_ansi(description).c_str()));
+}
+
 /*
- * Look up an object based on a keyword
+ * Look up a prototype by keywords or partial description text.
  *
  * Syntax : "lookup <room | mob | obj | random> <search_string>"
  */
@@ -7294,7 +7327,6 @@ void do_lookup(P_char ch, char *argument, int /*cmd*/)
 		return;
 
 	half_chop(argument, arg, buf);
-	//  one_argument(buf, pattern);
 	o_buf[0] = 0;
 	strcpy(pattern, buf);
 
@@ -7305,12 +7337,6 @@ void do_lookup(P_char ch, char *argument, int /*cmd*/)
 			ch);
 		return;
 	}
-	/*
-	 * Search the files created via the gawk script (during boot), * for
-	 * the desired pattern.  Output goes to a temp file, which * is then
-	 * read in.
-	 */
-
 	if (strncasecmp(arg, "random", 1) == 0)
 	{
 		if (strncasecmp(pattern, "zone", 1) == 0 && GET_LEVEL(ch) >= FORGER)
@@ -7319,13 +7345,37 @@ void do_lookup(P_char ch, char *argument, int /*cmd*/)
 			return;
 		}
 	}
-	if (strncasecmp(arg, "mob", 1) == 0 || strncasecmp(arg, "char", 1) == 0)
+	if (strncasecmp(arg, "mob", 1) == 0 || strncasecmp(arg, "char", 1) == 0 ||
+	    strncasecmp(arg, "obj", 1) == 0)
 	{
-		strcpy(file, MOB_LOOKUP);
-	}
-	else if (strncasecmp(arg, "obj", 1) == 0)
-	{
-		strcpy(file, OBJ_LOOKUP);
+		const bool mobile = strncasecmp(arg, "obj", 1) != 0;
+		const P_index index = mobile ? mob_index : obj_index;
+		const int top = mobile ? top_of_mobt : top_of_objt;
+		strToLower(pattern);
+		std::string output;
+		for (int i = 0; i <= top; ++i)
+		{
+			const char *description = index[i].desc2 ? index[i].desc2 : "";
+			const std::string line = "#" + std::to_string(index[i].virtual_number) +
+						 " " + description + "~\n";
+			// Retain partial text and VNUM searches from the old lookup rows.
+			std::string text = strip_ansi(line.c_str());
+			strToLower(text.data());
+			if (!staff_name_matches(pattern, index[i].keys, description) &&
+			    text.find(pattern) == std::string::npos)
+				continue;
+			if (output.size() + line.size() + 40 > MAX_STRING_LENGTH)
+			{
+				output += "...and the list goes on...\n";
+				break;
+			}
+			output += line;
+		}
+		if (output.empty())
+			send_to_char_f(ch, "No matches found for pattern '%s'\n", pattern);
+		else
+			page_string(ch->desc, output.data(), 1);
+		return;
 	}
 	else if (strncasecmp(arg, "room", 1) == 0)
 	{
@@ -7343,12 +7393,14 @@ void do_lookup(P_char ch, char *argument, int /*cmd*/)
 		char start_letter[MAX_STRING_LENGTH];
 
 		half_chop(pattern, start_letter, buf);
-		if (isname("*", start_letter))
+		// The letter goes into a shell command below, so accept nothing else.
+		if (!isalpha((unsigned char)start_letter[0]) || start_letter[1])
 		{
-			send_to_char("start letter must be a or b etc can't use * (Couse of lag)\n",
+			send_to_char("The start letter must be a single letter, such as a or b.\n",
 				     ch);
 			return;
 		}
+		start_letter[0] = LOWER(start_letter[0]);
 
 		half_chop(buf, level, pattern);
 		half_chop(pattern, m_class, buf);
@@ -7440,7 +7492,8 @@ void do_lookup(P_char ch, char *argument, int /*cmd*/)
 		send_to_char("Syntax : lookup <pfile room | zone | mob | obj> <pattern>\n", ch);
 		return;
 	}
-
+	// Room and zone lookups retain their generated text catalogs.
+	strToLower(pattern);
 	if ((fp = fopen(file, "r")) == NULL)
 	{
 		snprintf(buf, MAX_STRING_LENGTH, "Error opening %s", file);
@@ -7455,7 +7508,6 @@ void do_lookup(P_char ch, char *argument, int /*cmd*/)
 		   is in the line.  If so, pass it to the user. */
 		found = 0;
 		length = 0;
-		strToLower(pattern); /* lower case all values for comparison */
 		do
 		{
 			irc = fgets(buf, MAX_STRING_LENGTH - 1, fp);
@@ -12726,8 +12778,8 @@ void do_where(P_char ch, char *argument, int /*cmd*/)
 	buf[0] = '\0';
 	for (i = character_list; i && !flag; i = i->next)
 	{
-		if ((isname(argument, GET_NAME(i)) ||
-		     (IS_NPC(i) && isname(argument, i->player.short_descr))) &&
+		if (staff_name_matches(argument, GET_NAME(i),
+				       IS_NPC(i) ? i->player.short_descr : nullptr) &&
 		    CAN_SEE(ch, i))
 		{
 			if ((i->in_room != NOWHERE) &&
@@ -12771,7 +12823,7 @@ void do_where(P_char ch, char *argument, int /*cmd*/)
 
 	for (k = object_list; k && !flag; k = k->next)
 	{
-		if ((isname(argument, k->name) || isname(argument, k->short_description)) &&
+		if (staff_name_matches(argument, k->name, k->short_description) &&
 		    CAN_SEE_OBJ(ch, k))
 		{
 			// wizinvis checks

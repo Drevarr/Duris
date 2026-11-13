@@ -1,3 +1,4 @@
+#include "item/named_set_effects.h"
 
 /*
  * ***************************************************************************
@@ -12,6 +13,7 @@
 #include "core/prototypes.h"
 #include "telemetry/telemetry_runtime.h"
 #include "item/device_actions.h"
+#include "item/named_sets.h"
 #include "player/output_message.h"
 #include "cmd/color_command.h"
 #include "core/structs.h"
@@ -1943,6 +1945,10 @@ void event_autosave(P_char ch, P_char /*victim*/, P_obj /*obj*/, void * /*data*/
 #define PERSISTENCE_DEFERRED_SAVE_SLOTS 512
 #define PERSISTENCE_MANUAL_SAVE_STATUS_SLOTS 512
 #define PERSISTENCE_MANUAL_SAVE_TIMEOUT_USEC (30ULL * 1000000ULL)
+// A private chest write normally lands within a pulse; this many waits in a row alerts.
+#define PERSISTENCE_DEFERRED_DESTINATION_ALERT_FAILURES 3
+#define PERSISTENCE_DEFERRED_RECOVERY_SLOTS 32
+#define PERSISTENCE_DEFERRED_RECOVERY_TIMEOUT_USEC (60ULL * 1000000ULL)
 
 struct deferred_save_slot
 {
@@ -1956,6 +1962,7 @@ struct deferred_save_slot
 	uint64_t attempts;
 	uint64_t failures;
 	int retry_delay;
+	bool waiting_destination;
 	char reason[64];
 };
 
@@ -1970,6 +1977,17 @@ struct manual_save_status_slot
 };
 
 static struct manual_save_status_slot manual_save_statuses[PERSISTENCE_MANUAL_SAVE_STATUS_SLOTS];
+
+// A checkpoint queued after failed attempts, watched until its revision is written.
+struct deferred_save_recovery_slot
+{
+	int pid;
+	player_revision_t revision;
+	uint64_t queued_usec;
+};
+
+static struct deferred_save_recovery_slot
+	deferred_save_recoveries[PERSISTENCE_DEFERRED_RECOVERY_SLOTS];
 
 /** Find the pending manual-save feedback slot for a player ID, or return null. */
 static struct manual_save_status_slot *find_manual_save_status(int pid)
@@ -2094,6 +2112,118 @@ static void schedule_deferred_save(struct deferred_save_slot *slot, P_char ch, i
 			 (uint64_t)(delay > 0 ? delay : 1) * (1000000ULL / WAIT_SEC);
 }
 
+static const char *checkpoint_result_name(player_save_pipeline_result result)
+{
+	switch (result)
+	{
+	case player_save_pipeline_result::queued:
+		return "queued";
+	case player_save_pipeline_result::coalesced:
+		return "coalesced";
+	case player_save_pipeline_result::unchanged:
+		return "unchanged";
+	case player_save_pipeline_result::invalid:
+		return "invalid";
+	case player_save_pipeline_result::capture_failed:
+		return "capture_failed";
+	case player_save_pipeline_result::unavailable:
+		return "unavailable";
+	case player_save_pipeline_result::destination_pending:
+		return "destination_pending";
+	}
+	return "unknown";
+}
+
+/** Milliseconds since this checkpoint was first requested. */
+static unsigned long long deferred_save_age_msec(const struct deferred_save_slot *slot)
+{
+	const uint64_t now = persistence_observability_now_usec();
+	return now > slot->first_pending_usec ? (now - slot->first_pending_usec) / 1000ULL : 0;
+}
+
+/** Log a retained checkpoint: a brief private-chest wait is routine, anything else alerts. */
+static void report_deferred_save_retry(const struct deferred_save_slot *slot,
+				       player_save_pipeline_result result)
+{
+	const bool routine = result == player_save_pipeline_result::destination_pending &&
+			     slot->failures < PERSISTENCE_DEFERRED_DESTINATION_ALERT_FAILURES;
+	char action[64];
+
+	snprintf(action, sizeof(action), "deferred_save_retry_%s", checkpoint_result_name(result));
+	persistence_report(routine ? persistence_severity::info : persistence_severity::alert,
+			   AVATAR, "player_save", "redacted", "none", "none", action,
+			   "pid=%d delay_ms=%llu attempts=%llu failures=%llu age_ms=%llu",
+			   slot->pid, (unsigned long long)slot->retry_delay * (1000ULL / WAIT_SEC),
+			   (unsigned long long)slot->attempts, (unsigned long long)slot->failures,
+			   deferred_save_age_msec(slot));
+}
+
+/** Log a retried checkpoint reaching the writer and watch for its revision to be written. */
+static void begin_deferred_save_recovery_watch(const struct deferred_save_slot *pending)
+{
+	struct player_revision_snapshot revision = {};
+	struct deferred_save_recovery_slot *watch = NULL;
+
+	if (!player_revision_snapshot_copy(pending->pid, &revision))
+		revision.current_revision = 0;
+	persistence_report(persistence_severity::info, AVATAR, "player_save", "redacted", "none",
+			   "none", "deferred_save_recovered_queued",
+			   "pid=%d revision=%llu attempts=%llu failures=%llu age_ms=%llu",
+			   pending->pid, (unsigned long long)revision.current_revision,
+			   (unsigned long long)pending->attempts,
+			   (unsigned long long)pending->failures, deferred_save_age_msec(pending));
+	if (!revision.current_revision)
+		return;
+	for (struct deferred_save_recovery_slot &slot : deferred_save_recoveries)
+	{
+		// An outstanding watch keeps its revision and deadline; a later write covers both.
+		if (slot.pid == pending->pid)
+			return;
+		if (!watch && !slot.pid)
+			watch = &slot;
+	}
+	if (!watch)
+	{
+		persistence_alert(AVATAR, "player_save", "redacted", "none", "none",
+				  "deferred_save_recovery_untracked", "pid=%d revision=%llu",
+				  pending->pid, (unsigned long long)revision.current_revision);
+		return;
+	}
+	watch->pid = pending->pid;
+	watch->revision = revision.current_revision;
+	watch->queued_usec = persistence_observability_now_usec();
+}
+
+/** Called by the writer's completion path, before an ended player's revision state retires. */
+void deferred_save_recovery_written(int pid, player_revision_t revision)
+{
+	for (struct deferred_save_recovery_slot &watch : deferred_save_recoveries)
+		if (watch.pid == pid && revision >= watch.revision)
+		{
+			persistence_report(
+				persistence_severity::ok, AVATAR, "player_save", "redacted", "none",
+				"none", "deferred_save_recovered_written",
+				"pid=%d revision=%llu write_ms=%llu", pid,
+				(unsigned long long)revision,
+				(unsigned long long)((persistence_observability_now_usec() -
+						      watch.queued_usec) /
+						     1000ULL));
+			memset(&watch, 0, sizeof(watch));
+		}
+}
+
+/** Alert on a watched recovery that has not been written in time. */
+static void check_deferred_save_recovery(struct deferred_save_recovery_slot *watch)
+{
+	if (persistence_observability_now_usec() - watch->queued_usec <
+	    PERSISTENCE_DEFERRED_RECOVERY_TIMEOUT_USEC)
+		return;
+	persistence_alert(AVATAR, "player_save", "redacted", "none", "none",
+			  "deferred_save_recovered_unwritten", "pid=%d revision=%llu", watch->pid,
+			  (unsigned long long)watch->revision);
+	memset(watch, 0, sizeof(*watch));
+}
+
 /** Attempt one due checkpoint, retaining failed saves with bounded exponential backoff. */
 static void process_deferred_character_save(struct deferred_save_slot *slot)
 {
@@ -2126,23 +2256,27 @@ static void process_deferred_character_save(struct deferred_save_slot *slot)
 	if (pending.level_dirty)
 		sql_update_level(ch);
 
-	if (do_save_silent(ch, pending.type ? pending.type : 1))
+	player_save_pipeline_result result = player_save_pipeline_result::invalid;
+	if (do_save_silent(ch, pending.type ? pending.type : 1, &result))
 	{
+		pending.attempts = slot->attempts;
 		memset(slot, 0, sizeof(*slot));
 		begin_manual_save_status_wait(ch);
+		if (pending.failures)
+			begin_deferred_save_recovery_watch(&pending);
 	}
 	else
 	{
 		persistence_counter_saturating_add(&slot->failures, 1);
-		if (find_manual_save_status(pid) && slot->failures == 1)
+		slot->waiting_destination = result ==
+					    player_save_pipeline_result::destination_pending;
+		// The private chest wait is expected; the player hears only of a real failure.
+		if (find_manual_save_status(pid) && slot->failures == 1 &&
+		    !slot->waiting_destination)
 			send_to_char_f(ch, "Save attempt failed for %s; retrying.\r\n",
 				       GET_NAME(ch));
 		slot->retry_delay = deferred_save_next_retry_delay(slot->retry_delay);
-		persistence_alert(AVATAR, "player_save", "deferred_save", "none", "none",
-				  "deferred_save_retry_scheduled",
-				  "delay=%d attempts=%llu failures=%llu", slot->retry_delay,
-				  (unsigned long long)slot->attempts,
-				  (unsigned long long)slot->failures);
+		report_deferred_save_retry(slot, result);
 		schedule_deferred_save(slot, ch, slot->retry_delay);
 	}
 }
@@ -2168,6 +2302,9 @@ void persistence_pulse_character_saves(void)
 	for (struct manual_save_status_slot &status : manual_save_statuses)
 		if (status.pid)
 			check_manual_character_save_status(&status);
+	for (struct deferred_save_recovery_slot &watch : deferred_save_recoveries)
+		if (watch.pid)
+			check_deferred_save_recovery(&watch);
 }
 
 /** Coalesce save intent and refresh character identity without postponing an existing deadline. */
@@ -2479,6 +2616,8 @@ struct persistence_deferred_save_snapshot persistence_deferred_save_snapshot_cop
 			persistence_counter_saturating_add(&snapshot.scheduled, 1);
 		else if (slot->failures > 0)
 			persistence_counter_saturating_add(&snapshot.failed_unscheduled, 1);
+		if (slot->waiting_destination)
+			persistence_counter_saturating_add(&snapshot.waiting_destination, 1);
 		persistence_counter_saturating_add(&snapshot.attempts, slot->attempts);
 		persistence_counter_saturating_add(&snapshot.failures, slot->failures);
 		if (slot->first_pending_usec && (!oldest || slot->first_pending_usec < oldest))
@@ -2502,8 +2641,9 @@ static P_ship owned_player_ship(P_char ch)
 	return ship && !IS_NPC_SHIP(ship) && SHIP_LOADED(ship) ? ship : NULL;
 }
 
-/** Request an ordinary checkpoint or compatibility save and report admission or save failure. */
-bool do_save_silent(P_char ch, int type)
+/** Request an ordinary checkpoint or compatibility save and report admission or save failure.
+ *  A checkpoint also stores the pipeline's result in `result`, when given. */
+bool do_save_silent(P_char ch, int type, player_save_pipeline_result *result)
 {
 	FILE *f;
 	char tmp_buf[MAX_STRING_LENGTH], tmp_buf2[MAX_STRING_LENGTH];
@@ -2531,6 +2671,8 @@ bool do_save_silent(P_char ch, int type)
 		P_ship ship = owned_player_ship(ch);
 		if (ship)
 			queue_ship_save(ship, "player checkpoint");
+		if (result)
+			*result = queued;
 		return queued == player_save_pipeline_result::queued ||
 		       queued == player_save_pipeline_result::coalesced;
 	}
@@ -3040,6 +3182,7 @@ void do_sneak(P_char ch, char *argument, int /*cmd*/)
 		send_to_char("Ok, you'll try to move silently for a while.\r\n", ch);
 	}
 
+	named_set_ordinary_cast ordinary_cast(ch, SKILL_SNEAK);
 	if (affected_by_spell(ch, SKILL_SNEAK))
 	{
 		affect_from_char(ch, SKILL_SNEAK);
@@ -4672,6 +4815,12 @@ void do_area(P_char ch, char *argument, int /*cmd*/)
 		if (zone->avg_mob_level >= 0 && (zone->avg_mob_level - GET_LEVEL(ch)) > 15)
 			details +=
 				"&-L&+RWarning&-L, some mobs in this zone may be very hazardous for you! Travel with care!&n\r\n";
+		const std::string bonuses = named_set_bonuses(zone->number);
+		details += "\r\n&+LNamed-set spell bonuses (pieces required):&n ";
+		details += bonuses.empty() ?
+				   "None listed; matching named items still grant hitpoints." :
+				   bonuses;
+		details += "\r\nSee namedreport for cooldowns and wearer restrictions.\r\n";
 		// Reserve the complete suffix so a long name cannot hide the danger warning.
 		std::string response = "&+LZone Name: ";
 		response.append(pad_ansi(zone->name, 30), 0,
@@ -4814,13 +4963,6 @@ void do_quaff(P_char ch, char *argument, int /*cmd*/)
 		return;
 	}
 
-	for (i = 1; i < 4; ++i)
-		if (bottle->value[i] == SPELL_VITALITY && affected_by_spell(ch, SPELL_VITALITY))
-		{
-			send_to_char("You are already affected by vitality!\r\n", ch);
-			return;
-		}
-
 	if (affected_by_spell(ch, TAG_POTION_TIMER))
 	{
 		// gellz added potion messages for timer durations  070316
@@ -4946,7 +5088,7 @@ void do_quaff(P_char ch, char *argument, int /*cmd*/)
 
 		for (i = 1; i < 4; i++)
 		{
-			if (bottle->value[i] >= 1)
+			if (bottle->value[i] >= 1 && bottle->value[i] < MAX_SKILLS)
 			{
 				j = bottle->value[i];
 				if ((j != -1) && (skills[j].spell_pointer != NULL))
@@ -5036,7 +5178,7 @@ void do_recite(P_char ch, char *argument, int /*cmd*/)
 	{
 		for (i = 1; i < 4; i++)
 		{
-			if ((scroll->value[i] >= 1))
+			if (scroll->value[i] >= 1 && scroll->value[i] < MAX_SKILLS)
 			{
 				target_data.ttype = j = scroll->value[i];
 				if (!parse_spell_arguments(ch, &target_data, argument))
@@ -5141,6 +5283,12 @@ void do_use(P_char ch, char *argument, int /*cmd*/)
 	}
 	if (begin_device_action(stick, ch, argument) != item_action_start::legacy)
 		return;
+	if ((stick->type == ITEM_STAFF || stick->type == ITEM_WAND) &&
+	    (stick->value[3] <= 0 || stick->value[3] >= MAX_SKILLS))
+	{
+		send_to_char("This item's spell is invalid; it has no effect.\r\n", ch);
+		return;
+	}
 	if (stick->type == ITEM_STAFF)
 	{
 		act("$n taps $p three times on the ground.", TRUE, ch, stick, 0, TO_ROOM);
@@ -5394,7 +5542,8 @@ void show_toggles(P_char ch)
 		 "&+r     Jchat       :&+g %-3s    &+y|"
 		 "&+r     Abort Cast  :&+g %-3s    &+y|&n\r\n"
 		 "&+r   Experience  :&+g %-3s    &+y|&N"
-		 "&+r     AllianceChat:&+g %-3s    &+y|&N\r\n"
+		 "&+r     AllianceChat:&+g %-3s    &+y|&N"
+		 "&+r     Group Sorted:&+g %-3s    &+y|&N\r\n"
 		 "&+y-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-="
 		 "-=-=-=-=-=-=-=-=-=-=-=-=-=-&N\r\n",
 		 ONOFF(!PLR_FLAGGED(ch, PLR_NOTELL)), ONOFF(PLR_FLAGGED(ch, PLR_BRIEF)),
@@ -5420,7 +5569,7 @@ void show_toggles(P_char ch)
 		 ONOFF(!PLR3_FLAGGED(ch, PLR3_NOGMCP)), ONOFF(PLR2_FLAGGED(ch, PLR2_HEAL)),
 		 ONOFF(!PLR3_FLAGGED(ch, PLR3_JESTROS)),
 		 ONOFF(PLR3_FLAGGED(ch, PLR3_ABORT_CASTING)), ONOFF(PLR2_FLAGGED(ch, PLR2_EXP)),
-		 ONOFF(PLR2_FLAGGED(ch, PLR2_ACC)));
+		 ONOFF(PLR2_FLAGGED(ch, PLR2_ACC)), ONOFF(PLR3_FLAGGED(ch, PLR3_GROUP_SORTED)));
 	send_to_char(Gbuf1, send_ch);
 
 	if (GET_LEVEL(ch) >= AVATAR)
@@ -5519,6 +5668,7 @@ static const char *toggles_list[] = { "?", // 0
 				      "gmcp",
 				      "jchat", // 65
 				      "abort", // 66
+				      "groupsort",
 				      "\n" };
 
 static const char *tog_messages[][2] = {
@@ -5612,7 +5762,9 @@ static const char *tog_messages[][2] = {
 	  "You turn on the display of your guild name.\r\n" },
 	{ "&+WGMCP&N data streaming disabled.\r\n", "&+WGMCP&N data streaming enabled.\r\n" },
 	{ "Jchat channel: -=&+ROFF&n=-\r\n", "Jchat channel: -=&+GON&n=-\r\n" },
-	{ "Spell abort is disabled.\r\n", "Spell abort is enabled.\r\n" }
+	{ "Spell abort is disabled.\r\n", "Spell abort is enabled.\r\n" },
+	{ "Your group list uses the classic layout.\r\n",
+	  "Your group list shows players before pets, without race or aura tags.\r\n" }
 };
 
 void do_more(P_char ch, char *arg, int /*cmd*/)
@@ -5956,9 +6108,9 @@ void do_toggle(P_char ch, char *arg, int /*cmd*/)
 				   !str_cmp(setting, "off") ||
 				   (!errno && end != setting && !*end && number == 0);
 		if (*rest ||
-		    (!reset && (errno || end == setting || *end || number < 12 || number > 48)))
+		    (!reset && (errno || end == setting || *end || number < 12 || number > 100)))
 		{
-			send_to_char("Use toggle screensize <12-48|default|off|0>.\r\n", send_ch);
+			send_to_char("Use toggle screensize <12-100|default|off|0>.\r\n", send_ch);
 			return;
 		}
 		ch->only.pc->screen_length = reset ? DEFAULT_SCREEN_LENGTH : number;
@@ -6211,6 +6363,9 @@ void do_toggle(P_char ch, char *arg, int /*cmd*/)
 		break;
 	case 66: // abort
 		result = PLR3_TOG(PLR3_ABORT_CASTING);
+		break;
+	case 67: // groupsort
+		result = PLR3_TOG(PLR3_GROUP_SORTED);
 		break;
 	default:
 		break;

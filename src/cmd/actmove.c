@@ -1,3 +1,4 @@
+#include "item/named_set_effects.h"
 /*
  * ***************************************************************************
  * File: actmove.c                                          Part of Duris *
@@ -7,6 +8,10 @@
  * ***************************************************************************
  */
 
+#include "world/object_template.h"
+#include "item/item_value.h"
+#include <vector>
+#include <new>
 #include "core/prototypes.h"
 #include "telemetry/telemetry_runtime.h"
 #include "core/structs.h"
@@ -45,6 +50,7 @@ extern int calming_gap_roll(const Rolls &rolls);
 
 extern P_desc descriptor_list;
 extern P_index obj_index;
+extern int top_of_objt;
 extern P_index mob_index;
 extern P_room world;
 extern const int top_of_world;
@@ -1164,7 +1170,7 @@ char *enter_message(P_char ch, P_char people, int exitnumb, char *amsg, int was_
 			      IS_AFFECTED(people, AFF_SKILL_AWARE)) &&
 			     StatSave(people, APPLY_INT, -4)) ||
 			    (GET_SPEC(ch, CLASS_ROGUE, SPEC_THIEF) &&
-			     affected_by_spell(ch, SKILL_SNEAK) &&
+			     affected_by_spell(ch, SKILL_SNEAK) && !named_set_sneak_active(ch) &&
 			     (number(0, 100) > GET_CHAR_SKILL(ch, SKILL_SNEAK))))
 				strcpy(amsg, tmp);
 			else
@@ -1654,8 +1660,9 @@ revalidate_movement:
 		need_movement += crippled_move_cost();
 	}
 
-	if (sprung_traps.empty() && IS_PC(ch) && GET_CHAR_SKILL(ch, SKILL_SNEAK) > 0 &&
-	    affected_by_spell(ch, SKILL_SNEAK) && !mount && GET_VITALITY(ch) > need_movement)
+	if (sprung_traps.empty() && IS_PC(ch) && !named_set_sneak_active(ch) &&
+	    GET_CHAR_SKILL(ch, SKILL_SNEAK) > 0 && affected_by_spell(ch, SKILL_SNEAK) && !mount &&
+	    GET_VITALITY(ch) > need_movement)
 	{
 		notch_skill(ch, SKILL_SNEAK, 5);
 	}
@@ -2287,6 +2294,8 @@ revalidate_movement:
 		 */
 	}
 
+	check_bard_song_rooms(ch, false);
+
 	return (1);
 }
 
@@ -2623,6 +2632,46 @@ int find_door(P_char ch, char *type, char *dir)
 	return (-1);
 }
 
+// One uniform choice over actual eligible templates; no temporary live objects.
+static bool faerie_reward_candidate(P_obj object)
+{
+	return (object->wear_flags & ITEM_TAKE) && object->type != ITEM_KEY &&
+	       !(object->extra_flags &
+		 (ITEM_ARTIFACT | ITEM_NORENT | ITEM_NOSHOW | ITEM_TRANSIENT)) &&
+	       !isname("_noquest_", object->name);
+}
+
+static int faerie_reward_vnum(int bag_vnum)
+{
+	std::vector<int> eligible;
+	try
+	{
+		for (int rnum = 0; rnum <= top_of_objt; ++rnum)
+		{
+			const int vnum = obj_index[rnum].virtual_number;
+			if (vnum < 1300 || vnum > 134000)
+				continue;
+			const auto *prototype = find_object_template(vnum);
+			if (!prototype)
+				continue;
+			auto view = inspect_object_template(*prototype);
+			if (!faerie_reward_candidate(&view))
+				continue;
+			const int score = itemvalue(*prototype);
+			if (score < 1 || (bag_vnum == REG_FAERIE_BAG_VNUM && score > 125) ||
+			    (bag_vnum == RARE_FAERIE_BAG_VNUM && score < 25) ||
+			    (bag_vnum == EXCEPT_FAERIE_BAG_VNUM && score < 50))
+				continue;
+			eligible.push_back(vnum);
+		}
+	}
+	catch (const std::bad_alloc &)
+	{
+		return 0;
+	}
+	return eligible.empty() ? 0 : eligible[number(0, static_cast<int>(eligible.size() - 1))];
+}
+
 void do_open(P_char ch, char *argument, int /*cmd*/)
 {
 	int door, other_room, retval;
@@ -2747,14 +2796,7 @@ void do_open(P_char ch, char *argument, int /*cmd*/)
 					    FALSE, ch, obj, 0, TO_ROOM);
 				}
 
-				P_obj robj;
-				long robjint;
-				bool validobj;
-				validobj = FALSE;
-				/*
-				debug snprintf(buf, MAX_STRING_LENGTH, "validobj value: %d\n\r", validobj);
-				send_to_char(buf, ch);
-				*/
+				P_obj robj = nullptr;
 				if (door == TURKEY_INNARDS_VNUM)
 				{
 					int roll = number(0, 500);
@@ -2773,52 +2815,30 @@ void do_open(P_char ch, char *argument, int /*cmd*/)
 				}
 				else
 				{
-					while (validobj == FALSE)
-					{
-						robjint = number(1300, 134000);
-						robj = read_object(robjint, VIRTUAL);
-						validobj = TRUE;
-						if (!robj)
-						{
-							validobj = FALSE;
-						}
-						else if (!IS_SET(robj->wear_flags, ITEM_TAKE) ||
-							 robj->type == ITEM_KEY ||
-							 IS_ARTIFACT(robj) ||
-							 IS_SET(robj->extra_flags, ITEM_NORENT) ||
-							 IS_SET(robj->extra_flags, ITEM_NOSHOW) ||
-							 IS_SET(robj->extra_flags,
-								ITEM_TRANSIENT) ||
-							 isname("_noquest_", robj->name))
-						{
-							validobj = FALSE;
-							extract_obj(robj, FALSE);
-						}
-						else if (door == REG_FAERIE_BAG_VNUM &&
-							 itemvalue(robj) > 125)
-						{
-							validobj = FALSE;
-							extract_obj(robj, FALSE);
-						}
-						else if (door == RARE_FAERIE_BAG_VNUM &&
-							 itemvalue(robj) < 25)
-						{
-							validobj = FALSE;
-							extract_obj(robj, FALSE);
-						}
-						else if (door == EXCEPT_FAERIE_BAG_VNUM &&
-							 itemvalue(robj) < 50)
-						{
-							validobj = FALSE;
-							extract_obj(robj, FALSE);
-						}
-					}
+					const int vnum = faerie_reward_vnum(door);
+					if (vnum)
+						robj = read_object(vnum, VIRTUAL);
 				}
+				if (!robj)
+				{
+					send_to_char(
+						"The magic fades without a reward; your container remains intact.\r\n",
+						ch);
+					return;
+				}
+
 				// Remove Curse, Secret, add Invis
 				set_obj_extra_flags(robj, robj->extra_flags & ~(ITEM_SECRET));
 				REMOVE_BIT(robj->extra_flags, ITEM_NODROP);
 				set_obj_extra_flags(robj, robj->extra_flags & ~(ITEM_INVISIBLE));
 
+				if (!obj_to_char(robj, ch))
+				{
+					send_to_char(
+						"The reward could not be delivered; your container remains intact.\r\n",
+						ch);
+					return;
+				}
 				if (door == TURKEY_INNARDS_VNUM)
 				{
 					act("&+rAfter some &+Rmessy &+rsearching, you finally find &n$p&+m!\r\n",
@@ -2834,10 +2854,9 @@ void do_open(P_char ch, char *argument, int /*cmd*/)
 					    FALSE, ch, robj, 0, TO_ROOM);
 				}
 
-				const bool object_survived = obj_to_char(robj, ch);
 				obj_from_char(obj);
 				extract_obj(obj, FALSE);
-				if (object_survived && itemvalue(robj) > 100)
+				if (itemvalue(robj) > 100)
 				{
 					statuslog(
 						ch->player.level,

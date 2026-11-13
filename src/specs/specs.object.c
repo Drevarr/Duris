@@ -10,6 +10,7 @@
 #include "abilities/abilities.h"
 #include <algorithm>
 #include <ctype.h>
+#include <errno.h>
 #include <list>
 #include <stdio.h>
 #include <string.h>
@@ -26,6 +27,7 @@
 #include "item/native_artifact_actions.h"
 #include "core/structs.h"
 #include "net/comm.h"
+#include "net/gmcp.h"
 #include "world/db.h"
 #include "world/events.h"
 #include "cmd/interp.h"
@@ -3905,7 +3907,7 @@ int sunblade(P_obj obj, P_char ch, int cmd, char *arg)
 	return FALSE;
 }
 
-int vigor_mask(P_obj obj, P_char ch, int cmd, char *arg)
+int vigor_mask(P_obj obj, P_char ch, int cmd, char * /*arg*/)
 {
 	P_char vict;
 	struct affected_type *af;
@@ -3918,15 +3920,7 @@ int vigor_mask(P_obj obj, P_char ch, int cmd, char *arg)
 	if (!OBJ_WORN_POS(obj, WEAR_FACE))
 		return (FALSE);
 
-	// Taking the mask off takes its vitality with it; the remove itself goes ahead.
-	if (cmd == CMD_REMOVE && OBJ_WORN_BY(obj, ch) && arg)
-	{
-		if (isname(arg, "mask") || isname(arg, "bahamut") || isname(arg, "vigor") ||
-		    isname(arg, "unique"))
-			affect_from_char(ch, SPELL_VITALITY);
-		return FALSE;
-	}
-
+	// Vitality is a timed spell, not a worn grant; removing the mask leaves it alone.
 	if (ch || cmd)
 		return (FALSE);
 
@@ -3970,23 +3964,41 @@ int vigor_mask(P_obj obj, P_char ch, int cmd, char *arg)
 		send_to_char(
 			"&+WThe essence of Bahamut streams out of your mask and attacks your victim!&N\n",
 			ch);
-		if (affected_by_spell(ch, SPELL_VITALITY))
+		const auto ordinary_vitality = [](const affected_type *affect)
 		{
+			return affect->type == SPELL_VITALITY && affect->duration >= 0 &&
+			       !(affect->flags & (AFFTYPE_SET_AFFECT | AFFTYPE_LINKED_OBJ |
+						  AFFTYPE_LINKED_CH | AFFTYPE_NOAPPLY));
+		};
+		bool has_vitality = false;
+		for (af = ch->affected; af; af = af->next)
+		{
+			if (af->type != SPELL_VITALITY)
+				continue;
+			has_vitality = true;
+			if (!ordinary_vitality(af))
+				continue;
 			send_to_char("&+Byou feel revitalized.\n", ch);
-			for (af = ch->affected; af; af = af->next)
+			if (af->modifier < GET_LEVEL(vict) * 4)
 			{
-				if (af->type == SPELL_VITALITY)
-				{
-					af->duration = 24;
-					af->modifier = GET_LEVEL(vict) * 4;
-				}
+				// Keep missing HP unchanged, and classify position only after reapplying.
+				all_affects(ch, FALSE);
+				af->modifier = GET_LEVEL(vict) * 4;
+				all_affects(ch, TRUE);
+				update_pos(ch);
 			}
+			af->duration = 24;
+			update_group_vitals(ch);
+			gmcp_char_vitals(ch);
+			gmcp_char_affects(ch);
 		}
-		else
+		if (!has_vitality)
 		{
 			spell_vitality(GET_LEVEL(vict), ch, NULL, 0, ch, 0);
 		}
-		if (affected_by_spell(vict, SPELL_VITALITY))
+		for (af = vict->affected; af && !ordinary_vitality(af); af = af->next)
+			;
+		if (af)
 		{
 			send_to_char("&+L   /\\             /\\\n", vict);
 			send_to_char("&+L   \\ \\           / /\n", vict);
@@ -4011,25 +4023,15 @@ int vigor_mask(P_obj obj, P_char ch, int cmd, char *arg)
 				vict);
 			send_to_char("&+L         \\___/&N\n", vict);
 
-			for (af = vict->affected; af; af = af->next)
+			// Removing ordinary Vitality can unsuspend a set grant; check the net HP after.
+			affect_remove(vict, af);
+			if (GET_HIT(vict) <= -10)
 			{
-				if (af->type == SPELL_VITALITY)
-				{
-					break;
-				}
+				die(vict, ch);
 			}
-			if (af)
+			else
 			{
-				// will removing vit kill the victim?
-				if (af->modifier >= (GET_HIT(vict) + 10))
-				{
-					die(vict, ch);
-				}
-				else
-				{
-					affect_remove(vict, af);
-					update_pos(vict);
-				}
+				update_pos(vict);
 			}
 		}
 		else
@@ -6779,7 +6781,7 @@ int changelog(P_obj obj, P_char ch, int cmd, char *args)
 	if (!args)
 	{
 		send_to_char(
-			"The book of files contain: src, areas, bugs, typos, ideas, cheats, cheaters, donations.\n",
+			"The book of files contain: bugs, typos, ideas, cheats, cheaters, donations.\n",
 			ch);
 		return TRUE;
 	}
@@ -6787,37 +6789,29 @@ int changelog(P_obj obj, P_char ch, int cmd, char *args)
 	o_buf[0] = '\0';
 
 	half_chop(args, arg, arg2);
-	if (!str_cmp(arg, "src"))
+	if (!str_cmp(arg, "bugs"))
 	{
-		f = fopen("lib/information/changelog.src", "r");
-	}
-	else if (!str_cmp(arg, "bugs"))
-	{
-		f = fopen("lib/reports/bugs", "r");
+		f = fopen(BUG_FILE, "r");
 	}
 	else if (!str_cmp(arg, "typos"))
 	{
-		f = fopen("lib/reports/typos", "r");
+		f = fopen(TYPO_FILE, "r");
 	}
 	else if (!str_cmp(arg, "ideas"))
 	{
-		f = fopen("lib/reports/ideas", "r");
+		f = fopen(IDEA_FILE, "r");
 	}
 	else if (!str_cmp(arg, "cheats"))
 	{
-		f = fopen("lib/reports/cheats", "r");
+		f = fopen(BUG_CHEAT, "r");
 	}
 	else if (!str_cmp(arg, "cheaters"))
 	{
-		f = fopen("lib/reports/cheaters", "r");
-	}
-	else if (!str_cmp(arg, "areas"))
-	{
-		f = fopen("lib/information/changelog.areas", "r");
+		f = fopen(CHEATERS_FILE, "r");
 	}
 	else if (!str_cmp(arg, "donations"))
 	{
-		f = fopen("logs/log/donation", "r");
+		f = fopen(LOG_DONATION, "r");
 	}
 	else
 	{
@@ -6826,9 +6820,10 @@ int changelog(P_obj obj, P_char ch, int cmd, char *args)
 
 	if (!f)
 	{
-		send_to_char(
-			"Could not open file.\nThe book of files contain: src, areas, bugs, typos, ideas, cheats, cheaters, donations.\n",
-			ch);
+		if (errno == ENOENT)
+			send_to_char("Nothing has been recorded there yet.\n", ch);
+		else
+			send_to_char("Could not open file.\n", ch);
 		return TRUE;
 	}
 
@@ -6851,9 +6846,15 @@ int changelog(P_obj obj, P_char ch, int cmd, char *args)
 			}
 		}
 	} while (ret);
-	strcat(o_buf, "\n");
-
 	fclose(f);
+
+	if (!o_buf[0])
+	{
+		send_to_char("Nothing has been recorded there yet.\n", ch);
+		return TRUE;
+	}
+
+	strcat(o_buf, "\n");
 	page_string(ch->desc, o_buf, 1);
 	return TRUE;
 }

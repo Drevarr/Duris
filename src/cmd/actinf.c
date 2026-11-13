@@ -56,6 +56,7 @@ using namespace std;
 #include "economy/currency_transaction.h"
 #include "economy/boon_reward_transaction.h"
 #include "item/objmisc.h"
+#include "classes/necromancy.h"
 #include "classes/paladins.h"
 #include "persistence/persistence_checkpoint.h"
 #include "persistence/persistence_observability.h"
@@ -830,6 +831,12 @@ char *show_obj_to_char(P_obj object, P_char ch, int mode, bool print, const Outp
 		{
 			strcat(buf, "Ye roll up yer sleeves, and examine the dead...");
 			ageCorpse(ch, object, buf);
+			// Those who raise the dead can judge what a corpse was in life.
+			if ((GET_CLASS(ch, CLASS_NECROMANCER) || GET_CLASS(ch, CLASS_THEURGIST)) &&
+			    object->value[CORPSE_LEVEL])
+				checked_snprintf(buf + strlen(buf), MAX_STRING_LENGTH - strlen(buf),
+						 "\nIn life this was a creature of level %d.",
+						 abs(object->value[CORPSE_LEVEL]));
 		}
 		else if (object->type == ITEM_DRINKCON)
 		{
@@ -1050,21 +1057,22 @@ void show_visual_status(P_char ch, P_char tar_char)
 	//   snprintf(buf, 256, "$N %%s");
 	// }
 	// else
-	if (!racewar(ch, tar_char) || IS_ILLITHID(ch) /* || IS_TRUSTED(ch)*/)
+	if (!GET_RACE(tar_char))
+	{
+		// A creature authored without a race shows only its condition.
+		snprintf(buf, 256, "$N %%s");
+	}
+	else if (!racewar(ch, tar_char) || IS_ILLITHID(ch) /* || IS_TRUSTED(ch)*/)
 	{
 		if (ch != tar_char)
 		{
 			snprintf(buf, 256, "$N appears to be %s and %%s",
-				 GET_RACE(tar_char) ?
-					 race_names_table[(int)GET_RACE1(tar_char)].ansi :
-					 "&=LRBogus race!&n");
+				 race_names_table[(int)GET_RACE1(tar_char)].ansi);
 		}
 		else
 		{
 			snprintf(buf, 256, "You appear to be %s and %%s",
-				 GET_RACE(tar_char) ?
-					 race_names_table[(int)GET_RACE1(tar_char)].ansi :
-					 "&=LRBogus race!&n");
+				 race_names_table[(int)GET_RACE1(tar_char)].ansi);
 		}
 	}
 	else
@@ -3206,6 +3214,9 @@ void new_look(P_char ch, const char *argument, int cmd, int room_no)
 
 	case 24: // looking 'inside' something - so we can show a room w/o the map
 
+		if (cmd == CMD_LOOK && room_no == ch->in_room &&
+		    (keyword_no == 8 || keyword_no == 9))
+			gmcp_room_info(ch);
 		switch (keyword_no)
 		{
 		case 8: /* look COMMAND, with NULL args, brief is forced */
@@ -4636,10 +4647,11 @@ static void show_world_persistence(P_char ch)
 	send_to_char(line, ch);
 
 	snprintf(line, sizeof(line),
-		 "deferred state=%s pending=%llu scheduled=%llu failed_unscheduled=%llu "
-		 "attempts=%llu failures=%llu oldest_age_ms=%llu\n",
+		 "deferred state=%s pending=%llu scheduled=%llu waiting_destination=%llu "
+		 "failed_unscheduled=%llu attempts=%llu failures=%llu oldest_age_ms=%llu\n",
 		 deferred.pending == 0 ? "empty" : "pending", (unsigned long long)deferred.pending,
 		 (unsigned long long)deferred.scheduled,
+		 (unsigned long long)deferred.waiting_destination,
 		 (unsigned long long)deferred.failed_unscheduled,
 		 (unsigned long long)deferred.attempts, (unsigned long long)deferred.failures,
 		 (unsigned long long)deferred.oldest_age_msec);
@@ -6283,6 +6295,11 @@ void do_score(P_char ch, char * /*argument*/, int /*cmd*/)
 		hardcorepts = (hardcorepts / (float)hardcore_config_get()->score_display_divisor);
 		snprintf(buf, MAX_STRING_LENGTH, "&nHardCore pts:   &+R%+6.2f&n\n", hardcorepts);
 		send_to_char(buf, ch);
+		if (hardcore_config_get()->death_permadeath)
+			send_to_char_f(ch, "&nHardCore lives: &+R%ld&n of %d remaining\n",
+				       MAX(0L, hardcore_config_get()->death_max_count -
+						       (long)ch->only.pc->numb_deaths),
+				       hardcore_config_get()->death_max_count);
 	}
 	/* frags */
 #ifdef STANCES_ALLOWED

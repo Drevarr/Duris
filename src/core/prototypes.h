@@ -94,6 +94,7 @@ void account_delete_char_loaded(P_desc);
 void account_display_info(P_desc, char *);
 void delete_account(P_desc, char *);
 void verify_delete_account(P_desc, char *);
+void final_delete_account(P_desc, char *);
 void display_account_information(P_desc d, P_acct account = NULL);
 void display_account_information_to_char(P_char ch, P_acct account);
 void clear_account(P_acct);
@@ -530,7 +531,8 @@ void do_quit(P_char, char *, int);
 void do_recite(P_char, char *, int);
 void do_rub(P_char, char *, int);
 void do_save(P_char, char *, int);
-bool do_save_silent(P_char, int);
+enum class player_save_pipeline_result : uint8_t;
+bool do_save_silent(P_char, int, player_save_pipeline_result *result = nullptr);
 void do_sneak(P_char, char *, int);
 void do_split(P_char, char *, int);
 void do_steal(P_char, char *, int);
@@ -751,6 +753,8 @@ void do_artifact(P_char, char *, int);
 void artifact_feed_to_min(P_obj arti, int min_minutes);
 void feed_artifact(P_char ch, P_obj obj, int feed_seconds, int bypass);
 void artifact_switch_check(P_char ch, P_obj obj);
+bool artifact_second_of_type(P_char ch, P_obj arti);
+bool artifact_second_of_type(P_char ch, P_obj arti, P_obj also_taking);
 void event_check_arti_poof(P_char ch, P_char vict, P_obj obj, void *arg);
 void event_artifact_wars(P_char, P_char, P_obj, void *);
 void dropped_arti_hunt();
@@ -764,7 +768,14 @@ void removeArtiData(char *name);
 // bool SINGING(P_char); <-- Turned into macro shown below.
 #define SINGING(ch) (IS_ALIVE(ch) && IS_AFFECTED3(ch, AFF3_SINGING))
 
-P_obj has_instrument(P_char);
+bool player_bard(P_char ch, int spec, int level);
+P_char dispel_character_affect(P_char ch, P_char victim, int type);
+void spell_hurricane_hit(P_char ch, P_char victim, int damage);
+void spell_single_tempest(int level, P_char ch, char *args, int type, P_char victim, P_obj obj);
+bool bard_spell_echo(P_char ch, int spell, char *args, uint64_t target_id, int room);
+double bard_spell_echo_factor();
+void check_bard_song_rooms(P_char ch, bool followers_may_move);
+P_obj has_instrument(P_char, int song);
 void do_play(P_char, char *, int);
 void stop_singing(P_char);
 void do_wail(P_char, char *, int);
@@ -1222,6 +1233,8 @@ void checkFragList(P_char ch);
 
 /* random.mob.c */
 P_char create_random_mob(int theme, int mob_level);
+void apply_awareness(P_char ch, int rating);
+void spell_ultravision(int, P_char, char *, int, P_char, P_obj);
 void do_namedreport(P_char ch, char *argument, int cmd);
 
 /* training_dummy.c */
@@ -1551,6 +1564,14 @@ void breath_weapon_basalt(int, P_char, char *, int, P_char, P_obj);
  * and move everything back to its proper place. 06 May 2003 dbb */
 
 void spell_mielikki_vitality(int, P_char, char *, int, P_char, P_obj);
+// What a cast does to the same buff already on its target.
+enum class spell_refresh
+{
+	replace,
+	renew,
+	nothing
+};
+spell_refresh spell_refresh_rule(int incoming, int existing);
 void do_nothing_spell(int, P_char, char *, int, P_char, P_obj);
 bool can_relocate_to(P_char, P_char);
 void cure_arrow_wound(P_char);
@@ -1906,6 +1927,7 @@ int max_spells_in_circle(P_char, int);
 int spells_memmed_in_circle(P_char, int);
 struct extra_descr_data *find_spell_description(P_obj);
 void AddScribingAffect(P_char);
+void stop_scribing(P_char);
 void SetBookNewbySpells(P_char);
 void SetSpellCircles(void);
 void add_scribe_data(int, P_char, P_obj, int, P_obj, P_char, void (*done_func)(P_char) = NULL);
@@ -2354,6 +2376,7 @@ void do_randobj(P_char, char *, int);
 
 uint64_t hash64(uint64_t x);
 void randomize(uint64_t seed);
+void apply_test_rng_seed(void);
 
 /*  arena.c */
 void initialize_arena(void);
@@ -2446,6 +2469,7 @@ void NukeRedunantSpellcast(P_char);
 void SpellCastProcess(P_char, struct spellcast_datatype *);
 void SpellCastShow(P_char, int);
 void StopCasting(P_char);
+void interrupt_spellcasting(P_char);
 void do_abort(P_char, char *, int);
 bool cmd_allowed_while_casting(P_char, int);
 bool input_allowed_while_casting(P_char, const char *);

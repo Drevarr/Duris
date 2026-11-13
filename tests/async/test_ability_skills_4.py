@@ -32,7 +32,7 @@ SHARED = {
     "classes/paladins.c": """cleave_damage cleave_target_rest smite_evil_interval smite_evil_threshold smite_evil_damage""".split(),
     "classes/reavers.c": """ice_reaver_1h_bludgeon_penalty ice_reaver_2h_bludgeon_penalty flame_reaver_2h_penalty""".split(),
     "combat/fight.c": """weapon_check_skill weapon_critical_check weapon_fumble_check weapon_skill_lines reaver_round_line""".split(),
-    "classes/salchemist.c": """spellbind_failure_roll spellbind_success_damage_roll spellbind_strong_roll spellbind_condition_loss encrust_proc_roll enchant_norepair_roll spellbind_bonus spellbind_fine_bonus mixpoison_lag mix_start_lag mix_lag mix_potion_threshold mix_bottle_roll mix_ingredients_top encrust_lag fix_repaired_condition fix_failed_damage smelt_risk_roll enchant_circle_limit enchant_platinum enchant_min_condition enchant_lag enchant_fumble_roll enchant_fumble_damage enchant_duration""".split(),
+    "classes/salchemist.c": """spellbind_failure_roll spellbind_success_damage_roll spellbind_strong_roll spellbind_condition_loss encrust_proc_roll enchant_norepair_roll spellbind_bonus spellbind_fine_bonus print_poison_ingredients mixpoison_lag mix_start_lag mix_lag mix_potion_threshold mix_bottle_roll mix_ingredients_top encrust_lag fix_repaired_condition fix_failed_damage smelt_risk_roll enchant_circle_limit enchant_platinum enchant_min_condition enchant_lag enchant_fumble_roll enchant_fumble_damage enchant_duration""".split(),
     "economy/tradeskill.c": """fishing_pole_damage_roll tradeskill_vitality_cost fishing_rounds fishing_interval fishing_exp_share fishing_exp_step fishing_exp_floor fishing_exp fishing_exp_memory bandage_fumble_roll bandage_heal bandage_poison_roll bandage_interval bandage_duration bandage_lag""".split(),
     "economy/crafting.c": """crafting_level_gate_multiplier crafting_value_limit crafting_facts""".split(),
     "economy/mining.c": """mine_rounds mine_exp mine_ride_roll mine_rock_roll""".split(),
@@ -160,7 +160,7 @@ HANDLER_CALLS = {
     ("economy/crafting.c", "ALL"): ["iVal > crafting_value_limit(ch) ||"],
     ("economy/mining.c", "mine"): ["data.counter = mine_rounds(obj->value[2], GET_CHAR_SKILL(ch, SKILL_MINE));"],
     ("economy/mining.c", "event_mine_check"): ["mine_exp(GET_CHAR_SKILL(ch, SKILL_MINE))", "GET_VITALITY(ch) < 10", "!mine_ride_roll(live_rolls, GET_CHAR_SKILL(ch, SKILL_MINE))", "!mine_rock_roll(live_rolls, GET_CHAR_SKILL(ch, SKILL_MINE))", "tradeskill_vitality_cost(live_rolls, GET_CHAR_SKILL(ch, SKILL_MINE))"],
-    ("item/salvage.c", "do_salvage"): ["GET_CHAR_SKILL(ch, SKILL_SALVAGE) < number(1, 105)", "!salvage_pieces_roll(live_rolls)", "playerroll = salvage_recipe_score(ch);"],
+    ("item/salvage.c", "do_salvage"): ["GET_CHAR_SKILL(ch, SKILL_SALVAGE) < number(1, 105)", "!salvage_pieces_roll(live_rolls)", "playerroll = salvage_recipe_score(ch, scitools > 0 ? crafting_scientific_tools_recipe_player_multiplier() : 1);"],
     ("net/listen.c", "listen_say"): ["range = listen_range(iskl);", "improved_listen_far_threshold(iskl) < number(0, 100)", "listen_hear_threshold(tch) > (number(25, 45))", "GET_CHAR_SKILL(tch, SKILL_LISTEN) > number(15, 35)"],
     ("net/listen.c", "listen_gsay"): ["range = listen_range(iskl);", "improved_listen_far_threshold(iskl) < number(0, 100)", "listen_hear_threshold(tch) > (number(25, 45))", "GET_CHAR_SKILL(tch, SKILL_LISTEN) > number(20, 40)"],
     ("net/listen.c", "listen_emote"): ["irange = improved_listen_emote_range();", "(improved_listen_far_threshold(iskl)) < number(0, 100)", "improved_listen_emote_threshold(iskl) > (number(15, 55))", "number(70, 90) > improved_listen_small_threshold(iskl)"],
@@ -191,6 +191,7 @@ HARNESS = r'''
 #include "magic/spells.h"
 #include "abilities/abilities.h"
 #include "classes/salchemist.h"
+#include "world/object_template.h"
 #include "classes/epic_skills.h"
 #include <algorithm>
 #include <cassert>
@@ -217,8 +218,9 @@ int is_wearing_necroplasm(P_char) { return 0; }
 bool crafting_scientific_tools_prevent_breakage(void) { return tools_prevent; }
 static int crafting_level_gate = 3;
 struct potion potion_data[] = { { SPELL_ENTANGLE, 41, { 0 }, 1 }, { SPELL_GREASE, 11, { 0 }, 2 }, { 0, 0, { 0 }, 0 } };
-struct poison { int poison_type; int level_required; int skill_required; int ingredients[MAX_INGREDIENTS + 1]; int vnum; };
-struct poison poison_data[] = { { 1, 51, 100, { 0 }, 1 }, { 2, 21, 30, { 0 }, 2 }, { 0, 0, 0, { 0 }, 0 } };
+struct poison { int poison_type; int level_required; int skill_required; int ingredients[MAX_INGREDIENTS + 1]; int vnum; const char *effect; };
+struct poison poison_data[] = { { 1, 51, 100, { 0 }, 1, "fixture" }, { 2, 21, 30, { 0 }, 2, "fixture" }, {} };
+const object_template *find_object_template(int) { return nullptr; }
 
 FUNCTIONS
 
@@ -710,7 +712,8 @@ static void check_pages() {
                      "  It takes a potion bottle and the ingredients.\n");
     EXACT(mixpoison_facts, "  Poisons your level and rating can mix: 2 of 2\n"
                            "  Your lag: 4 seconds\n"
-                           "  It takes a poison vial and the ingredients. Type mixpoison list for them.\n");
+                           "  Mixing takes a poison vial and the listed ingredients.\n"
+                           "  Using a prepared poison requires Apply Poison, not Mixpoison.\n");
     EXACT(encrust_facts, "  Chance: 100 in 110\n"
                          "  A failure destroys the item and the jewel.\n"
                          "  Your lag: 4 seconds\n"

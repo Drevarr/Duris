@@ -460,8 +460,9 @@ struct edit_data
 #define INNATE_WATER_AFFINITY 181
 #define INNATE_FIRE_AFFINITY 182
 #define INNATE_EARTH_AFFINITY 183
+#define INNATE_MONKEY_GRIP 184
 
-#define LAST_INNATE INNATE_EARTH_AFFINITY // LAST means last, not last + 1 or whatever
+#define LAST_INNATE INNATE_MONKEY_GRIP // LAST means last, not last + 1 or whatever
 
 struct extra_descr_data
 {
@@ -573,6 +574,8 @@ struct spellcast_datatype
 	unsigned char flags;
 	// The tick the scheduled segment is due at; zero until the first one is scheduled.
 	unsigned long long due_tick;
+	// Process-local identity of the cast's wait; a later combat wait has a different sequence.
+	unsigned long long wait_sequence;
 };
 
 struct scribing_data_type
@@ -584,6 +587,7 @@ struct scribing_data_type
 		P_obj obj;
 		P_char teacher;
 	} source;
+	uint64_t source_id; /* obj_uid of source.obj or runtime_id of source.teacher */
 
 	int spell;
 	int pagetime; /* in 1/4 seconds, RL / 1 pulses - time to
@@ -962,6 +966,7 @@ struct room_data
 #define PLR3_APPROVAL_PENDING BIT_24 /* staff decision survives disconnect/restart */
 #define PLR3_STARTER_KIT_PENDING BIT_25 /* first entry owes its bound kit */
 #define PLR3_CHAOS_STARTER_KIT BIT_26 /* kit policy decided at first entry */
+#define PLR3_GROUP_SORTED BIT_27 /* group list: players before pets, no race or aura tags */
 
 /* For players : Prompt flags (16 bits max) */
 #define PROMPT_NONE BIT_1
@@ -1705,12 +1710,13 @@ struct txt_q
 #define CON_ACCT_RESET_NEWPW2 92 // account recovery: waiting for the confirmation
 #define CON_STAT_METHOD 93 // choose starting stat distribution before rolling
 #define CON_CREATION_SAVE 94 // waiting for a kept-character save or cancellation
+#define CON_ACCT_FINAL_DELETE_ACCT 95 // account deletion: the last YES warning
 
 #define PLAYER_LOAD_MODE_NONE 0
 #define PLAYER_LOAD_MODE_ACCOUNT 1
 #define PLAYER_LOAD_MODE_ACCOUNT_DELETE 3
 
-#define TOTAL_CON 94
+#define TOTAL_CON 95
 
 enum ws_chargen_phase
 {
@@ -1838,6 +1844,7 @@ struct descriptor_data
 	unsigned char *ws_output_buffer;
 	size_t ws_output_len;
 	size_t ws_output_offset;
+	size_t ws_output_frame_left; /* unsent bytes of a data frame already started */
 	unsigned char *ws_control_output_buffer;
 	size_t ws_control_output_len;
 	size_t ws_control_output_offset;
@@ -1918,6 +1925,7 @@ struct descriptor_data
 
 	/* ping/pong for dead connection detection */
 	time_t ws_last_ping;
+	const char *ws_close_cause; /* static first close cause, for the close summary */
 	int ws_pong_received;
 
 	/* message fragmentation (rfc 6455 fin=0 frames) */

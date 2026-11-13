@@ -99,6 +99,10 @@ MANUAL_ONLY_TEST_NAMES = frozenset(
         "test_kept_character_ambiguous_commit.py",
         "test_mysql_playtime_journey.py",
         "test_mysql_coin_denomination_journey.py",
+        # make test-db runs these three on disposable MariaDB with no further arguments.
+        "test_mysql_auction_item_journey.py",
+        "test_mysql_auction_money_journey.py",
+        "test_mysql_smith_payment_journey.py",
         "test_mysql_locker_grant_journey.py",
         "test_mysql_nexus_journey.py",
         "test_playtime_mysql_repository.py",
@@ -150,6 +154,8 @@ MANUAL_ONLY_TEST_NAMES = frozenset(
         "test_conjurer_gameplay_journey.py",
         "test_shambler_reflection_journey.py",
         "test_minor_creation_instrument_journey.py",
+        "test_bard_support_journey.py",
+        "test_bard_disharmonist_journey.py",
         "test_generated_npc_journey.py",
         "test_mariadb_chaos_new_character_kit.py",
         "test_mariadb_newbie_regrant_journey.py",
@@ -301,14 +307,24 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="list discovered tests without running them",
     )
+    parser.add_argument(
+        "--shard",
+        metavar="K/N",
+        help="run only part K of N; parts take every Nth test, so CI can split the suite across jobs",
+    )
     args = parser.parse_args()
     if args.jobs < 0:
         parser.error("--jobs must be zero or greater")
+    if args.shard:
+        part, _, parts = args.shard.partition("/")
+        if not (part.isdigit() and parts.isdigit() and 1 <= int(part) <= int(parts)):
+            parser.error("--shard must be K/N with 1 <= K <= N")
+        args.shard = (int(part), int(parts))
     return args
 
 
 def write_history(results: list[TestResult], started: str, match: str | None,
-                  jobs: int) -> None:
+                  shard: tuple[int, int] | None, jobs: int) -> None:
     """Keep this run's results in bin/test-history/ for scripts/test_history.py, which finds
     the flaky tests and the ones that grow slower. bin/ is ignored: the history is local.
     A run is dirty with any changed or untracked file: the runner finds untracked tests, the
@@ -325,7 +341,7 @@ def write_history(results: list[TestResult], started: str, match: str | None,
     directory.mkdir(parents=True, exist_ok=True)
     record = {
         "commit": commit, "dirty": dirty, "started": started, "finished": time.time(),
-        "match": match, "jobs": jobs,
+        "match": match, "shard": shard, "jobs": jobs,
         "tests": [{"path": relative(result.path), "status": result.status,
                    "seconds": round(result.elapsed, 3)} for result in results],
     }
@@ -337,6 +353,9 @@ def write_history(results: list[TestResult], started: str, match: str | None,
 def main() -> int:
     args = parse_args()
     tests = discover_tests(args.match)
+    if args.shard:
+        part, parts = args.shard
+        tests = tests[part - 1::parts]
 
     if args.list:
         for path in tests:
@@ -423,7 +442,7 @@ def main() -> int:
     run_all([path for path in ordered if path not in isolated], jobs)
     run_all(isolated, 1)
 
-    write_history(results, started_utc, args.match, jobs)
+    write_history(results, started_utc, args.match, args.shard, jobs)
     if failures:
         print("\nFailed:")
         for result in failures:

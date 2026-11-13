@@ -6,6 +6,7 @@
 // harness therefore keeps a local stub only where it must behave differently.
 #include "core/prototypes.h"
 #include "core/utils.h"
+#include "magic/spells.h"
 #include "account/account.h"
 #include "item/storage_lockers.h"
 #include "item/starter_kit_intent.h"
@@ -25,6 +26,7 @@
 #include "sql/item_owner_rows.h"
 #include "economy/divine_trade_runtime.h"
 #include "economy/currency_transaction.h"
+#include "player/player_snapshot_capture.h"
 
 #include <cstdlib>
 #include <cerrno>
@@ -44,6 +46,10 @@ HARNESS_STUB void write_output(const char *text, txt_q *queue)
 // the real implementation, which replaces these empty ownership boundaries.
 HARNESS_STUB named_set_ordinary_cast::named_set_ordinary_cast(P_char, P_char, int) {}
 HARNESS_STUB named_set_ordinary_cast::~named_set_ordinary_cast() {}
+HARNESS_STUB bool named_set_sneak_active(P_char)
+{
+	return false;
+}
 HARNESS_STUB void update_named_set_suspension(P_char, const affected_type *) {}
 HARNESS_STUB int named_set_cooldown_remaining(P_char, int)
 {
@@ -110,6 +116,7 @@ HARNESS_STUB bool account_creation_owner_pending(const char *)
 	return false;
 }
 HARNESS_STUB void account_creation_saved(const player_save_completion &) {}
+HARNESS_STUB void deferred_save_recovery_written(int, player_revision_t) {}
 HARNESS_STUB void account_creation_pulse() {}
 // Fixtures without the player-save pipeline have no pending quest transition.
 HARNESS_STUB bool player_save_pipeline_world_quest_pending(int)
@@ -452,4 +459,34 @@ __attribute__((weak)) bool kept_character_recovery_pending(int)
 __attribute__((weak)) bool kept_character_recovery_owner_pending(const char *)
 {
 	return false;
+}
+HARNESS_STUB void refresh_enhancement_item_values() {}
+HARNESS_STUB void refresh_world_quest_item_values() {}
+// A character inside a locker is recorded in the room outside its door; nothing here is in a locker.
+HARNESS_STUB int player_save_room_vnum(P_char, int room_vnum)
+{
+	return room_vnum;
+}
+
+// Unrelated movement fixtures have no player-only Bard song links. Their lifecycle fixture
+// supplies the real cleanup and tests both ordinary walks and relocations.
+HARNESS_STUB void check_bard_song_rooms(P_char ch, bool)
+{
+	for (auto *af = ch->affected; af; af = af->next)
+		if (af->type == SONG_SHADOW_PIPER || af->type == SONG_NIMBLENESS)
+			std::abort();
+	for (auto *link = ch->linked; link; link = link->next_linked)
+		if (link->affect && (link->affect->type == SONG_SHADOW_PIPER ||
+				     link->affect->type == SONG_NIMBLENESS))
+			std::abort();
+}
+
+// Standalone cast/damage fixtures have no Bard spell Echo scope.
+HARNESS_STUB bool bard_spell_echo(P_char, int, char *, uint64_t, int)
+{
+	return false;
+}
+HARNESS_STUB double bard_spell_echo_factor()
+{
+	return 1.0;
 }

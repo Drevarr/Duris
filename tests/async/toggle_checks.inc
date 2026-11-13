@@ -80,6 +80,8 @@ static void toggle_matrix()
 		{ "gmcp", 2, PLR3_NOGMCP, true, "GMCP", "disabled", "enabled" },
 		{ "jchat", 2, PLR3_JESTROS, true, "Jchat", "OFF", "ON" },
 		{ "abort", 2, PLR3_ABORT_CASTING, false, "AbortCast", "disabled", "enabled" },
+		{ "groupsort", 2, PLR3_GROUP_SORTED, false, "GroupSorted", "classic layout",
+		  "players before pets" },
 	};
 	unsigned *banks[] = { &ch.specials.act, &ch.specials.act2, &ch.specials.act3 };
 	const std::array<unsigned, 3> unrelated{ PLR_MAIL, PLR2_HARDCORE_CHAR,
@@ -214,16 +216,16 @@ static void toggle_matrix()
 		       std::string::npos);
 		assert(pc.screen_length == DEFAULT_SCREEN_LENGTH);
 	}
-	for (int length : { 12, 24, 48 })
+	for (int length : { 12, 24, 48, 96, 100 })
 	{
 		run("screensize " + std::to_string(length));
 		assert(pc.screen_length == length);
 	}
-	for (const char *invalid : { "banana", "-1", "11", "49", "24junk", "24 30",
+	for (const char *invalid : { "banana", "-1", "11", "101", "24junk", "24 30",
 				     "9999999999999999999999999999999999", "on" })
 	{
 		pc.screen_length = 31;
-		assert(run(std::string("screensize ") + invalid).find("12-48") !=
+		assert(run(std::string("screensize ") + invalid).find("12-100") !=
 		       std::string::npos);
 		assert(pc.screen_length == 31);
 	}

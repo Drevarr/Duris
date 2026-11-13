@@ -454,6 +454,16 @@ static void necroplasm_cases() {
 int main() {
     nevent_bind_game_thread(); ne_dead_event_pool=&test_pool;
     fake_clock_ns=1000000000ULL; ne_events();
+    for(int vnum:{21,22}) for(bool enabled:{false,true}) {
+        native_scene s(vnum,enabled);
+        const auto before=native_configs;
+        const auto pending_before=item_actions_pending();
+        assert(native_artifact_configured_owner(vnum)==native_artifact_owns(vnum));
+        assert(native_configs==before && item_actions_pending()==pending_before);
+        properties["itemActions.artifact."+std::to_string(vnum)+".enabled"]=2;
+        assert(native_artifact_configured_owner(vnum)); // Invalid opt-in is owned/fail-closed.
+        assert(native_configs==before && item_actions_pending()==pending_before);
+    }
     tsunami_cases(); mirror_cases(); necroplasm_cases();
     std::puts("Native artifacts: Tsunami, ioun and necroplasm parity, mana, terrain, legality, linked forms, cancellation and extraction passed");
 }
@@ -466,14 +476,16 @@ callbacks += '\n' + '\n'.join(function(ROOT / 'src/magic/magic.c', signature) fo
     'static int vampire_duration(', 'static int vampire_str_max(', 'static int vampire_con_max(',
     'static int vampire_hitroll(', 'static int vampire_damroll(', 'void spell_vampire('))
 callbacks += '\n' + '\n'.join(function(ROOT / 'src/magic/magic.c', signature) for signature in (
-    'static int vitality_hit_points(', 'static int vitality_duration('))
+    'static int vitality_hit_points(', 'static int vitality_duration(',
+    'spell_refresh spell_refresh_rule('))
 callbacks += '\n' + function(ROOT / 'src/magic/magic.c', 'void spell_vitality(').replace('void spell_vitality(', 'static void real_spell_vitality(', 1)
 hp_source = (ROOT / 'src/magic/affects.c').read_text()
 hp_start = hp_source.index('\tif (!mode && (GET_MAX_HIT(ch) == 0))')
 hp_recalc = hp_source[hp_start:hp_source.index('\n\tt1 = GET_MAX_VITALITY(ch)', hp_start)]
 affects = '\n'.join(function(ROOT / 'src/magic/affects.c', signature) for signature in (
     'void clear_links(P_char ch, P_obj obj, int flag)',
-    'void unlink_char_obj_affect(P_char ch, struct affected_type *af)'))
+    'void unlink_char_obj_affect(P_char ch, struct affected_type *af)',
+    'struct affected_type *get_spell_from_char(P_char ch, int spell, void *context, int flagMask)'))
 with tempfile.TemporaryDirectory(prefix='duris-native-artifacts-') as directory:
     source = Path(directory) / 'harness.cpp'; binary = Path(directory) / 'harness'
     source.write_text(platform + fixture + boundary + HARNESS.replace('// INSERT_CALLBACKS', callbacks).replace('// INSERT_AFFECTS', affects).replace('// INSERT_HP_RECALC', hp_recalc))

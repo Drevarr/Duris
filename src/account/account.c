@@ -125,6 +125,35 @@ void display_account_deletion_confirmation(P_desc d, bool retry)
 	d->prompt_mode = TRUE;
 }
 
+void display_account_deletion_last_warning(P_desc d)
+{
+	// clang-format off
+	SEND_TO_Q(
+		"\r\n"
+		"&=RW   !!!  STOP  !!!   THIS IS YOUR LAST CHANCE TO TURN BACK   !!!  STOP  !!!   &n\r\n"
+		"\r\n"
+		"&+W  .-----.    &+Y#     #    #    ######  #     # ### #     #  #####   &+W  .-----.&n\r\n"
+		"&+W /       \\   &+Y#  #  #   # #   #     # ##    #  #  ##    # #     #  &+W /       \\&n\r\n"
+		"&+W|  &+RX   X&+W  |  &+R#  #  #  #   #  #     # # #   #  #  # #   # #        &+W|  &+RX   X&+W  |&n\r\n"
+		"&+W|    ^    |  &+R#  #  # #     # ######  #  #  #  #  #  #  # #  ####  &+W|    ^    |&n\r\n"
+		"&+W \\ ,---, /   &+R#  #  # ####### #   #   #   # #  #  #   # # #     #  &+W \\ ,---, /&n\r\n"
+		"&+W  |IIIII|    &+r#  #  # #     # #    #  #    ##  #  #    ## #     #  &+W  |IIIII|&n\r\n"
+		"&+W  '-----'    &+r ## ##  #     # #     # #     # ### #     #  #####   &+W  '-----'&n\r\n"
+		"\r\n"
+		"&=RW                 YOU ARE ABOUT TO DESTROY THIS ENTIRE ACCOUNT                &n\r\n"
+		"\r\n"
+		"           &+YIF YOU TYPE &=RW YES &n&+Y THIS ACCOUNT WILL BE &+RDELETED FOREVER&+Y.&n\r\n"
+		"         &+REVERY CHARACTER. EVERY LEVEL. EVERY ITEM. EVERYTHING. GONE.&n\r\n"
+		"\r\n"
+		"   &+WTHIS IS UNRECOVERABLE. THERE ARE NO RESTORES. THERE ARE NO EXCEPTIONS.&n\r\n"
+		"  &+RNO GOD, NO IMMORTAL, AND NO ADMIN CAN BRING IT BACK. NOT EVEN IF YOU BEG.&n\r\n"
+		"\r\n"
+		"Type &+RYES&n in capitals to delete forever, or &+Ganything else&n to cancel: ",
+		d);
+	// clang-format on
+	d->prompt_mode = TRUE;
+}
+
 bool capture_account_deletion_identities(P_desc d,
 					 std::vector<account_deletion_identity> *identities)
 {
@@ -1979,7 +2008,7 @@ void display_character_list(P_desc d, P_acct account)
 		"&+y|===========================================================================|&n\r\n",
 		d);
 	SEND_TO_Q(
-		"&+y|&n # &+y|&n Character    &+y|&n Level &+y|&n Race         &+y|&n Class        &+y|&n Last Room        &+y|&n\r\n",
+		"&+y|&n # &+y|&n Character    &+y|&n Lvl &+y|&n Race        &+y|&n Class        &+y|&n Last Room    &+y|&n Rest &+y|&n\r\n",
 		d);
 	SEND_TO_Q(
 		"&+y|---------------------------------------------------------------------------|&n\r\n",
@@ -2033,8 +2062,8 @@ void display_character_list(P_desc d, P_acct account)
 		// truncate strings if too long for table
 		if (strlen(name_capitalized) > 12)
 			name_capitalized[12] = '\0';
-		if (strlen(race_str) > 12)
-			race_str[12] = '\0';
+		if (strlen(race_str) > 11)
+			race_str[11] = '\0';
 		if (strlen(class_str) > 12)
 			class_str[12] = '\0';
 
@@ -2051,10 +2080,10 @@ void display_character_list(P_desc d, P_acct account)
 			room_name_src = "Unknown";
 		}
 
-		// truncate room name to fit column (16 visible chars) while preserving ansi codes
+		// truncate room name to fit column (12 visible chars) while preserving ansi codes
 		size_t src_idx = 0, dst_idx = 0;
 		int visible_count = 0;
-		int max_visible = 16;
+		int max_visible = 12;
 		while (room_name_src[src_idx] && dst_idx + 1 < sizeof room_display)
 		{
 			if (room_name_src[src_idx] == '&' && room_name_src[src_idx + 1])
@@ -2080,11 +2109,29 @@ void display_character_list(P_desc d, P_acct account)
 			}
 		}
 		room_display[dst_idx] = '\0';
+		// The room column is padded by visible width since names carry color codes.
+		for (; visible_count < max_visible && dst_idx + 1 < sizeof room_display;
+		     visible_count++)
+			room_display[dst_idx++] = ' ';
+		room_display[dst_idx] = '\0';
+
+		// Rested status on entering the game, as in check_rested_bonus().
+		const int offline_hours = (time(0) - ch->last_save) / 3600;
+		char rest_str[16];
+		if (ch->level == 0)
+			strlcpy(rest_str, "New", sizeof rest_str);
+		else if (offline_hours >= 20)
+			strlcpy(rest_str, "Well", sizeof rest_str);
+		else if (offline_hours >= 9)
+			strlcpy(rest_str, "Yes", sizeof rest_str);
+		else
+			snprintf(rest_str, sizeof rest_str, "%dh", 9 - offline_hours);
 
 		snprintf(
 			line_buf, 512,
-			"&+y|&n %d &+y|&n %-12s &+y|&n %-5s &+y|&n %-12s &+y|&n %-12s &+y|&n %s &+y|&n\r\n",
-			i + 1, name_capitalized, level_str, race_str, class_str, room_display);
+			"&+y|&n %d &+y|&n %-12s &+y|&n %-3s &+y|&n %-11s &+y|&n %-12s &+y|&n %s &+y|&n %-4s &+y|&n\r\n",
+			i + 1, name_capitalized, level_str, race_str, class_str, room_display,
+			rest_str);
 		SEND_TO_Q(line_buf, d);
 	}
 
@@ -3148,44 +3195,11 @@ static void finish_account_deletion(P_desc d, bool deleted, size_t characters)
 	STATE(d) = CON_FLUSH;
 }
 
-void verify_delete_account(P_desc d, char *arg)
+/* Fences the account, then deletes it on the writer while the session waits in
+ * CON_ACCT_VERIFY_DELETE_ACCT, where a failure asks for the account name again. */
+static void complete_account_deletion(P_desc d)
 {
-	if (!d || !d->account || !d->account->acct_name)
-		return;
-	const bool fenced = d->account->acct_blocked == ACCOUNT_BLOCK_DELETION;
-	if (!arg)
-	{
-		display_account_deletion_confirmation(d, fenced);
-		return;
-	}
-	while (isspace(static_cast<unsigned char>(*arg)))
-		arg++;
-	char *end = arg + strlen(arg);
-	while (end > arg && isspace(static_cast<unsigned char>(end[-1])))
-		*--end = '\0';
-	if (!strcasecmp(arg, "cancel"))
-	{
-		if (fenced)
-		{
-			SEND_TO_Q("\r\nDeletion has already started and cannot be cancelled. "
-				  "Retry the exact account name or contact an immortal.\r\n",
-				  d);
-			display_account_deletion_confirmation(d, true);
-			return;
-		}
-		SEND_TO_Q("\r\nAccount deletion cancelled.\r\n", d);
-		STATE(d) = CON_DISPLAY_ACCT_MENU;
-		display_account_menu(d, NULL);
-		return;
-	}
-	if (strcmp(arg, d->account->acct_name))
-	{
-		SEND_TO_Q("\r\nThe account name did not match exactly.\r\n", d);
-		display_account_deletion_confirmation(d, fenced);
-		return;
-	}
-
-	if (!fenced)
+	if (d->account->acct_blocked != ACCOUNT_BLOCK_DELETION)
 	{
 		const char previous_block = d->account->acct_blocked;
 		d->account->acct_blocked = ACCOUNT_BLOCK_DELETION;
@@ -3252,6 +3266,67 @@ void verify_delete_account(P_desc d, char *arg)
 		writer_replied(id);
 		finish_account_deletion(d, false, identities.size());
 	}
+}
+
+void verify_delete_account(P_desc d, char *arg)
+{
+	if (!d || !d->account || !d->account->acct_name)
+		return;
+	const bool fenced = d->account->acct_blocked == ACCOUNT_BLOCK_DELETION;
+	if (!arg)
+	{
+		display_account_deletion_confirmation(d, fenced);
+		return;
+	}
+	while (isspace(static_cast<unsigned char>(*arg)))
+		arg++;
+	char *end = arg + strlen(arg);
+	while (end > arg && isspace(static_cast<unsigned char>(end[-1])))
+		*--end = '\0';
+	if (!strcasecmp(arg, "cancel"))
+	{
+		if (fenced)
+		{
+			SEND_TO_Q("\r\nDeletion has already started and cannot be cancelled. "
+				  "Retry the exact account name or contact an immortal.\r\n",
+				  d);
+			display_account_deletion_confirmation(d, true);
+			return;
+		}
+		SEND_TO_Q("\r\nAccount deletion cancelled.\r\n", d);
+		STATE(d) = CON_DISPLAY_ACCT_MENU;
+		display_account_menu(d, NULL);
+		return;
+	}
+	if (strcmp(arg, d->account->acct_name))
+	{
+		SEND_TO_Q("\r\nThe account name did not match exactly.\r\n", d);
+		display_account_deletion_confirmation(d, fenced);
+		return;
+	}
+	if (fenced)
+	{
+		complete_account_deletion(d);
+		return;
+	}
+	STATE(d) = CON_ACCT_FINAL_DELETE_ACCT;
+	display_account_deletion_last_warning(d);
+}
+
+/* The last warning: only an exact YES deletes; anything else keeps the account. */
+void final_delete_account(P_desc d, char *arg)
+{
+	if (!d || !d->account || !d->account->acct_name)
+		return;
+	if (strcmp(arg, "YES"))
+	{
+		SEND_TO_Q("\r\nAccount deletion cancelled.\r\n", d);
+		STATE(d) = CON_DISPLAY_ACCT_MENU;
+		display_account_menu(d, NULL);
+		return;
+	}
+	STATE(d) = CON_ACCT_VERIFY_DELETE_ACCT;
+	complete_account_deletion(d);
 }
 
 /* Gives `to` a copy of what `from` holds. */

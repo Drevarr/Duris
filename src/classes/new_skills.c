@@ -1,3 +1,4 @@
+#include "item/named_set_effects.h"
 
 /*
  ***************************************************************************
@@ -444,22 +445,10 @@ std::string awareness_facts(P_char ch)
 	       "  It always works. It lasts longer with intelligence, level and rating.\n";
 }
 
-void do_awareness(P_char ch, char * /*argument*/, int /*cmd*/)
+void apply_awareness(P_char ch, int skl_lvl)
 {
 	struct affected_type af, *af_ptr;
 	int duration = 0, lev_aware;
-	int skl_lvl = 0;
-
-	if (IS_PC(ch))
-		skl_lvl = GET_CHAR_SKILL(ch, SKILL_AWARENESS);
-
-	if (!skl_lvl)
-	{
-		act("You wouldn't know where to begin.", TRUE, ch, 0, 0, TO_CHAR);
-		return;
-	}
-	act("You feel aligned with your surroundings.", TRUE, ch, 0, 0, TO_CHAR);
-
 	lev_aware = STAT_INDEX(GET_C_INT(ch)) + STAT_INDEX(GET_C_DEX(ch)) + (GET_LEVEL(ch) >> 3);
 	lev_aware = lev_aware * skl_lvl / 75;
 	if (lev_aware > 0)
@@ -496,6 +485,24 @@ void do_awareness(P_char ch, char * /*argument*/, int /*cmd*/)
 		REMOVE_BIT(ch->specials.affected_by, AFF_SKILL_AWARE);
 	}
 	affect_to_char(ch, &af);
+}
+
+void do_awareness(P_char ch, char * /*argument*/, int /*cmd*/)
+{
+	int skl_lvl = 0;
+
+	if (IS_PC(ch))
+		skl_lvl = GET_CHAR_SKILL(ch, SKILL_AWARENESS);
+
+	if (!skl_lvl)
+	{
+		act("You wouldn't know where to begin.", TRUE, ch, 0, 0, TO_CHAR);
+		return;
+	}
+	act("You feel aligned with your surroundings.", TRUE, ch, 0, 0, TO_CHAR);
+
+	named_set_ordinary_cast ordinary_cast(ch, SKILL_AWARENESS);
+	apply_awareness(ch, skl_lvl);
 	notch_skill(ch, SKILL_AWARENESS, 20);
 }
 
@@ -2674,7 +2681,6 @@ void event_summon_book(P_char ch, P_char /*victim*/, P_obj /*obj*/, void * /*dat
 	snprintf(namebuf, 512, "a &+Wsp&+wel&+Wlb&+woo&+Wk&n &+Lbearing the insignia of&n %s",
 		 ch->player.name);
 	book->short_description = str_dup(namebuf);
-	book->extra_flags |= ITEM_NORENT;
 	book->bitvector = 0;
 
 	submit_summoned_replacement(ch, book, summoned_replacement_kind::book);
@@ -2724,7 +2730,6 @@ void event_summon_totem(P_char ch, P_char /*victim*/, P_obj /*obj*/, void * /*da
 	totem->name = str_dup(namebuf);
 	snprintf(namebuf, 512, "a &+wspirit &+ytotem&n of&n &+G%s&n", ch->player.name);
 	totem->short_description = str_dup(namebuf);
-	totem->extra_flags |= ITEM_NORENT;
 	totem->bitvector = 0;
 	/* okay, lets give the totem stats, based on the level of the lil baby goblin */
 	if (GET_LEVEL(ch) >= 56)

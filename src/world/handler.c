@@ -1495,6 +1495,7 @@ bool char_to_room(P_char ch, int room, int dir, bool ordinary_movement)
 	was_in_arena = IS_ROOM(was_in, ROOM_ARENA) != 0;
 
 	ch->in_room = room;
+	check_bard_song_rooms(ch, ordinary_movement);
 
 	// Ordinary movement keeps its existing departure/arrival link check. Every
 	// other relocation ends Essence, even if both partners travel together.
@@ -4086,6 +4087,7 @@ void extract_char(P_char ch)
 		affect_remove(ch, af);
 	}
 
+	stop_scribing(ch);
 	disarm_char_nevents(ch, NULL);
 
 	extract_char_items(ch, terminal_items_saved);

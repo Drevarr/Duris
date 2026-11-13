@@ -734,6 +734,7 @@ int main(int argc, char **argv)
 
 	if (load_env_file() < 0)
 		fatal_boot_error("comm", "Unsafe environment configuration file");
+	apply_test_rng_seed();
 
 	const char *configured_tls_port = getenv("DURIS_TLS_PORT");
 	if (configured_tls_port && *configured_tls_port)
@@ -1898,7 +1899,9 @@ static bool run_connection_phase(game_loop_pulse_context &ctx)
 			logit(LOG_COMM, "Closing socket with exception.  FIXME!");
 			close_socket(point);
 		}
-		else if (FD_ISSET(point->descriptor, &input_set))
+		/* Frames retained by the per-read frame budget need no new bytes to be parsed. */
+		else if (FD_ISSET(point->descriptor, &input_set) ||
+			 (point->websocket && websocket_has_pending(point)))
 		{
 			int input_result = 0;
 			if (point->connected != CON_SSLNEGO)
@@ -2038,7 +2041,7 @@ static void run_session_input_phase(game_loop_pulse_context &ctx)
 				continue;
 			}
 
-			/* Send one periodic ping at a time.  A queued ping becomes outstanding only after control output drains. */
+			/* Send one periodic ping at a time.  A queued ping becomes outstanding when websocket_flush_output() drains it. */
 			if (!point->ws_ping_queued && !point->ws_ping_outstanding &&
 			    (point->ws_last_ping == 0 ||
 			     (now - point->ws_last_ping) >= WS_PING_INTERVAL))
@@ -2083,6 +2086,8 @@ static void run_session_input_phase(game_loop_pulse_context &ctx)
 				if (point->wait > LOGIN_PROMPT_TIMEOUT)
 				{
 					write_to_descriptor(point, "Idle Timeout\n");
+					if (!point->ws_close_cause)
+						point->ws_close_cause = "Idle timeout";
 					close_socket(point);
 					continue;
 				}
@@ -2094,6 +2099,8 @@ static void run_session_input_phase(game_loop_pulse_context &ctx)
 				if (point->wait > 240)
 				{
 					write_to_descriptor(point, "Idle Timeout\n");
+					if (!point->ws_close_cause)
+						point->ws_close_cause = "Idle timeout";
 					close_socket(point);
 					continue;
 				}
@@ -2123,6 +2130,8 @@ static void run_session_input_phase(game_loop_pulse_context &ctx)
 				if (point->wait > 2400)
 				{
 					write_to_descriptor(point, "Idle Timeout\n");
+					if (!point->ws_close_cause)
+						point->ws_close_cause = "Idle timeout";
 					close_socket(point);
 					continue;
 				}
@@ -2135,6 +2144,8 @@ static void run_session_input_phase(game_loop_pulse_context &ctx)
 				if (point->wait > 3600)
 				{
 					write_to_descriptor(point, "Idle Timeout\n");
+					if (!point->ws_close_cause)
+						point->ws_close_cause = "Idle timeout";
 					close_socket(point);
 					continue;
 				}
@@ -2233,16 +2244,11 @@ static void run_output_phase(game_loop_pulse_context &ctx)
 		    point->telnet_output_len == 0 && point->ws_output_len == 0 &&
 		    point->ws_control_output_len == 0)
 		{
+			/* CON_FLUSH also ends bans, failed logins and errors, not only logouts. */
+			if (!point->ws_close_cause)
+				point->ws_close_cause = "Server ended session";
 			close_socket(point);
 			continue;
-		}
-		if (point->websocket && point->ws_state == WS_STATE_OPEN && point->ws_ping_queued &&
-		    point->ws_control_output_len == 0)
-		{
-			point->ws_ping_queued = 0;
-			point->ws_ping_outstanding = 1;
-			point->ws_pong_received = 0;
-			point->ws_last_ping = time(0);
 		}
 		if (point->websocket && point->ws_state == WS_STATE_CLOSING &&
 		    point->ws_output_len == 0 && point->ws_control_output_len == 0)
@@ -3693,6 +3699,22 @@ void close_socket(struct descriptor_data *d)
 
 	if (d->sslses)
 		ssl_close(d->sslses);
+	/* One bounded summary per WebSocket close; no host, account, character or payload. */
+	if (d->websocket && d->ws_handshake_done)
+	{
+		const time_t closed_at = time(0);
+		statuslog(56,
+			  "WebSocket closed: cause=%s open=%lds ping=%s ping_age=%lds "
+			  "out=%zu ctrl=%zu partial=%zu write_failed=%d",
+			  d->ws_close_cause ? d->ws_close_cause : "unknown",
+			  (long)(closed_at - d->ws_handshake_started),
+			  d->ws_ping_outstanding ? "outstanding" :
+						   (d->ws_ping_queued ? "queued" : "idle"),
+			  d->ws_last_ping > 0 ? (long)(closed_at - d->ws_last_ping) : -1L,
+			  d->ws_output_len - d->ws_output_offset,
+			  d->ws_control_output_len - d->ws_control_output_offset,
+			  d->ws_output_frame_left, d->write_failed);
+	}
 	if (d->descriptor)
 	{
 		close(d->descriptor);

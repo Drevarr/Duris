@@ -35,7 +35,7 @@ int gain_exp(P_char,P_char,int amount,int) { experience+=amount; return amount; 
 void set_keywords(P_obj,const char *) {}
 void set_short_description(P_obj,const char *) {}
 void set_obj_extra_flags(P_obj obj,unsigned flags) { obj->extra_flags=flags; }
-bool do_save_silent(P_char,int) { ++saves; return true; }
+bool do_save_silent(P_char,int,player_save_pipeline_result *) { ++saves; return true; }
 int fill_word(char *) { return 0; }
 bool sql_add_player_recipe(int,int) { std::abort(); }
 int real_object(int vnum) { return fixture_rnums.count(vnum) ? fixture_rnums.at(vnum) : -1; }
@@ -159,6 +159,6 @@ with tempfile.TemporaryDirectory(prefix='crafting-delivery-', dir=ROOT / 'bin/te
         'g++', '-std=c++20', '-g', '-O1', '-ffunction-sections', '-fdata-sections',
         '-fsanitize=address,undefined', '-fno-sanitize-recover=all', '-fno-pie', '-no-pie',
         '-Isrc', '-I/usr/include/mysql', str(cpp), str(HARNESS_STUBS),
-        'src/core/safe_format.c', '-Wl,--gc-sections', '-lbsd', '-lcrypto', '-o', str(binary),
+        'src/core/safe_format.c', 'src/item/item_value.c', '-Wl,--gc-sections', '-lbsd', '-lcrypto', '-o', str(binary),
     ], cwd=ROOT, check=True)
     subprocess.run([str(binary)], cwd=ROOT, check=True, timeout=30)

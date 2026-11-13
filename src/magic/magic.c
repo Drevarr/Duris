@@ -749,7 +749,8 @@ void spell_prismatic_spray(int level, P_char ch, char * /*arg*/, int /*type*/, P
 			{
 				ray_type = 1 << number(0, RAY_COUNT - 1);
 				spell_single_prismatic_ray(level, ch, (char *)&ray_type, 0, tch, 0);
-				if (!is_char_in_room(tch, room) || (GET_STAT(tch) == STAT_DEAD))
+				if (!is_char_in_room(ch, room) || !is_char_in_room(tch, room) ||
+				    (GET_STAT(tch) == STAT_DEAD))
 					break;
 			}
 		}
@@ -11442,6 +11443,7 @@ std::string ironwood_facts(P_char ch)
 void spell_ironwood(int level, P_char ch, char * /*arg*/, [[maybe_unused]] int type, P_char victim,
 		    P_obj /*obj*/)
 {
+	named_set_ordinary_cast ordinary_cast(victim, SPELL_IRONWOOD);
 	struct affected_type af;
 
 	if (!IS_AFFECTED(victim, AFF_BARKSKIN) && !IS_AFFECTED5(victim, AFF5_THORNSKIN))
@@ -11465,7 +11467,7 @@ void spell_ironwood(int level, P_char ch, char * /*arg*/, [[maybe_unused]] int t
 	int absorb = ironwood_absorb(live_rolls, level, IS_AFFECTED(victim, AFF_BARKSKIN));
 
 	// Stoning the tank equals to heal in exp -Odorf
-	if (GET_OPPONENT(victim))
+	if (GET_OPPONENT(victim) && !named_set_grant::active())
 		gain_exp(ch, victim, absorb, EXP_HEALING);
 
 	bzero(&af, sizeof(af));
@@ -13161,6 +13163,17 @@ void spell_death_blessing(int /*level*/, P_char ch, char * /*args*/, int /*type*
 	}
 }
 
+// A stronger cast takes over the buff and an equal one renews its timer. A weaker one
+// does nothing, unless spell.generousRefresh.enabled is 1, when it renews the timer only.
+spell_refresh spell_refresh_rule(int incoming, int existing)
+{
+	if (incoming > existing)
+		return spell_refresh::replace;
+	if (incoming == existing || get_property("spell.generousRefresh.enabled", 0.0) == 1)
+		return spell_refresh::renew;
+	return spell_refresh::nothing;
+}
+
 // Vitality raises maximum hit points by this much.
 static int vitality_hit_points(int level)
 {
@@ -13230,8 +13243,9 @@ void spell_vitality(int level, P_char ch, char * /*arg*/, [[maybe_unused]] int t
 	}
 
 	duration = vitality_duration(ch, victim);
+	struct affected_type *af1 = get_spell_from_char(victim, SPELL_VITALITY);
 
-	if (!affected_by_spell(victim, SPELL_VITALITY))
+	if (!af1)
 	{
 		send_to_char("&+BYou feel vitalized.\n", victim);
 		act("$N looks vitalized.&n", TRUE, ch, 0, victim, TO_NOTVICT);
@@ -13253,16 +13267,28 @@ void spell_vitality(int level, P_char ch, char * /*arg*/, [[maybe_unused]] int t
 	}
 	else
 	{
-		struct affected_type *af1;
+		const spell_refresh refresh = spell_refresh_rule(healpoints, af1->modifier);
 
-		for (af1 = victim->affected; af1; af1 = af1->next)
-			if (af1->type == SPELL_VITALITY)
-			{
-				send_to_char(
-					"&+WYou feel a slight &+cmagical surge&+W that reinforces and refreshes your &+Bvitality.\r\n&n",
-					victim);
-				af1->duration = duration;
-			}
+		if (refresh == spell_refresh::nothing)
+		{
+			send_to_char("Nothing new seems to happen.\r\n", ch);
+			return;
+		}
+		send_to_char(
+			"&+WYou feel a slight &+cmagical surge&+W that reinforces and refreshes your &+Bvitality.\r\n&n",
+			victim);
+		if (refresh == spell_refresh::replace)
+		{
+			// Raise in place, finishing the HP recalculation before observing position.
+			all_affects(victim, FALSE);
+			af1->modifier = healpoints;
+			all_affects(victim, TRUE);
+			update_pos(victim);
+			update_group_vitals(victim);
+			gmcp_char_vitals(victim);
+		}
+		af1->duration = duration;
+		gmcp_char_affects(victim);
 	}
 }
 
@@ -13724,6 +13750,7 @@ std::string earth_form_facts(P_char /*ch*/)
 void spell_earth_form(int /*level*/, P_char ch, char * /*arg*/, int /*type*/, P_char victim,
 		      P_obj /*obj*/)
 {
+	named_set_ordinary_cast ordinary_cast(victim, SPELL_EARTH_FORM);
 	if (const char *failure = elemental_form_failure_message(ch, victim, SPELL_EARTH_FORM))
 	{
 		send_to_char(failure, ch);
@@ -13784,6 +13811,7 @@ std::string fire_form_facts(P_char /*ch*/)
 void spell_fire_form(int /*level*/, P_char ch, char * /*arg*/, int /*type*/, P_char victim,
 		     P_obj /*obj*/)
 {
+	named_set_ordinary_cast ordinary_cast(victim, SPELL_FIRE_FORM);
 	if (const char *failure = elemental_form_failure_message(ch, victim, SPELL_FIRE_FORM))
 	{
 		send_to_char(failure, ch);
@@ -13853,6 +13881,7 @@ std::string water_form_facts(P_char /*ch*/)
 void spell_water_form(int /*level*/, P_char ch, char * /*arg*/, int /*type*/, P_char victim,
 		      P_obj /*obj*/)
 {
+	named_set_ordinary_cast ordinary_cast(victim, SPELL_WATER_FORM);
 	if (const char *failure = elemental_form_failure_message(ch, victim, SPELL_WATER_FORM))
 	{
 		send_to_char(failure, ch);
@@ -13894,6 +13923,7 @@ std::string air_form_facts(P_char /*ch*/)
 void spell_air_form(int /*level*/, P_char ch, char * /*arg*/, [[maybe_unused]] int type,
 		    P_char victim, P_obj /*obj*/)
 {
+	named_set_ordinary_cast ordinary_cast(victim, SPELL_AIR_FORM);
 	struct affected_type af;
 
 	if (const char *failure = elemental_form_failure_message(ch, victim, SPELL_AIR_FORM))
@@ -16540,6 +16570,7 @@ std::string sanctuary_facts(P_char /*ch*/)
 void spell_sanctuary(int /*level*/, P_char ch, char * /*arg*/, [[maybe_unused]] int type,
 		     P_char /*victim*/, P_obj /*obj*/)
 {
+	named_set_ordinary_cast ordinary_cast(ch, SPELL_SANCTUARY);
 	struct affected_type af;
 
 	if (IS_AFFECTED4(ch, AFF4_SANCTUARY))
@@ -17776,6 +17807,7 @@ void spell_coldshield(int /*level*/, P_char /*ch*/, char * /*arg*/, [[maybe_unus
 void spell_lightning_shield(int /*level*/, P_char /*ch*/, char * /*arg*/, [[maybe_unused]] int type,
 			    P_char victim, P_obj /*obj*/)
 {
+	named_set_ordinary_cast ordinary_cast(victim, SPELL_LIGHTNINGSHIELD);
 	struct affected_type af;
 
 	if (!IS_AFFECTED2(victim, AFF2_FIRESHIELD) && !IS_AFFECTED3(victim, AFF3_COLDSHIELD) &&
@@ -18819,7 +18851,7 @@ std::string faerie_fire_facts(P_char /*ch*/)
 void spell_faerie_fire(int /*level*/, P_char ch, char * /*arg*/, [[maybe_unused]] int type,
 		       P_char victim, P_obj /*obj*/)
 {
-	struct affected_type af, *af2, *af3;
+	struct affected_type af;
 	int a;
 
 	if (GET_STAT(ch) == STAT_DEAD)
@@ -18833,13 +18865,7 @@ void spell_faerie_fire(int /*level*/, P_char ch, char * /*arg*/, [[maybe_unused]
 	act("$n points at $N.", TRUE, ch, 0, victim, TO_NOTVICT);
 	act("You point at $N.", TRUE, ch, 0, victim, TO_CHAR);
 	act("$n points at you.", TRUE, ch, 0, victim, TO_VICT);
-	if (affected_by_spell(ch, SPELL_CONCEALMENT))
-		for (af2 = victim->affected; af2; af2 = af3)
-		{
-			af3 = af2->next;
-			if (af2->type == SPELL_CONCEALMENT)
-				affect_remove(victim, af2);
-		}
+	affect_from_char(victim, SPELL_CONCEALMENT);
 	a = 0;
 	if (IS_SET(victim->specials.affected_by, AFF_INVISIBLE) ||
 	    IS_AFFECTED2(victim, AFF2_CONCEALMENT))
@@ -20786,13 +20812,39 @@ std::string dispel_magic_facts(P_char ch)
 							 std::to_string(level));
 }
 
+P_char dispel_character_affect(P_char ch, P_char victim, int type)
+{
+	affected_type *af = get_spell_from_char(victim, type);
+	if (!af || (af->flags & AFFTYPE_NODISPEL))
+		return NULL;
+	for (affected_type *dormant = victim->affected, *next; dormant; dormant = next)
+	{
+		next = dormant->next;
+		if (dormant->type == type && (dormant->flags & AFFTYPE_SET_SUSPENDED))
+			affect_remove(victim, dormant);
+	}
+	wear_off_message(victim, af);
+	if (type == SPELL_CALL_OF_THE_WILD && IS_MORPH(victim))
+	{
+		P_char original = victim->only.npc->orig_char;
+		act("$n suddenly changes shape, reforming into $N.", FALSE, victim, NULL, original,
+		    TO_NOTVICT);
+		send_to_char("You suddenly feel yourself going back to normal.\n", victim);
+		send_to_char("and you succeed!\n", ch);
+		act("and succeeds!", FALSE, ch, 0, victim, TO_NOTVICT);
+		un_morph(victim);
+		return original;
+	}
+	affect_from_char(victim, type);
+	return victim;
+}
+
 void spell_dispel_magic(int level, P_char ch, char * /*arg*/, [[maybe_unused]] int type,
 			P_char victim, P_obj obj)
 {
 	struct affected_type *af;
 	int mod, success = 0, nosave = 0;
 	P_obj temp_wall, next_obj;
-	P_char orig;
 
 	if (!IS_ALIVE(ch))
 	{
@@ -20848,37 +20900,12 @@ void spell_dispel_magic(int level, P_char ch, char * /*arg*/, [[maybe_unused]] i
 						return;
 					}
 
-					success = 1;
-					// The buff is ending, so a dormant grant must not resume and
-					// silence its message.
-					for (affected_type *dormant = victim->affected, *next;
-					     dormant; dormant = next)
-					{
-						next = dormant->next;
-						if (dormant->type == af->type &&
-						    (dormant->flags & AFFTYPE_SET_SUSPENDED))
-							affect_remove(victim, dormant);
-					}
-					wear_off_message(victim, af);
-					if ((af->type == SPELL_CALL_OF_THE_WILD) &&
-					    IS_MORPH(victim))
-					{
-						orig = victim->only.npc->orig_char;
-
-						act("$n suddenly changes shape, reforming into $N.",
-						    FALSE, victim, NULL, orig, TO_NOTVICT);
-						send_to_char(
-							"You suddenly feel yourself going back to normal.\n",
-							victim);
-
-						send_to_char("and you succeed!\n", ch);
-						act("and succeeds!", FALSE, ch, 0, victim,
-						    TO_NOTVICT);
-
-						un_morph(victim);
+					P_char remaining =
+						dispel_character_affect(ch, victim, affect_type);
+					if (remaining)
+						success = 1;
+					if (remaining && remaining != victim)
 						return;
-					}
-					affect_from_char(victim, af->type);
 				}
 			}
 		}
@@ -22973,9 +23000,17 @@ static int rope_trick_duration()
 	return 5;
 }
 
+static int rope_trick_limit()
+{
+	return 5;
+}
+
 std::string rope_trick_facts(P_char /*ch*/)
 {
-	return fact("Duration", game_hours(rope_trick_duration()));
+	return fact("Duration", game_hours(rope_trick_duration())) +
+	       fact("Hidden people per room", std::to_string(rope_trick_limit())) +
+	       "  One target per cast. You and your group need no consent and skip saves.\n"
+	       "  Others can consent; otherwise they can resist and save.\n";
 }
 
 void spell_rope_trick(int /*level*/, P_char ch, char * /*arg*/, [[maybe_unused]] int type,
@@ -22985,10 +23020,10 @@ void spell_rope_trick(int /*level*/, P_char ch, char * /*arg*/, [[maybe_unused]]
 	int howmany = 0;
 	P_char temp_vict;
 
-	if (ch != victim)
-		if (!is_linked_to(ch, victim, LNK_CONSENT))
-			if (resists_spell(ch, victim))
-				return;
+	const bool willing = ch == victim || grouped(ch, victim) ||
+			     is_linked_to(ch, victim, LNK_CONSENT);
+	if (!willing && resists_spell(ch, victim))
+		return;
 
 	temp_vict = victim;
 
@@ -22998,9 +23033,8 @@ void spell_rope_trick(int /*level*/, P_char ch, char * /*arg*/, [[maybe_unused]]
 		return;
 	}
 
-	int mod = get_default_save_mod(victim, ch, SAVING_SPELL, SPELL_ROPE_TRICK);
-	if (!NewSaves(victim, SAVING_SPELL, mod) || (ch == victim) ||
-	    is_linked_to(ch, victim, LNK_CONSENT))
+	if (willing || !NewSaves(victim, SAVING_SPELL,
+				 get_default_save_mod(victim, ch, SAVING_SPELL, SPELL_ROPE_TRICK)))
 	{
 		LOOP_THRU_PEOPLE(temp_vict, ch)
 		{
@@ -23008,7 +23042,7 @@ void spell_rope_trick(int /*level*/, P_char ch, char * /*arg*/, [[maybe_unused]]
 			    IS_AFFECTED(temp_vict, AFF_HIDE))
 				howmany++;
 		}
-		if (howmany > 2)
+		if (howmany >= rope_trick_limit())
 		{
 			act("&+LYou don't seem to be able to to conjure any more &+yropes&n&+L.&n",
 			    TRUE, ch, 0, victim, TO_CHAR);
@@ -25593,6 +25627,7 @@ std::string accel_healing_facts(P_char ch)
 void spell_accel_healing(int level, P_char ch, char * /*arg*/, [[maybe_unused]] int type,
 			 P_char victim, P_obj /*obj*/)
 {
+	named_set_ordinary_cast ordinary_cast(victim, SPELL_ACCEL_HEALING);
 	struct affected_type af;
 
 	if (!IS_ALIVE(ch) || !IS_ALIVE(victim))
@@ -30404,4 +30439,17 @@ void spell_draconic_apotheosis(int /*level*/, P_char ch, char * /*arg*/, [[maybe
 		return;
 
 	do_roar_of_heroes(ch);
+}
+
+void spell_ultravision(int /*level*/, P_char /*ch*/, char * /*arg*/, int /*type*/, P_char victim,
+		       P_obj /*obj*/)
+{
+	named_set_ordinary_cast ordinary_cast(victim, SPELL_ULTRAVISION);
+	if (!IS_ALIVE(victim) || affected_by_spell(victim, SPELL_ULTRAVISION))
+		return;
+	affected_type affect{};
+	affect.type = SPELL_ULTRAVISION;
+	affect.duration = -1;
+	affect.bitvector2 = AFF2_ULTRAVISION;
+	affect_to_char(victim, &affect);
 }

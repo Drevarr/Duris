@@ -107,7 +107,7 @@ int wield_item_size(P_char ch, P_obj obj)
 	// Player hand cost uses base size, not Enlarge/Reduce or the NPC giant list.
 	if (!(IS_SET(obj->extra_flags, ITEM_TWOHANDS) ||
 	      (obj->type == ITEM_WEAPON && obj->value[0] == WEAPON_2HANDSWORD)) ||
-	    (obj->type == ITEM_WEAPON && (IS_PC(ch) ? GET_SIZE(ch) >= SIZE_HUGE : IS_GIANT(ch))))
+	    (obj->type == ITEM_WEAPON && (has_monkey_grip(ch) || (IS_NPC(ch) && IS_GIANT(ch)))))
 	{
 		return 1;
 	}
@@ -519,6 +519,13 @@ void get(P_char ch, P_obj o_obj, P_obj s_obj, int showit)
 		send_to_char(
 			"You may not take that account-bound reward; it belongs to another account.\r\n",
 			ch);
+		return;
+	}
+
+	if (artifact_second_of_type(ch, o_obj))
+	{
+		act("$p stays where it is: you already hold an artifact of that type.", FALSE, ch,
+		    o_obj, 0, TO_CHAR);
 		return;
 	}
 
@@ -1247,8 +1254,9 @@ static bool do_get_try_container_item(P_char ch, P_char hood, P_obj s_obj, P_obj
 		return FALSE;
 	}
 
-	// Money is converted to wallet currency without occupying an inventory slot.
-	if (GET_ITEM_TYPE(o_obj) == ITEM_MONEY || IS_CARRYING_N(ch) < CAN_CARRY_N(ch))
+	// Money uses the wallet; salvaged materials retain their item-count exception.
+	if (GET_ITEM_TYPE(o_obj) == ITEM_MONEY || IS_CARRYING_N(ch) < CAN_CARRY_N(ch) ||
+	    (OBJ_VNUM(o_obj) >= LOWEST_MAT_VNUM && OBJ_VNUM(o_obj) <= HIGHEST_MAT_VNUM))
 	{
 		if (((total_carried_weight(ch) + GET_OBJ_WEIGHT(o_obj)) <= CAN_CARRY_W(ch)) ||
 		    local_container)
@@ -1513,7 +1521,8 @@ static bool select_bulk_get_item(P_char actor, P_obj container, P_obj object, co
 	if ((filter && (!object->name || !isname(filter, object->name))) ||
 	    (!container_local && !CAN_SEE_OBJ(actor, object)))
 		return false;
-	const bool material_exception = !container && OBJ_VNUM(object) > LOWEST_MAT_VNUM &&
+	const bool material_exception = (container ? OBJ_VNUM(object) >= LOWEST_MAT_VNUM :
+						     OBJ_VNUM(object) > LOWEST_MAT_VNUM) &&
 					OBJ_VNUM(object) <= HIGHEST_MAT_VNUM;
 	if (carried_count >= CAN_CARRY_N(actor) && !material_exception &&
 	    GET_ITEM_TYPE(object) != ITEM_MONEY)
@@ -1526,7 +1535,7 @@ static bool select_bulk_get_item(P_char actor, P_obj container, P_obj object, co
 			state.count_limit_reported = true;
 		}
 		state.failed = true;
-		// Keep scanning containers for money even when an ordinary item cannot fit.
+		// Keep scanning containers for money and materials when an ordinary item cannot fit.
 		stop = container == NULL;
 		return false;
 	}
@@ -1547,6 +1556,17 @@ static bool select_bulk_get_item(P_char actor, P_obj container, P_obj object, co
 		state.rejections.emplace_back(
 			"You may not take that account-bound reward; it belongs to another account.\r\n");
 		state.failed = true;
+		return false;
+	}
+	// One artifact of a type per player, counting those already chosen in this batch.
+	bool second_artifact = artifact_second_of_type(actor, object);
+	for (const auto &chosen : state.synchronous_items)
+		second_artifact |= artifact_second_of_type(actor, object, chosen.object);
+	if (second_artifact)
+	{
+		reject_bulk_get_object(
+			state, object,
+			"stays where it is: you already hold an artifact of that type.");
 		return false;
 	}
 	const bool scrap = object->condition <= 0;
@@ -4341,6 +4361,12 @@ void do_give(P_char ch, char *argument, int cmd)
 		act("$E must consent to you before you can overload $M.", 0, ch, 0, vict, TO_CHAR);
 		return;
 	}
+	if (artifact_second_of_type(vict, obj))
+	{
+		act("$N already holds an artifact of that type and cannot take $p.", FALSE, ch, obj,
+		    vict, TO_CHAR);
+		return;
+	}
 	if (IS_ARTIFACT(obj) && racewar(ch, vict))
 	{
 		send_to_char("That would just be unethical now wouldn't it?\r\n", ch);
@@ -5714,6 +5740,17 @@ void execute_wear(P_char ch, P_obj obj_object, int position, int keyword, bool s
 		perform_wear(ch, obj_object, keyword);
 	obj_from_char(obj_object);
 	equip_char(ch, obj_object, position, !showit);
+	if (showit && IS_PC(ch) && GET_CLASS(ch, CLASS_MONK) &&
+	    ch->equipment[position] == obj_object &&
+	    (position == WIELD || position == SECONDARY_WEAPON || position == HOLD ||
+	     position == WEAR_SHIELD || position == WEAR_LIGHT))
+	{
+		send_to_char(
+			"Your occupied hands limit Martial Arts to one base attack per round.\r\n",
+			ch);
+		if (position != WEAR_LIGHT)
+			send_to_char("This also disables your monk bare-hand damage dice.\r\n", ch);
+	}
 }
 
 /*
@@ -7558,6 +7595,7 @@ void do_search(P_char ch, char *argument, int /*cmd*/)
 	 */
 	if (!*name)
 	{
+		bool discovered_exit = false;
 		for (door = 0; (door < NUM_EXITS) && (!found_something || IS_TRUSTED(ch)); door++)
 		{
 			if (EXIT(ch, door) && IS_SET(EXIT(ch, door)->exit_info, EX_SECRET) &&
@@ -7571,9 +7609,14 @@ void do_search(P_char ch, char *argument, int /*cmd*/)
 					    TO_ROOM);
 					found_something = TRUE;
 					REMOVE_BIT(EXIT(ch, door)->exit_info, EX_SECRET);
+					discovered_exit = true;
 				}
 			}
 		}
+		if (discovered_exit)
+			for (P_char viewer = world[ch->in_room].people; viewer;
+			     viewer = viewer->next_in_room)
+				gmcp_room_info(viewer);
 		/*
 		 * new bit, give them chance to find hiding thieves/mobs
 		 */
