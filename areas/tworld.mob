@@ -17166,7 +17166,7 @@ CT 0 1 0 -1
 0.0.0.0 0
 8 8 1
 #5347
-talish~
+talish bartender~
 &+WTalish the bartender~
 &+WTalish the &+gcen&+Ltaur &+Wbartender stands here,&N mixing and serving drinks.
 ~
@@ -38197,7 +38197,7 @@ odd looking.  The ears seem to long, the face too narrow, and paws far
 to large even for a big cat.  What kind of cat is this?
 ~
 33556610 0 0 0 34603082 0 0 0 200 S
-N 0 0 0 -1
+H 0 0 0 -1
 25 11 19 25d40+200 3d5+3
 6.2.6.1 22275
 8 8 0
@@ -63370,7 +63370,7 @@ A &+ml&+Lic&+mh&n of a &+yfarmer &nhowls.
 &+Lcurse.
 ~
 2058 1 0 0 24 0 0 0 -999 S
-VL 0 512 0 -1
+UL 0 512 0 -1
 50 0 0 1d1+1 1d1+1
 0.0.0.0 0
 8 8 0
@@ -107094,6 +107094,23 @@ asterion minotaur archmage~
 ~
 1073776650 0 0 0 402653336 34816 0 0 -1000 S
 mt 14 512 0 -1
+56 0 0 1d1+1 1d1+1
+0.0.0.0 0
+8 8 1
+#37766
+veyrith tiefling master illusionist tutor trainer~
+&+MVeyrith&n, the &+LTiefling master of illusions&n~
+&+MA Tiefling traces shifting images in the air, pausing to guide his students.&n
+~
+&+L   Veyrith's swept-back horns frame a patient face, while his silver eyes
+&+Lfollow movements that no one else can see. Images gather around his hands:
+&+La candle burning without wax, a patch of darkness, a creature made of shadow.
+&+LHe dismisses each illusion with a gesture and turns to explain its workings
+&+Lto anyone willing to learn. The margins of his robes seem to fade into the
+&+Lair, though his welcoming smile remains quite clear.
+~
+32778 0 0 0 0 0 0 0 0 S
+TF 14 4194304 0 -1
 56 0 0 1d1+1 1d1+1
 0.0.0.0 0
 8 8 1
@@ -267073,5 +267090,3 @@ i 0 1 0 1
 5 0 0 1d1+1 1d1+1
 0.0.0.0 0
 8 8 0
-#9999999
-$~
