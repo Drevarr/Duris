@@ -1127,31 +1127,6 @@ static void combat_outcome_committed(bool committed, const combat_outcome_result
 						      BOPT_FRAGS);
 			}
 		}
-		else if (entry.frag_delta < 0)
-		{
-			char buffer[512];
-			snprintf(buffer, sizeof(buffer), "You just lost %.02f frags!\r\n",
-				 static_cast<double>(-entry.frag_delta) / 100.0);
-			send_to_char(buffer, ch);
-			struct affected_type af = {};
-			af.type = TAG_RECENTLY_FRAGGED;
-			af.flags = AFFTYPE_SHORT | AFFTYPE_NODISPEL | AFFTYPE_NOAPPLY;
-			af.duration = 60 * WAIT_SEC;
-			affect_to_char(ch, &af);
-			if ((entry.flags & COMBAT_PARTICIPANT_SPILL_BLOOD) &&
-			    !(entry.flags & COMBAT_PARTICIPANT_DIVINE_EPIC))
-			{
-				send_to_char("The &+yGods of Duris&n are very pleased with YOUR "
-					     "&+Rblood&n, too!!!\n",
-					     ch);
-				send_to_char(
-					"You can now progress further in your quest for epic power!\n",
-					ch);
-				struct affected_type *task = get_epic_task(ch);
-				if (task && abs(task->modifier) == SPILL_BLOOD)
-					affect_remove(ch, task);
-			}
-		}
 	}
 }
 
@@ -1298,6 +1273,35 @@ static bool submit_pvp_outcome(P_char ch, P_char victim, bool award_frags)
 	for (size_t index = 0; index < payload.participant_count; ++index)
 	{
 		const auto &entry = payload.participants[index];
+		if (entry.frag_delta < 0)
+		{
+			// Only the victim loses frags. Death saves and extracts the victim
+			// before the completion runs, so apply the loss here, ahead of that save.
+			char buffer[512];
+			snprintf(buffer, sizeof(buffer), "You just lost %.02f frags!\r\n",
+				 static_cast<double>(-entry.frag_delta) / 100.0);
+			send_to_char(buffer, victim);
+			struct affected_type af = {};
+			af.type = TAG_RECENTLY_FRAGGED;
+			// Kept through the death affect wipe; counts down while logged out.
+			af.flags = AFFTYPE_SHORT | AFFTYPE_NODISPEL | AFFTYPE_NOAPPLY |
+				   AFFTYPE_PERM | AFFTYPE_OFFLINE;
+			af.duration = 60 * WAIT_SEC;
+			affect_to_char(victim, &af);
+			if (entry.flags & COMBAT_PARTICIPANT_SPILL_BLOOD)
+			{
+				send_to_char("The &+yGods of Duris&n are very pleased with YOUR "
+					     "&+Rblood&n, too!!!\n",
+					     victim);
+				send_to_char(
+					"You can now progress further in your quest for epic power!\n",
+					victim);
+				struct affected_type *task = get_epic_task(victim);
+				if (task && abs(task->modifier) == SPILL_BLOOD)
+					affect_remove(victim, task);
+			}
+			continue;
+		}
 		// Prepared Divine rewards are published only from a committed receipt.
 		if (entry.epic_delta <= 0 || (entry.flags & COMBAT_PARTICIPANT_DIVINE_EPIC))
 			continue;

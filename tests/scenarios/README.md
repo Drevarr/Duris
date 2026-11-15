@@ -32,17 +32,21 @@ output holds a sanitizer or crash report. `--keep DIR` saves the server output a
 # comments start with '#'
 staff  Gmname                                   level-62 actor
 actor  Name class=MONK spec=WAYOFSNAKE level=40 skill=SKILL_BASH:100
+actor  Name race=ORC racewar=EVIL affect=TAG_EPIC_ERRAND:10000000
 Name> command        send a command and wait until it has finished
 Name? REGEX          REGEX matches what reached Name since Name's last check
 Name! REGEX          REGEX does not match it
 until Name /REGEX/ [max K] command
                      send command until its output matches, at most K times (20 by default)
 restart              save everyone, stop, boot again, log everyone back in
+login Name           reconnect Name and enter the game again, e.g. after dying
 ```
 
 - Declare every actor before the first step. Names are one capitalised word of
   3–12 letters. `class`, `spec` and `skill` take the names from `src/core/defines.h`,
   `src/core/structs.h` and `src/magic/spells.h` (without the `CLASS_`/`SPEC_` prefix).
+  `race` and `racewar` work the same way (without `RACE_`/`RACEWAR_`). `affect=TYPE:MODIFIER`
+  stores a permanent tag on the character, such as an epic task.
 - REGEX is a Python regular expression searched in multiline mode (`^`/`$` match at line
   starts and ends), so escape `.`, `(`, `?` and friends when you mean them literally.
 - `until` is for random outcomes: `until Rogue /You are now hidden/ max 10 hide` keeps hiding

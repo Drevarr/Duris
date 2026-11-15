@@ -1,0 +1,24 @@
+# A PvP victim with the Spill Blood task loses it and gains the 60-second
+# recently-fragged tag on a frag-eligible death. Death saves the victim and returns
+# them to the account menu before the outcome completes, so both must already be in
+# that save and still hold after re-entry (#1063). 10000000 is SPILL_BLOOD.
+staff  Spillstaff
+actor  Spiller  class=WARRIOR level=34
+actor  Bleeder  class=CLERIC  level=33 race=ORC racewar=EVIL affect=TAG_EPIC_ERRAND:10000000
+
+Bleeder> score
+Bleeder? Current task: .*spill enemy blood
+
+Spillstaff> setbit char Bleeder hit 5
+# A round lands about one unarmed blow in 4.5 seconds, and a fumble can end the
+# fight, so keep ordering the attack ("already fighting" is harmless) for minutes.
+until Spiller /is dead!/ max 400 kill orc
+Bleeder? You just lost [0-9.]+ frags![\s\S]*very pleased with YOUR &?\+?R?blood
+
+login Bleeder
+Bleeder! Current task: .*spill enemy blood
+# The tag came back from the death save with its remaining time, under a minute.
+Spillstaff> stat char bleeder
+Spillstaff? ^ +[1-5]?[0-9]\S* seconds,.* - fragged victim
+# ...and still expires: poll until stat stops listing it.
+until Spillstaff /\A(?![\s\S]*fragged victim)[\s\S]*Bleeder/ max 600 stat char bleeder
