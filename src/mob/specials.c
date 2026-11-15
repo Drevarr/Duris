@@ -17,7 +17,6 @@
 #include <stdio.h>
 #include <strings.h>
 #include "combat/damage.h"
-#include "item/item_removal_audit.h"
 #include "world/map.h"
 #include "magic/spells.h"
 
@@ -247,11 +246,12 @@ long pow10(long x)
 
 void npc_steal(P_char ch, P_char vict)
 {
-	P_obj obj = NULL, next_obj = NULL;
-	int percent, loc, gold, chance;
-	bool failed, caught;
-
 	if (!IS_ALIVE(ch) || !IS_ALIVE(vict) || IS_NPC(vict) || IS_PC_PET(ch))
+	{
+		return;
+	}
+
+	if (ch->in_room == NOWHERE || ch->in_room != vict->in_room)
 	{
 		return;
 	}
@@ -262,182 +262,29 @@ void npc_steal(P_char ch, P_char vict)
 		return;
 	}
 
-	if (IS_TRUSTED(vict) || IS_ROOM(ch->in_room, ROOM_SAFE))
+	if (IS_TRUSTED(vict) || IS_ROOM(ch->in_room, ROOM_SAFE) || CHAR_IN_SAFE_ROOM(ch))
 	{
 		return;
 	}
 
-	if (!number(0, 1))
-	{ /* 50/50, items or coins */
-		if (IS_RIDING(ch) || ((IS_CARRYING_N(ch) + 1) > CAN_CARRY_N(ch)) ||
-		    CHAR_IN_SAFE_ROOM(ch) ||
-		    (IS_ROOM(ch->in_room, ROOM_SINGLE_FILE) && !AdjacentInRoom(ch, vict)) ||
-		    IS_FIGHTING(ch) || IS_FIGHTING(vict))
-		{
-			return;
-		}
-
-		chance = ((2 * GET_LEVEL(vict) + GET_LEVEL(vict) / 4) - GET_LEVEL(ch));
-		if (chance == 0)
-		{
-			chance = 1;
-		}
-		percent = (2 * GET_LEVEL(ch) * 100) / chance;
-		percent += number(1, 20);
-		percent -= (STAT_INDEX(GET_C_WIS(vict)) + STAT_INDEX(GET_C_INT(vict))) - 19;
-
-		if (IS_AFFECTED(vict, AFF_AWARE) || affected_by_spell(vict, SKILL_AWARENESS))
-		{
-			percent -= 100;
-		}
-		if (!CAN_SEE(vict, ch))
-		{
-			percent += 40;
-		}
-		if (IS_IMMOBILE(vict))
-		{
-			percent += 200; /* ALWAYS SUCCESS */
-		}
-		else if (IS_AFFECTED2(vict, AFF2_STUNNED))
-		{
-			percent += 20; /* nice bonus if target is stunned */
-		}
-		else if (GET_STAT(vict) == STAT_SLEEPING)
-		{
-			percent += 40; /* hefty bonus if just normal sleeping */
-		}
-		if (IS_TRUSTED(vict)) /* NO NO to gods  */
-		{
-			percent = 0; /* Failure */
-		}
-
-		caught = FALSE;
-		failed = FALSE;
-		loc = number(0, WEAR_QUIVER);
-		if (loc && !vict->equipment[loc])
-		{
-			send_to_char(
-				"You cannot resist searching for items, yet you find nothing of interest!\r\n",
-				ch);
-			failed = TRUE;
-			percent += 50;
-		}
-		else
-		{
-			if (!loc)
-			{
-				for (obj = vict->carrying; obj; obj = next_obj)
-				{
-					next_obj = obj->next_content;
-					if (obj->type == ITEM_CONTAINER && ItemsIn(obj) >= 1)
-						break;
-					else if ((obj->weight <= 120) &&
-						 (RateObject(ch, 0, obj) >= 0))
-						break;
-				}
-				if (!obj)
-				{
-					send_to_char(
-						"Hmm, not much there. Try a different pocket.\r\n",
-						ch);
-					return;
-				}
-			}
-			else
-				obj = vict->equipment[loc];
-			// No stealing artifacts.
-			if ((total_carried_weight(ch) + GET_OBJ_WEIGHT(obj)) > CAN_CARRY_W(ch) ||
-			    IS_ARTIFACT(obj))
-				failed = TRUE;
-			if (!failed && (percent > 175))
-			{
-				act("You suddenly feel like relieving $N of $S spare equipment.. ",
-				    FALSE, ch, obj, vict, TO_CHAR);
-				act("You unequip $p and steal it.", FALSE, ch, obj, 0, TO_CHAR);
-				// Heavy items increase the chance of getting caught.
-				percent -= GET_OBJ_WEIGHT(obj);
-				const auto source = capture_item_removal(obj);
-				if (loc)
-					obj = unequip_char(vict, loc);
-				else
-					obj_from_char(obj);
-				if (obj && obj_to_char(obj, ch) && OBJ_CARRIED_BY(obj, ch))
-					audit_item_removal("npc_theft", source,
-							   capture_item_removal(obj));
-			}
-			else
-			{
-				send_to_char(
-					"Uh huh.. You think your instincts got better of you!\r\n",
-					ch);
-				failed = TRUE;
-				caught = TRUE;
-			}
-		}
-		CharWait(ch, 24);
-
-		if ((percent < 0) || MIN(100, percent) < number(-60, 100))
-			caught = TRUE;
-		if (!caught)
-		{
-			if (!failed)
-				send_to_char("Heh heh, got away clean too!\r\n", ch);
-			else
-				send_to_char("Well, at least nobody saw that!\r\n", ch);
-			return;
-		}
-		if (GET_STAT(vict) == STAT_SLEEPING)
-		{
-			send_to_char("Groping fingers disturb your rest!\r\n", vict);
-			send_to_char(
-				"Uh oh, looks like you weren't quite as careful as you should have been!\r\n",
-				ch);
-			do_wake(vict, 0, 0);
-		}
-		else
-		{
-			/* they are awake, and just caught the felonious miscreant in the act! */
-			send_to_char("Ooops, better be more careful next time!\r\n", ch);
-		}
-		if (!failed)
-		{
-			act("&+WHey! $n just stole your $q!&n", FALSE, ch, obj, vict, TO_VICT);
-			act("$n just stole $p from $N!", TRUE, ch, obj, vict, TO_NOTVICT);
-		}
-		else if (obj)
-		{
-			act("&+WHey! $n just tried to steal your $q!&n", FALSE, ch, obj, vict,
-			    TO_VICT);
-			act("$n just tried to steal something from $N!", TRUE, ch, obj, vict,
-			    TO_NOTVICT);
-		}
+	if (IS_FIGHTING(ch) || IS_FIGHTING(vict) ||
+	    (IS_ROOM(ch->in_room, ROOM_SINGLE_FILE) && !AdjacentInRoom(ch, vict)))
+	{
+		return;
 	}
-	if (IS_AWAKE(vict) && StatSave(vict, APPLY_DEX, (GET_LEVEL(vict) - GET_LEVEL(ch)) / 6))
-	{ /*(number(0, GET_LEVEL(vict)) > GET_LEVEL(ch)) */
-		act("You discover that $n has $s hands in your wallet.", FALSE, ch, 0, vict,
+
+	// NPC theft is disabled; treat thief procs as harmless flavor emotes.
+	if (!number(0, 1))
+	{
+		act("&+WHey! $n just tried to steal something from you!&n", FALSE, ch, 0, vict,
 		    TO_VICT);
-		act("$n tries to steal gold from $N.", TRUE, ch, 0, vict, TO_NOTVICT);
+		act("$n just tried to steal something from $N!", TRUE, ch, 0, vict, TO_NOTVICT);
 	}
 	else
 	{
-		/* Steal some coins */
-		int stolen_value = 0;
-		gold = (int)((GET_PLATINUM(vict) * number(1, 10)) / 100);
-		if (gold > 0)
-			stolen_value += gold * 1000;
-		gold = (int)((GET_GOLD(vict) * number(1, 10)) / 100);
-		if (gold > 0)
-			stolen_value += gold * 100;
-		gold = (int)((GET_SILVER(vict) * number(1, 10)) / 100);
-		if (gold > 0)
-			stolen_value += gold * 10;
-		gold = (int)((GET_COPPER(vict) * number(1, 10)) / 100);
-		if (gold > 0)
-			stolen_value += gold;
-		if (stolen_value > 0 && SUB_MONEY(vict, stolen_value, 0) == 0)
-		{
-			ADD_MONEY(ch, stolen_value);
-		}
+		act("You discover that $n has $s hands in your wallet.", FALSE, ch, 0, vict,
+		    TO_VICT);
+		act("$n tries to steal gold from $N.", TRUE, ch, 0, vict, TO_NOTVICT);
 	}
 }
 
