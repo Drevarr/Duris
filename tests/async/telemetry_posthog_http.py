@@ -8,7 +8,9 @@ from datetime import datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
 import errno
+import os
 from pathlib import Path
+import select
 import socket
 import ssl
 import struct
@@ -35,17 +37,19 @@ def http_tests(binary: Path, root: Path, environment: dict[str, str]) -> None:
             "-keyout", str(root / (prefix + "key.pem")),
             "-out", str(root / (prefix + "cert.pem")),
         ], env=environment, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    # A synthetic four-second libc DNS stall proves cancellation does not join
-    # libcurl's resolver thread. stall.invalid avoids libcurl's localhost
-    # shortcut; the marker proves the shim ran. It performs no real DNS lookup.
+    # Keep the resolver blocked until the sender has cancelled AND closed.
+    # stall.invalid avoids libcurl's localhost shortcut; no real DNS is used.
     shim = root / "dns.c"
-    shim.write_text('#include <netdb.h>\n#include <unistd.h>\n'
+    shim.write_text('#include <netdb.h>\n#include <unistd.h>\n#include <errno.h>\n'
                     '#include <stdio.h>\n#include <stdlib.h>\n'
                     'int getaddrinfo(const char *n,const char *s,const struct addrinfo *h,'
                     'struct addrinfo **r){(void)n;(void)s;(void)h;(void)r;'
                     'FILE *f=fopen(getenv("DURIS_TEST_DNS_STARTED"),"w");'
                     'if(f){fputs("called\\n",f);fclose(f);}'
-                    'usleep(4000000);return EAI_AGAIN;}\n')
+                    'char release;ssize_t count;'
+                    'do{count=read(atoi(getenv("DURIS_TEST_DNS_GATE")),&release,1);}'
+                    'while(count<0 && errno==EINTR);'
+                    'if(count!=1 || release!=\'r\')_exit(2);return EAI_AGAIN;}\n')
     subprocess.run(["cc", "-shared", "-fPIC", str(shim), "-o", str(root / "dns.so")],
                    env=environment, check=True, capture_output=True)
 
@@ -61,6 +65,7 @@ def http_tests(binary: Path, root: Path, environment: dict[str, str]) -> None:
         quota_days: list[int] = []
         journal = root / case
         journal.mkdir(mode=0o700)
+        release_response = threading.Event()
 
         class Handler(BaseHTTPRequestHandler):
             protocol_version = "HTTP/1.1"
@@ -105,7 +110,8 @@ def http_tests(binary: Path, root: Path, environment: dict[str, str]) -> None:
                 if case == "headers":
                     headers["X-Large"] = "x" * 16384
                 if case == "deadline":
-                    time.sleep(2.5)
+                    (journal / "request-held").write_text("pending\n")
+                    release_response.wait()
                 self.send_response(status)
                 for name, value in headers.items():
                     self.send_header(name, value)
@@ -122,17 +128,47 @@ def http_tests(binary: Path, root: Path, environment: dict[str, str]) -> None:
         thread = threading.Thread(target=server.serve_forever, kwargs={"poll_interval": 0.01}, daemon=True)
         thread.start()
         env = dict(environment)
+        dns_gate = os.pipe() if case == "dns" else None
         if case == "dns":
             env["LD_PRELOAD"] = str(root / "dns.so")
             env["DURIS_TEST_DNS_STARTED"] = str(journal / "dns-started")
+            env["DURIS_TEST_DNS_GATE"] = str(dns_gate[0])
         # Proxy environment must not redirect or expose capture credentials.
         env["HTTPS_PROXY"] = "http://127.0.0.1:1"
         try:
-            result = subprocess.run([
+            command = [
                 str(binary), "send", case, str(journal), str(server.server_port),
                 str(root / "other-cert.pem" if case == "tls" else cert),
-            ], env=env, text=True, capture_output=True, timeout=15)
+            ]
+            with subprocess.Popen(command, env=env, text=True, stdin=subprocess.PIPE,
+                                  stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                  pass_fds=(dns_gate[0],) if dns_gate else ()) as process:
+                try:
+                    if case in {"deadline", "dns"}:
+                        # Ordering is the assertion. The watchdog only catches hangs;
+                        # no pulse is judged by how much wall time the runner used.
+                        for milestone, reply in (("pending\n", "c"), ("closed\n", "r")):
+                            assert select.select([process.stdout], [], [], 15)[0], (
+                                case, "sender blocked before", milestone.strip())
+                            observed = process.stdout.readline()
+                            assert observed == milestone, (case, milestone, observed)
+                            if reply == "r":
+                                release_response.set()
+                                if dns_gate:
+                                    os.write(dns_gate[1], b"r")
+                            process.stdin.write(reply)
+                            process.stdin.flush()
+                    stdout, stderr = process.communicate(timeout=15)
+                    result = subprocess.CompletedProcess(command, process.returncode, stdout, stderr)
+                finally:
+                    if process.poll() is None:
+                        process.kill()
+                    process.wait()
         finally:
+            release_response.set()
+            if dns_gate:
+                for descriptor in dns_gate:
+                    os.close(descriptor)
             server.shutdown()
             server.server_close()
             thread.join(timeout=1)
@@ -174,11 +210,6 @@ def http_tests(binary: Path, root: Path, environment: dict[str, str]) -> None:
                 assert health_rows[0]["properties"]["health_trigger"] == "initial"
                 assert health_rows[0]["properties"]["coalesced_reason_mask"] == 0
             continue
-        # Wall-clock limits, so they sit far from both sides: a busy runner has delayed a
-        # pulse by ~0.5 s, while a pulse blocked on the network would last until the
-        # 1.5 s deadline, and a cleanup that joined the stalled resolver ~2.5 s more.
-        assert health["cleanup_usec"] < 750_000, (case, health)
-        assert health["longest_pulse_usec"] < 750_000, (case, health)
         assert health["attempted_batches"] == (1 if case in {"tls", "dns", "deadline", "mono"} else len(received)), (case, health, len(received))
         assert len(reserved) == len(received), (case, received, reserved)
         submitted = 0

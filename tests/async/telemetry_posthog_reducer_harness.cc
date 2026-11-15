@@ -12,6 +12,8 @@
 #ifdef TELEMETRY_POSTHOG_TESTING
 #include "telemetry/telemetry_outage_private.h"
 #include <chrono>
+#include <curl/curl.h>
+#include <filesystem>
 #include <thread>
 #endif
 
@@ -1425,6 +1427,20 @@ int telemetry_posthog_reducer_scenario(std::string_view name)
 }
 
 #ifdef TELEMETRY_POSTHOG_TESTING
+static bool hold_network = false;
+extern "C" CURLMcode __real_curl_multi_add_handle(CURLM *, CURL *);
+extern "C" CURLMcode __wrap_curl_multi_add_handle(CURLM *multi, CURL *easy)
+{
+	if (hold_network)
+	{
+		// The parent releases the fixture after close. A real curl timeout must not
+		// let a blocking implementation pass, or race a descheduled test process.
+		CHECK(curl_easy_setopt(easy, CURLOPT_TIMEOUT_MS, 60'000L) == CURLE_OK);
+		CHECK(curl_easy_setopt(easy, CURLOPT_CONNECTTIMEOUT_MS, 60'000L) == CURLE_OK);
+	}
+	return __real_curl_multi_add_handle(multi, easy);
+}
+
 int health_pacing_scenario(std::string_view name, const char *directory, std::uint16_t port,
 			   const char *ca)
 {
@@ -1675,7 +1691,6 @@ int telemetry_posthog_sender_scenario(std::string_view name, const char *directo
 	using clock = std::chrono::steady_clock;
 	const auto start = clock::now();
 	std::uint64_t jump = 0U;
-	std::uint64_t longest_pulse = 0U;
 	std::uint64_t delays[8]{};
 	std::size_t delay_count = 0U;
 	bool appended = false;
@@ -1683,9 +1698,10 @@ int telemetry_posthog_sender_scenario(std::string_view name, const char *directo
 	bool expired = false;
 	bool completed = false;
 	auto now = MONO;
-	// Under HTTP_TIMEOUT_USEC (2 s), so the deadline cancels the send; long enough that a
-	// pulse blocked until it stands well clear of scheduler noise on a busy runner.
-	auto deadline = (name == "deadline" || name == "dns") ? MONO + 1'500'000U : 0U;
+	hold_network = name == "deadline" || name == "dns";
+	const auto deadline = hold_network ? MONO + 250'000U : 0U;
+	const auto held =
+		std::filesystem::path(directory) / (name == "dns" ? "dns-started" : "request-held");
 	if (name == "flush")
 	{
 		telemetry_posthog_sender_pulse(now, BASE, 0U, false);
@@ -1697,19 +1713,34 @@ int telemetry_posthog_sender_scenario(std::string_view name, const char *directo
 		const auto elapsed = static_cast<std::uint64_t>(
 			std::chrono::duration_cast<std::chrono::microseconds>(clock::now() - start)
 				.count());
-		now = MONO + elapsed + jump;
-		const auto before = clock::now();
+		now = MONO + (hold_network ? 0U : elapsed) + jump;
 		auto utc = BASE + static_cast<std::int64_t>(now - MONO);
 		if (name == "rollback")
 			utc -= 86'400'000'000LL;
 		if (name == "clock" && !clock_recovered)
 			utc = TELEMETRY_UTC_UNKNOWN;
 		telemetry_posthog_sender_pulse(now, utc, deadline, name != "flush");
-		const auto pulse = static_cast<std::uint64_t>(
-			std::chrono::duration_cast<std::chrono::microseconds>(clock::now() - before)
-				.count());
-		longest_pulse = std::max(longest_pulse, pulse);
 		auto health = telemetry_posthog_sender_health_copy();
+		if (hold_network)
+		{
+			CHECK(health.state == telemetry_posthog_sender_state::sending);
+			if (std::filesystem::exists(held))
+			{
+				// A pulse must also return after the fixture is known to be blocked.
+				telemetry_posthog_sender_pulse(now, utc, deadline);
+				CHECK(telemetry_posthog_sender_health_copy().state ==
+				      telemetry_posthog_sender_state::sending);
+				std::puts("pending");
+				std::fflush(stdout);
+				CHECK(std::getchar() == 'c');
+				now = deadline;
+				telemetry_posthog_sender_pulse(now, utc + 250'000, deadline);
+				CHECK(telemetry_posthog_sender_health_copy().state ==
+				      telemetry_posthog_sender_state::stopped);
+				completed = true;
+				break;
+			}
+		}
 		if (name == "mono" && health.batch_events != 0U)
 		{
 			telemetry_posthog_sender_pulse(now - 1U, utc);
@@ -1791,11 +1822,13 @@ int telemetry_posthog_sender_scenario(std::string_view name, const char *directo
 	CHECK(completed);
 	const auto health = telemetry_posthog_sender_health_copy();
 	const auto reduced = telemetry_posthog_reducer_health_copy();
-	const auto cleanup_start = clock::now();
 	telemetry_posthog_sender_close();
-	const auto cleanup =
-		std::chrono::duration_cast<std::chrono::microseconds>(clock::now() - cleanup_start)
-			.count();
+	if (hold_network)
+	{
+		std::puts("closed");
+		std::fflush(stdout);
+		CHECK(std::getchar() == 'r');
+	}
 	cJSON *report = cJSON_CreateObject();
 #define HTTP_FIELD(field) cJSON_AddNumberToObject(report, #field, static_cast<double>(health.field))
 	HTTP_FIELD(attempted_batches);
@@ -1823,8 +1856,6 @@ int telemetry_posthog_sender_scenario(std::string_view name, const char *directo
 	cJSON_AddNumberToObject(report, "output_events", reduced.output_events);
 	cJSON_AddNumberToObject(report, "normal_reserved", journal.quota.normal_reserved);
 	cJSON_AddNumberToObject(report, "health_reserved", journal.quota.health_reserved);
-	cJSON_AddNumberToObject(report, "longest_pulse_usec", static_cast<double>(longest_pulse));
-	cJSON_AddNumberToObject(report, "cleanup_usec", static_cast<double>(cleanup));
 	auto *delay_json = cJSON_AddArrayToObject(report, "delays");
 	for (std::size_t index = 0U; index < delay_count; ++index)
 		cJSON_AddItemToArray(delay_json,
