@@ -11184,6 +11184,9 @@ void perform_violence(void)
 				attacksMultiplier = cmMulti;
 		}
 
+		// Above 1.0, div_attacks becomes 0 and attacks[] is read past number_attacks.
+		attacksMultiplier = MIN(attacksMultiplier, 1.0f);
+
 		// we ceil to not round off attacks
 		real_attacks = (int)ceil(number_attacks * attacksMultiplier);
 		div_attacks = (int)(1 / attacksMultiplier);

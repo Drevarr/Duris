@@ -908,6 +908,8 @@ int epic_stone_payout(P_obj obj, P_char ch)
 
 	if ((num_players < obj->value[1]) && (obj->value[1] != 0))
 		num_players = obj->value[1];
+	// A group with no counted PC and no suggested size would divide by zero.
+	num_players = MAX(1, num_players);
 
 	// Payout is the base value of the stone * (100% for up to max group size, then max/current % for larger groups).
 	int payout = (int)(obj->value[0] * obj->value[1] / num_players);
