@@ -277,6 +277,13 @@ int main()
     assert(SUB_MONEY(&alice.ch, 1, 0) == 0);
     assert((wallet(&alice.ch) == std::array<int64_t, 4>{9, 9, 9, INT_MAX-1}));
 
+    // Totals past INT_MAX copper are summed in 64 bits, not wrapped negative (#1044).
+    assert(GET_MONEY(&alice.ch) == 999 + 1000LL * (INT_MAX - 1));
+    GET_BALANCE_COPPER(&alice.ch)=1; GET_BALANCE_SILVER(&alice.ch)=0;
+    GET_BALANCE_GOLD(&alice.ch)=0; GET_BALANCE_PLATINUM(&alice.ch)=INT_MAX;
+    assert(GET_BALANCE(&alice.ch) == 1 + 1000LL * INT_MAX);
+    GET_BALANCE_PLATINUM(&alice.ch)=0;
+
     // Refused submission also leaves both balances alone and retains a credit.
     GET_COPPER(&alice.ch)=100; GET_SILVER(&alice.ch)=0;
     GET_GOLD(&alice.ch)=0; GET_PLATINUM(&alice.ch)=0;

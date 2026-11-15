@@ -2461,7 +2461,7 @@ int rogue_one(P_char ch, P_char pl, int cmd, char * /*arg*/)
 
 int prostitute_one(P_char ch, P_char pl, int cmd, char *arg)
 {
-	int gold;
+	long long gold;
 	P_char k;
 	P_char c_obj = 0;
 	char Gbuf1[MAX_STRING_LENGTH], Gbuf2[MAX_STRING_LENGTH];

@@ -219,7 +219,7 @@ void do_construct_overmax(P_char ch, char * /*arg*/)
 
 	if (!IS_TRUSTED(ch))
 	{
-		debug("%d, %d", plat_cost, GET_MONEY(ch));
+		debug("%d, %lld", plat_cost, GET_MONEY(ch));
 		if (GET_MONEY(ch) < plat_cost)
 		{
 			snprintf(

@@ -91,13 +91,39 @@ int main() {
     }
 }
 '''
+coin_start = source('magic.c').read_text().index('static void resurrect_coin_pile(')
+coin_text = source('magic.c').read_text()[coin_start:]
+coin_block = coin_text[:coin_text.index('\n}\n') + 3]
+coins = r'''
+#include <cassert>
+#include <climits>
+struct Object { int value[8]{}; bool destroyed = false, carried = false; };
+struct Character { long long wallet = 0; };
+using P_char = Character *;
+using P_obj = Object *;
+void ADD_MONEY(Character *ch, int amount) { assert(amount >= 0); ch->wallet += amount; }
+void extract_obj(Object *obj) { obj->destroyed = true; }
+void obj_to_char(Object *obj, Character *) { obj->carried = true; }
+''' + coin_block + r'''
+int main() {
+    Character player;
+    Object small; small.value[0] = 5; small.value[3] = 7;
+    resurrect_coin_pile(&player, &small);
+    assert(player.wallet == 7005 && small.destroyed && !small.carried);
+    // 3,000,000 platinum is past INT_MAX copper: the pile must survive, not vanish.
+    Object large; large.value[3] = 3000000;
+    resurrect_coin_pile(&player, &large);
+    assert(player.wallet == 7005 && large.carried && !large.destroyed);
+}
+'''
 with tempfile.TemporaryDirectory(prefix='duris-resurrection-zero-') as temporary:
     root = Path(temporary)
-    for name, code in [('refund', prelude + block + cases), ('inventory', inventory)]:
+    for name, code in [('refund', prelude + block + cases), ('inventory', inventory), ('coins', coins)]:
         source, binary = root / f'{name}.cpp', root / name
         source.write_text(code)
         subprocess.run(['g++', '-std=c++20', '-Wall', '-Wextra', '-Werror',
                         '-fsanitize=address,undefined', '-fno-omit-frame-pointer', '-fno-pie', '-no-pie',
                         str(source), '-o', str(binary)], check=True)
         subprocess.run([str(binary)], check=True)
-print('resurrection refunds remain correct; only transient carried items are destroyed')
+print('resurrection refunds remain correct; only transient carried items are destroyed; '
+      'corpse coins are credited or kept, never lost')

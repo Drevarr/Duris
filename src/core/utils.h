@@ -464,13 +464,13 @@ int race_size(int race);
 #define GET_WARD(ch) ((ch)->points.ward)
 #define GET_MAX_WARD(ch) ((ch)->points.max_ward)
 
-#define GET_MONEY(ch)                                                                    \
-	((ch)->points.cash[0] + 10 * (ch)->points.cash[1] + 100 * (ch)->points.cash[2] + \
-	 1000 * (ch)->points.cash[3])
+#define GET_MONEY(ch)                                                                        \
+	((ch)->points.cash[0] + 10LL * (ch)->points.cash[1] + 100LL * (ch)->points.cash[2] + \
+	 1000LL * (ch)->points.cash[3])
 
-#define GET_BALANCE(ch)                                                                     \
-	((ch)->only.pc->spare1 + 10 * (ch)->only.pc->spare2 + 100 * (ch)->only.pc->spare3 + \
-	 1000 * (ch)->only.pc->spare4)
+#define GET_BALANCE(ch)                                                                         \
+	((ch)->only.pc->spare1 + 10LL * (ch)->only.pc->spare2 + 100LL * (ch)->only.pc->spare3 + \
+	 1000LL * (ch)->only.pc->spare4)
 
 #define GET_COPPER(ch) ((ch)->points.cash[0])
 
