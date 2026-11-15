@@ -22315,14 +22315,11 @@ See also: CLONE, PURGE (IMMORTAL), "GOD, LOAD"
 #
 LOOKUP (Immortal Command)
 ===========================================================================
-Syntax: lookup <pfile|room|zone|mob|obj> <pattern>
+Syntax: lookup <room|zone|mob|obj> <pattern>
         lookup random zone
-        lookup pfile <letter> <level|*> <class|*> <race|*>
 
 Immortal command (level 58). Searches the boot-time index files for names matching a
-substring: rooms, zones, mobiles or objects. 'lookup pfile' filters
-player files by starting letter, level, class and race ('*' wildcards
-allowed except for the letter); output is capped at ~20 rows.
+substring: rooms, zones, mobiles or objects.
 ===========================================================================
 #
 "MAP (IMMORTAL)"

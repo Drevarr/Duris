@@ -72,6 +72,7 @@ death_restart_journey $DB python3 tests/async/test_mariadb_death_restart_journey
 mob_gold_dial $DB python3 tests/async/test_mob_gold_dial_runtime.py --server SERVER_BINARY
 boot_preflight $DB python3 tests/async/test_mariadb_boot_preflight.py --server SERVER_BINARY
 headbutt_feedback $DB python3 tests/async/test_headbutt_feedback_journey.py --server SERVER_BINARY
+lookup_name $DB python3 tests/async/run_lookup_name_journey.py --server SERVER_BINARY
 assassin_combat $DB python3 tests/async/test_assassin_combat_journey.py --server SERVER_BINARY
 conjurer_gameplay $DB python3 tests/async/test_conjurer_gameplay_journey.py --server SERVER_BINARY
 shambler_reflection $DB python3 tests/async/test_shambler_reflection_journey.py --server SERVER_BINARY

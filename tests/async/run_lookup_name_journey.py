@@ -42,6 +42,10 @@ def run(server):
             records = "".join(f"#{22901 + i}\n{keys}~\n{description}~{tail}"
                               for i, (keys, description) in enumerate(names))
             path.write_text(text.replace("$~", records + "$~"))
+        # Room/zone catalogs: the matching room is the last line; the zone catalog is empty.
+        (runtime / "lib/misc").mkdir(parents=True, exist_ok=True)
+        (runtime / "lib/misc/lookup.wld").write_text("#22901 A Road~\n#22902 &+RThe Ember Temple&n~\n")
+        (runtime / "lib/misc/lookup.zon").write_text("")
         plain, tls, websocket = journey.available_ports()
         output_path = runtime / "server.out"
         process = client = None
@@ -113,15 +117,20 @@ def run(server):
                 assert "Nothing found." in check("where tone sent", ())
                 assert "Nothing found." in check("where unspawned-ember", ())
                 assert b"\x1b[" in client.raw_transcript
-                # The pfile start letter reaches system(); a shell command must not run.
-                rejected = command(client, "lookup pfile a;touch${IFS}injected; 50 Human Warrior")
-                assert "must be a single letter" in rejected, rejected
-                assert not (runtime / "injected").exists(), "lookup pfile ran a shell command"
+                # The last catalog line is listed once, and an empty catalog finds nothing.
+                rooms = command(client, "lookup room temple")
+                assert rooms.count("22902") == 1 and "22901" not in rooms, rooms
+                assert "No matches found" in command(client, "lookup zone temple")
+                # "random" without "zone" must not fall into the room search ("r").
+                assert "lookup <room | zone | mob | obj>" in command(client, "lookup random temple")
+                # The flat-file pfile mode is gone; it falls through to the syntax help.
+                rejected = command(client, "lookup pfile a 50 Human Warrior")
+                assert "lookup <room | zone | mob | obj>" in rejected, rejected
                 for topic in ("godlookup", "godwhere"):
                     assert "fire-giant" in command(client, "help " + topic)
                 (ROOT / "bin/tests/lookup-name-journey.txt").write_text("\n".join(evidence))
                 print("PASS: MariaDB boot, cold mob/object keywords, staff dispatch, compound and "
-                      "colored-description matching, partial text, VNUMs, live WHERE and help")
+                      "colored-description matching, partial text, VNUMs, room/zone catalogs, live WHERE and help")
             finally:
                 stop()
 
