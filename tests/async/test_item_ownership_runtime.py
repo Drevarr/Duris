@@ -428,6 +428,7 @@ with tempfile.TemporaryDirectory(prefix="duris-item-ownership-runtime-", dir=ROO
 	binary = Path(temp_dir) / "item_ownership_runtime_test"
 	helpers = "\n".join(extract_function("sql.c", signature) for signature in (
         "static item_owner_type sql_persistence_owner_type(",
+        "item_ownership_runtime_entry sql_persistence_item_owner_entry(",
         "static bool sql_persistence_owner_row_matches(",
         "bool sql_persistence_item_owner_fields_match("))
 	source.write_text(HARNESS.replace("/* SQL_ROW_HELPERS */", helpers))

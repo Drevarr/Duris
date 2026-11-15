@@ -52,6 +52,7 @@ norent_key_rent $DB python3 tests/async/test_norent_key_rent_journey.py --backen
 websocket_session_guard $DB python3 tests/async/test_websocket_session_guard_journey.py --backend mariadb --server SERVER_BINARY
 storage_chest_crash $DB python3 tests/async/test_storage_chest_crash_journey.py --backend mariadb --server SERVER_BINARY
 locker_restart $DB python3 tests/async/test_mariadb_locker_journey.py --server SERVER_BINARY
+locker_artifact $DB python3 tests/async/test_mariadb_locker_artifact_journey.py --server SERVER_BINARY
 pet_restart $DB python3 tests/async/test_pet_restart_journey.py --server SERVER_BINARY
 shaman_totems $DB python3 tests/async/test_shaman_totems.py --server SERVER_BINARY
 hardcore_third_death $DB python3 tests/async/test_mariadb_hardcore_death_journey.py --server SERVER_BINARY

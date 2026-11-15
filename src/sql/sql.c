@@ -5103,16 +5103,10 @@ static item_owner_type sql_persistence_owner_type(const char *owner_type)
 	return item_owner_type::unknown;
 }
 
-// The rule below for an item_current_owner row already read: root, parent (0 for
-// none), owner type, id and context, item revision, vnum, state and owner revision,
-// or NULL when the item has no row.
-static bool sql_persistence_owner_row_matches(unsigned long long item_uid,
-					      const item_owner_identity &expected,
-					      const char *const *row)
+item_ownership_runtime_entry sql_persistence_item_owner_entry(unsigned long long item_uid,
+							      const char *const *row)
 {
-	if (!row)
-		return true;
-	item_ownership_runtime_entry entry = {
+	return {
 		.item_uid = item_uid,
 		.root_item_uid = strtoull(row[0], NULL, 10),
 		.parent_item_uid = strtoull(row[1], NULL, 10),
@@ -5123,6 +5117,18 @@ static bool sql_persistence_owner_row_matches(unsigned long long item_uid,
 		.vnum = static_cast<int32_t>(strtol(row[6], NULL, 10)),
 		.state = static_cast<item_custody_state>(strtoul(row[7], NULL, 10)),
 	};
+}
+
+// The rule below for an item_current_owner row already read: root, parent (0 for
+// none), owner type, id and context, item revision, vnum, state and owner revision,
+// or NULL when the item has no row.
+static bool sql_persistence_owner_row_matches(unsigned long long item_uid,
+					      const item_owner_identity &expected,
+					      const char *const *row)
+{
+	if (!row)
+		return true;
+	const item_ownership_runtime_entry entry = sql_persistence_item_owner_entry(item_uid, row);
 	if (!item_owner_identity_equal(entry.owner, expected))
 	{
 		dupe_log_item("load_skipped", item_uid, entry.vnum, expected, entry.owner);

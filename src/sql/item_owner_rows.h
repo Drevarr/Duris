@@ -1,6 +1,8 @@
 #ifndef DURIS_SQL_ITEM_OWNER_ROWS_H
 #define DURIS_SQL_ITEM_OWNER_ROWS_H
 
+struct item_ownership_runtime_entry;
+
 /* The item_current_owner columns an owner check reads, joined as `current_item` with
  * item_owner_revision as `owner`; a read elsewhere selects them in this order. */
 #define SQL_ITEM_OWNER_COLUMNS                                                         \
@@ -14,6 +16,9 @@
 #define SQL_ITEM_OWNER_SELECT            \
 	"SELECT " SQL_ITEM_OWNER_COLUMNS \
 	" FROM item_current_owner current_item " SQL_ITEM_OWNER_REVISION_JOIN
+/* Those columns already read (row[0..8]) as the item's custody entry. */
+item_ownership_runtime_entry sql_persistence_item_owner_entry(unsigned long long item_uid,
+							      const char *const *row);
 /* The same check for those columns already read (row[0..8], or NULL when the item
  * has no ownership row). */
 bool sql_persistence_item_owner_fields_match(unsigned long long item_uid, const char *owner_type,

@@ -2334,8 +2334,9 @@ void artifact_update_sql(P_obj arti, char owned, time_t timer)
 			}
 			return;
 		}
-		// Imms can hold unlimited non-tracked artis.
-		if (IS_TRUSTED(owner))
+		// Imms can hold unlimited non-tracked artis. A locker's holder has no player
+		// identity: keep the last real location rather than publish player 0.
+		if (IS_TRUSTED(owner) || (!IS_NPC(owner) && GET_PID(owner) <= 0))
 		{
 			return;
 		}
@@ -2606,8 +2607,9 @@ void artifact_update_location_sql(P_obj arti)
 			// NPCs don't start the timer.
 			artifact_update_sql(arti, '0', artidata.timer);
 		}
-		// PCs get a new timer if it wasn't previously owned.
-		else
+		// PCs get a new timer if it wasn't previously owned. A locker's holder has
+		// no player identity, so it neither binds the soul nor changes tracking.
+		else if (GET_PID(owner) > 0)
 		{
 			artifact_switch_check(owner, arti);
 			if (!timerStarted)

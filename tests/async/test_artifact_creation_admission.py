@@ -322,6 +322,7 @@ void persistence_alert(int,const char *,const char *,const char *,const char *,c
 // RESTORE_WRAPPER
 // NATIVE_EXISTING_CASES
 // OWNED_RECOVERY_CASES
+// LOCKER_RELOAD_CASES
 // CREATION_REPAIR_CASES
 // RECOVERY_CASES
 // MAINTENANCE_CASES
@@ -513,6 +514,7 @@ int main() {
  corpse_bind_cases();
  native_existing_recovery_cases();
  owned_recovery_cases();
+ locker_reload_cases();
  creation_repair_cases();
  // Tracking metadata alone is not a physical restore source, even with a known UID.
  auto &legacy=artifact_rows[900];
@@ -877,6 +879,48 @@ void native_existing_recovery_cases() {
  native_fixture=native_existing_fixture=false;
  extract_obj(bag,FALSE); assert(!object_list && !pool.objs_used);
  std::cout<<"actual existing native tree: later refusal rolls back earlier admissions, successful retry registers both: PASS\n";
+}
+""")
+
+source=source.replace("// LOCKER_RELOAD_CASES",
+ extract_function("sql.c","item_ownership_runtime_entry sql_persistence_item_owner_entry(")+"\n"+
+ extract_function("sql_player.c","static P_obj locker_read_object(")+r"""
+// A locker reload rejoins the canonical identity, and the locker's holder (a
+// non-NPC with no player identity) neither publishes player 0 nor binds the soul.
+void locker_reload_cases() {
+ assert(!object_list && !pool.objs_used); artifact_rows.clear(); artifact_binds.clear(); writes.clear();
+ auto &row=artifact_rows[900]; row={true,ARTIFACT_ONGROUND,2300,4567,ARTIFACT_MAJOR};
+ row.canonical_item_uid=6400; row.identity_state=artifact_identity_state::present;
+ artifact_binds[900]={0,0};
+ sql_row saved; saved.fields.resize(40);
+ saved.fields[1]="5"; saved.fields[6]=std::to_string(ITEM_ARTIFACT); saved.fields[21]="6400";
+ // Without custody the item still loads, as before, but stays outside the identity.
+ auto *legacy=locker_read_object(0,saved,15,3);
+ assert(legacy && !artifact_is_canonical(legacy) && !row.live_object);
+ extract_obj(legacy,FALSE);
+ const std::string custody[]={"6400","0",std::to_string(static_cast<unsigned>(item_owner_type::locker)),"15","3",
+  "2","900",std::to_string(static_cast<unsigned>(item_custody_state::active)),"1"};
+ for(size_t i=0;i<9;++i) saved.fields[31+i]=custody[i];
+ // Custody another chest holds is refused; the item still loads outside the identity.
+ legacy=locker_read_object(0,saved,15,4);
+ assert(legacy && !artifact_is_canonical(legacy) && !row.live_object);
+ extract_obj(legacy,FALSE);
+ auto *body=locker_read_object(0,saved,15,3);
+ assert(body && body->obj_uid==6400 && row.live_object==body && row.pending==artifact_pending::recovery);
+ char_data locker={}; pc_only_data locker_pc={}; locker.only.pc=&locker_pc;
+ locker.player.name=const_cast<char *>("Fixture.locker"); locker.in_room=0;
+ obj_to_char_at_end(body,&locker);
+ assert(artifact_is_canonical(body) && row.owned && row.locType==ARTIFACT_ONGROUND && row.location==2300 &&
+        row.timer==4567 && artifact_binds.at(900).owner_pid==0 && writes.empty());
+ char_data owner={}; pc_only_data pc={}; owner.only.pc=&pc; pc.pid=77;
+ owner.player.level=51; owner.specials.act=PLR_MORTAL; owner.in_room=0;
+ owner.player.name=const_cast<char *>("Lockerfixture");
+ obj_from_char(body); obj_to_char_at_end(body,&owner);
+ assert(row.owned && row.locType==ARTIFACT_ON_PC && row.location==77 && row.timer==4567 &&
+        artifact_binds.at(900).owner_pid==77);
+ drain(); obj_from_char(body); extract_obj(body,FALSE);
+ assert(!object_list && !pool.objs_used && !row.live_object && row.location==77);
+ std::cout<<"locker reload: saved custody rejoins the identity, its holder keeps tracking and soul, a player takes it: PASS\n";
 }
 """)
 
