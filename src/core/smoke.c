@@ -670,7 +670,7 @@ void herb_blue_haze(int level, int duration, P_char smoker)
 	// The APPLY_AC does stack.  It's not much, in bump or time, and it's just more expedient than checking
 	//   for every existing armor spell as we do for vitality portion below.
 	// Actually, we could use the AFF_ARMOR flag, but meh.
-	af.modifier = (int)(-1 * ((4 / 5) * level)) * multi; // -20 AC at herb->level = 25
+	af.modifier = -(4 * level / 5) * multi; // -20 AC at herb->level = 25
 	af.location = APPLY_AC;
 	affect_to_char(smoker, &af);
 	// Slight decrease in Apply_Casting_Pulse.

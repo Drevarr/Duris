@@ -1371,6 +1371,8 @@ static int thryms_icerazor_hitroll(int level)
 	return 5 + MAX(0, level - 51);
 }
 
+// number() accepts its bounds in either order, so these roll 6-8, 3-4 and exactly 4,
+// matching the facts display. Intended; not reversed arguments (#1044).
 static int thryms_icerazor_damage(const Rolls &rolls)
 {
 	return rolls.number(8, 6);

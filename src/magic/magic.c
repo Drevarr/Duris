@@ -7120,7 +7120,7 @@ void spell_sense_holiness(int /*level*/, P_char /*ch*/, char * /*arg*/, [[maybe_
 // How far wizard eye sees across the map at cast level `level`, in rooms.
 static int wizard_eye_distance(int level)
 {
-	return MAX(level * 2, (int)get_property("spell.wizardEye.maxDistance", 100));
+	return MIN(level * 2, (int)get_property("spell.wizardEye.maxDistance", 100));
 }
 
 std::string wizard_eye_facts(P_char ch)
