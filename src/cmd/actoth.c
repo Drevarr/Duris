@@ -1142,6 +1142,7 @@ void do_rage(P_char ch, char * /*argument*/, int /*cmd*/)
 	{
 		send_to_char("&+RYou are unable to call forth the rage within you...\r\n", ch);
 		CharWait(ch, rage_failed_lag());
+		notch_skill(ch, SKILL_RAGE, 2.5);
 		return;
 	}
 
