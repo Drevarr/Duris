@@ -29129,7 +29129,7 @@ Syntax: dismiss [pet]
 For a non-Bard, bare 'dismiss' removes all non-player followers.
 'dismiss <pet>' removes your linked pet in the same room.
 This destroys the dismissed creature; it does not stable it for later.
-Bards use dismiss only to remove their mirror images; use 'play' to
+For a Bard, bare 'dismiss' removes only mirror images; use 'play' to
 stop singing. Player followers are not dismissed.
 See [[Order]], [[Follow]] and [[Play]].
 ===========================================================================

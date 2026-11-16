@@ -1512,7 +1512,8 @@ void do_dismiss(P_char ch, char *argument, int cmd)
 		}
 	}
 
-	if (GET_CLASS(ch, CLASS_BARD) && cmd != CMD_DEATH)
+	// A bare dismiss from a Bard sends back only mirror images; a named pet goes below.
+	if (GET_CLASS(ch, CLASS_BARD) && cmd != CMD_DEATH && (!argument || !*argument))
 	{
 		for (k = ch->followers; k; k = x)
 		{
@@ -1582,6 +1583,10 @@ void do_dismiss(P_char ch, char *argument, int cmd)
 		act("You make a &+Mmagical &+mgesture&n, sending $N back to the &+Lnether plane&n.",
 		    TRUE, ch, 0, victim, TO_CHAR);
 		extract_char(victim);
+	}
+	else
+	{
+		act("$N is not your pet.", FALSE, ch, 0, victim, TO_CHAR);
 	}
 }
 
