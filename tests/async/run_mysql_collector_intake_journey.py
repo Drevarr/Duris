@@ -143,6 +143,11 @@ def run(server):
                     client.send('north')
                     client.expect('The Collector Regression House', timeout=20)
                     client.expect('Pos: standing >', timeout=20)
+                    # The unworn starter kit fills the item limit, so the purchase
+                    # would be refused for capacity; the purse check below shows
+                    # dropping it left the coins alone.
+                    client.send('drop all')
+                    client.expect('Pos: standing >', timeout=20)
                     client.send('score')
                     score = client.expect('Coins in bank:', timeout=20)
                     carried = re.search(r'Coins carried:\s*(\d+) platinum\s*(\d+) gold\s*(\d+) silver\s*(\d+) copper', score)
