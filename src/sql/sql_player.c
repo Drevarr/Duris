@@ -5108,6 +5108,39 @@ Guild *sql_load_guild(unsigned int guild_id)
 	}
 	mysql_free_result(result);
 
+	// The frag total is the members' frags, which leaving subtracts again. Recount it
+	// from the saved players, so a crash between a PvP outcome and the guild's own save
+	// cannot leave the total apart from its members. The roster also lists enemies,
+	// who are not members.
+	char frags_query[512];
+	snprintf(frags_query, sizeof(frags_query),
+		 "select p.name, p.frags, m.bits from guild_members m join player_data p "
+		 "on p.pid=m.player_pid or (m.player_pid is null and p.name=m.player_name) "
+		 "where m.guild_id=%u order by p.frags desc, p.name",
+		 guild_id);
+	result = db_query("%s", frags_query);
+	if (!result)
+	{
+		logit(LOG_DEBUG, "sql_load_guild: failed to count frags for guild %u", guild_id);
+		delete guild;
+		return NULL;
+	}
+	guild->frags = {};
+	while ((row = mysql_fetch_row(result)))
+	{
+		if (!row[2] || !IS_MEMBER(strtoul(row[2], NULL, 10)))
+			continue;
+		const long member_frags = row[1] ? atol(row[1]) : 0;
+		if (member_frags > guild->frags.top_frags) // the first row has the most
+		{
+			strlcpy(guild->frags.topfragger, row[0] ? row[0] : "",
+				sizeof guild->frags.topfragger);
+			guild->frags.top_frags = member_frags;
+		}
+		guild->frags.frags += member_frags;
+	}
+	mysql_free_result(result);
+
 	return guild;
 }
 

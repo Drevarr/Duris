@@ -7,7 +7,7 @@ The live artifact path and full boon journey are covered by their own fixtures.
 from pathlib import Path
 import subprocess
 import tempfile
-from _paths import ROOT, HARNESS_STUBS
+from _paths import ROOT, HARNESS_STUBS, extract_function
 
 HARNESS = r'''
 
@@ -24,6 +24,7 @@ HARNESS = r'''
 #include "player/player_save_worker.h"
 #include "world/db.h"
 #include "core/utils.h"
+#include "guild/assocs.h"
 #include "sql/sql_async.h"
 #include <cassert>
 #include <cstdio>
@@ -40,6 +41,12 @@ P_index mob_index = nullptr;
 static char_data actors[2] = {};
 static pc_only_data pcs[2] = {};
 static bool online[2] = { true, true };
+// A PvP outcome moves the total of each participant's guild (#1062 N13).
+static unsigned int guild_saves = 0;
+Guild::Guild() { frags = {}; }
+Guild::~Guild() {}
+bool Guild::save() { return ++guild_saves; }
+// GUILD_ADD_FRAGS
 static unsigned int boon_publications = 0, combat_publications = 0, stone_publications = 0;
 static std::vector<critical_operation_id> artifact_parents;
 static bool allow_definition_read = false;
@@ -269,8 +276,31 @@ int main(int argc, char **argv)
 	combat.participants[1].pid = 43;
 	combat.participants[1].role = combat_participant_role::victim;
 	combat.participants[1].frag_delta = -100;
+	Guild killers, victims;
+	actors[0].player.name = const_cast<char *>("Killer");
+	actors[1].player.name = const_cast<char *>("Victim");
+	actors[0].specials.guild = &killers;
+	actors[0].specials.guild_status = A_SF2; // a member
+	actors[1].specials.guild = &victims;
+	actors[1].specials.guild_status = A_SF1; // only applying, so not counted yet
+	pcs[1].frags = 300;
+	victims.set_frags(300);
+	guild_saves = 0;
 	assert(combat_outcome_transaction_submit(combat, combat_complete));
 	assert(pcs[0].epics == 4 && pcs[0].frags == 100);
+	assert(killers.get_frags() == 100 && killers.get_top_frags() == 100 &&
+	       !strcmp(killers.get_top_fragger(), "Killer") && guild_saves == 1);
+	assert(victims.get_frags() == 300 && pcs[1].frags == 200);
+	// A top fragger's loss moves the count shown for them.
+	victims.set_frags(300);
+	pcs[1].frags = 300;
+	victims.add_frags(&actors[1], 0);
+	pcs[1].frags = 200;
+	victims.add_frags(&actors[1], -100);
+	assert(victims.get_frags() == 200 && victims.get_top_frags() == 200 &&
+	       !strcmp(victims.get_top_fragger(), "Victim"));
+	pcs[1].frags = 0;
+	actors[0].specials.guild = actors[1].specials.guild = nullptr;
 	online[1] = false;
 	zone_touch_payload stone = {};
 	stone.zone_number = 77;
@@ -329,7 +359,8 @@ outputs = ROOT / 'bin/tests'
 outputs.mkdir(parents=True, exist_ok=True)
 with tempfile.TemporaryDirectory(prefix='reward-replay-', dir=outputs) as directory:
     cpp=Path(directory)/'replay.cpp'; binary=Path(directory)/'replay'
-    cpp.write_text(HARNESS)
+    cpp.write_text(HARNESS.replace('// GUILD_ADD_FRAGS', extract_function(
+        'assocs.c', 'void Guild::add_frags(P_char ch, long new_frags)')))
     sources = [
         'persistence/critical_command.c', 'persistence/critical_command_coordinator.c',
         'persistence/persistence_observability.c', 'player/player_save_worker.c',

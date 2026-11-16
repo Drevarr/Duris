@@ -7,6 +7,7 @@
 #include "economy/currency_value.h"
 #include "guild/artifact_guild_transaction.h"
 #include "guild/artifact_guild_state.h"
+#include "guild/assocs.h"
 #include "core/prototypes.h"
 #include "core/utils.h"
 #include "world/db.h"
@@ -36,6 +37,15 @@
 #include <mutex>
 
 void frag_cap_runtime_refresh() {}
+// These players have no guild for a PvP outcome to update.
+void Guild::add_frags(P_char, long)
+{
+	std::abort();
+}
+bool Guild::save()
+{
+	std::abort();
+}
 
 P_room world;
 zone_data *zone_table;

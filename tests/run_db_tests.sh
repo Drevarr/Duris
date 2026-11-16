@@ -179,6 +179,7 @@ account_character_projection $DB tests/async/run_account_character_projection_my
 account_bank_delta tests/async/run_account_bank_delta_mysql.sh
 legacy_personal_locker_access_repair tests/async/run_legacy_personal_locker_access_repair_mysql.sh
 character_rename_references $DB tests/async/run_character_rename_references_mysql.sh
+guild_frags_load $DB tests/async/run_guild_frags_load_mysql.sh
 sql_pool_interrupt tests/async/run_sql_pool_interrupt_mysql.sh
 corpse_persistence tests/async/run_corpse_persistence_schema_mysql.sh
 lifecycle_archive tests/async/run_lifecycle_archive_schema_mysql.sh
