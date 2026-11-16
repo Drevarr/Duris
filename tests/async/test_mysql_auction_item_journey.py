@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Auction source/target refusal, disconnect, legacy conversion and exact UID restart."""
 import argparse
+import re
 from pathlib import Path
 import tempfile
 import time
@@ -168,6 +169,32 @@ def run(binary):
                 await_graph(expected_all)
                 assert wallet() == 8980
                 print('PASS legacy listing converts on public pickup; exact UID/attributes survive restart', flush=True)
+
+                # A snapshot keeps only restrung text, so an ordinary item's pickup
+                # must name it from its prototype, not print "You pick up ." (#1062 N14).
+                stop()
+                # Saved like ordinary rows: keywords stored, short_descr NULL.
+                sql('INSERT INTO player_items(pid,vnum,obj_uid,name,item_type,weight,item_condition) '
+                    f"VALUES({pid},391,980015,'plainbag bag leather large',15,1,100);"
+                    'INSERT INTO item_current_owner(item_uid,root_item_uid,owner_type,owner_id,'
+                    'owner_context_id,item_revision,vnum,state) '
+                    f'VALUES(980015,980015,1,{pid},0,1,391,1)')
+                server.start(full_world=True)
+                login()
+                response = command(client, 'auction offer plainbag 1 0 1 1')
+                assert 'is now listed as auction' in response, response
+                plain_auction = int(sql('SELECT auction_id FROM auction_item_custody WHERE item_uid=980015'))
+                command(client, 'save')
+                stop()
+                sql(f'UPDATE auctions SET status=2 WHERE id={plain_auction};'
+                    f'UPDATE auction_item_custody SET claim_pid={pid} WHERE auction_id={plain_auction}')
+                server.start(full_world=True)
+                login()
+                client.send('auction pickup')
+                picked = client.expect('You pick up', timeout=30) + client.expect('.', timeout=5)
+                picked = re.sub(r'\x1b\[[0-9;]*m', '', picked)
+                assert 'You pick up a large leather bag.' in picked, picked
+                print('PASS an ordinary item is named from its prototype on pickup', flush=True)
             except Exception:
                 target = ROOT / 'bin/tests/auction-item-failure.log'
                 target.write_text(collect_logs(runtime) + '\n' +
