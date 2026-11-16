@@ -1705,10 +1705,8 @@ bool char_to_room(P_char ch, int room, int dir, bool ordinary_movement)
 		}
 	}
 
-	if (!IS_UNDERWATER(ch) && IS_AFFECTED2(ch, AFF2_HOLDING_BREATH))
-	{
-		REMOVE_BIT(ch->specials.affected_by2, AFF2_HOLDING_BREATH);
-	}
+	if (!IS_UNDERWATER(ch))
+		breathe_air(ch);
 
 	if ((world[(ch)->in_room].sector_type == SECT_NO_GROUND) ||
 	    (world[(ch)->in_room].sector_type == SECT_UNDRWLD_NOGROUND) ||

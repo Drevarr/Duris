@@ -110,10 +110,24 @@ void firesector(P_char ch)
 		add_event(event_firesector, 3, ch, 0, 0, 0, 0, 0);
 }
 
+// Ends holding breath and drowning for a character who has reached air, and tells
+// them so if either was happening. Room entry calls it first; the breath event
+// covers anything else.
+void breathe_air(P_char ch)
+{
+	if (!IS_AFFECTED2(ch, AFF2_HOLDING_BREATH) && !IS_AFFECTED2(ch, AFF2_IS_DROWNING))
+		return;
+	REMOVE_BIT(ch->specials.affected_by2, AFF2_HOLDING_BREATH);
+	REMOVE_BIT(ch->specials.affected_by2, AFF2_IS_DROWNING);
+	send_to_char("&+BYou gasp as fresh air fills your lungs.&n\r\n", ch);
+}
+
 void event_underwatersector(P_char ch, P_char /*victim*/, P_obj /*obj*/, void * /*data*/)
 {
 	if (IS_AFFECTED(ch, AFF_WATERBREATH) || (ch->in_room == -1) || !IS_UNDERWATER(ch))
 	{
+		if (ch->in_room != -1 && !IS_UNDERWATER(ch))
+			breathe_air(ch);
 		REMOVE_BIT(ch->specials.affected_by2, AFF2_HOLDING_BREATH);
 		REMOVE_BIT(ch->specials.affected_by2, AFF2_IS_DROWNING);
 		return;
