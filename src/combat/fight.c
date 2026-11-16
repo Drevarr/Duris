@@ -6406,8 +6406,10 @@ int raw_damage(P_char ch, P_char victim, double dam, uint flags, struct damage_m
 		{
 			if (!(flags & RAWDAM_NOEXP))
 			{
+				// lowest_hit starts at INT_MAX, so subtract in double: a first hit that
+				// takes the NPC below 0 HP must not overflow int.
 				gain_exp(ch, victim,
-					 MIN(dam, GET_LOWEST_HIT(victim) - GET_HIT(victim)),
+					 MIN(dam, (double)GET_LOWEST_HIT(victim) - GET_HIT(victim)),
 					 EXP_DAMAGE);
 			}
 			GET_LOWEST_HIT(victim) = GET_HIT(victim);
