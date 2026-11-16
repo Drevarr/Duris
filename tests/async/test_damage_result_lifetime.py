@@ -103,11 +103,17 @@ P_obj unequip_char(P_char, int, bool) { return nullptr; }
 static int extracted_objects;
 void extract_obj(P_obj, int) { ++extracted_objects; }
 void obj_to_room(P_obj, int) {}
-P_obj create_money(int, int, int, int) { return nullptr; }
+static int money_piles, deaths;
+bool money_to_inventory(P_char ch) {
+    if (GET_MONEY(ch) > 0) ++money_piles;
+    for (auto &coins : ch->points.cash) coins = 0;
+    return true;
+}
 int real_room(int) { return 1; }
 void char_from_room(P_char) {}
 bool char_to_room(P_char, int, int) { return true; }
-void die(P_char, P_char) {}
+// die() turns any wallet left into a second pile for the corpse.
+void die(P_char ch, P_char) { ++deaths; assert(GET_MONEY(ch) == 0); }
 int is_char_in_room(P_char ch, int) { return live.count(ch); }
 static int roll_for_strike;
 static int crippling_strike_roll(const Rolls &) { return roll_for_strike; }
@@ -178,9 +184,11 @@ static void transfer_wellness() {
     caster->points.hit = 2;
     target->points.hit = 1; target->points.max_hit = 100;
     bystander->points.hit = bystander->points.max_hit = 100;
+    caster->points.cash[0] = 5; caster->points.cash[3] = 7;
     kill_on_hit = target; // First in the room, so the blast must step past it.
     spell_transfer_wellness(50, caster, nullptr, 0, target, nullptr);
     assert(damage_calls == 2);
+    assert(deaths == 1 && money_piles == 1); // One pile, dropped before the death.
     clear_room();
 }
 static void sticks() {
