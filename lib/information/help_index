@@ -29129,6 +29129,7 @@ Syntax: dismiss [pet]
 For a non-Bard, bare 'dismiss' removes all non-player followers.
 'dismiss <pet>' removes your linked pet in the same room.
 This destroys the dismissed creature; it does not stable it for later.
+Bards can also use 'dismiss <pet>' for a linked pet in the same room.
 For a Bard, bare 'dismiss' removes only mirror images; use 'play' to
 stop singing. Player followers are not dismissed.
 See [[Order]], [[Follow]] and [[Play]].
@@ -29506,4 +29507,139 @@ your personal locker. You may own up to five; each costs 500 platinum.
 Payment uses your purse if sufficient, otherwise your bank; balances are
 not combined. Wait for the result. Read help lockers and help equipment
 for entry, chest access, storage restrictions and other eq subcommands.
+#
+
+EPIC SHOP / EPIC SHOP DISCOUNT / SHOP DISCOUNT (Guide)
+Use epic bonus shop to select Shop Discount, which reduces eligible shop
+purchase prices. It does not increase what shops pay for your goods.
+Type epic bonus to inspect your selection and maximums. Selecting a bonus
+resets its earning start time, even when selecting the same bonus again.
+Read [[Epic Bonus]] and [[Epic Bonus Shop]] for earning rules.
+#
+
+POTION MIXING (Guide)
+Read [[Mix Mixing]] for the Alchemist's mix bottle command, reagents and
+recipes. Mixing requires the relevant skill and carried ingredients;
+reading a recipe does not grant the skill. This differs from drinking a
+potion and from applying a poison. See [[Quaff]] and [[Mixpoison]].
+#
+
+OGRE ROAR (Guide)
+The innate is named ogreroar, one word. Type innate info ogreroar for
+its mechanics and innate for your own abilities. Read [[Ogreroar]] for
+the ability; a reference lookup does not grant it.
+#
+
+CHEST LOCKERS / LOCKER CHESTS / PRIVATE CHEST (Guide)
+Inside your personal locker, type eq chest create <name> [password]
+to buy a private chest. Each costs 500 platinum; you may own up to five.
+Payment uses your purse if sufficient, otherwise your bank; the balances
+are not combined. Wait for the operation to finish.
+Read [[Create Chest]], [[Equipment]] and [[Locker]] for management,
+passwords, access and storage limits. This is not item enhancement.
+#
+
+DARK DREAMER SKILLS (Guide)
+Dark Dreamer specializes Illusionist. Read [[Illusionist Skills]] for
+base grants and [[Dark Dreamer]] for specialization additions and access.
+Type skills or spells for your learned abilities, and skills info <ability>
+for personal mechanics. Listed circles do not grant or prepare spells.
+#
+
+SHADOWMAGE SKILLS (Guide)
+Shadowmage specializes Sorcerer. Read [[Sorcerer Skills]] for base grants
+and [[Shadowmage]] for specialization additions and access. Type skills
+or spells for your learned abilities, and skills info <ability> for
+personal mechanics. Listed circles do not grant or prepare spells.
+#
+
+MONK SPEC (Guide)
+Monk specializations are Red Dragon and Elaphidist. Type specialize to
+see your own choices. Read [[Monk]], [[Red Dragon]], [[Elaphidist]] and
+[[Specialization]] for the rules. Race, level, teacher, existing class
+choices and the respecialization timer affect eligibility.
+#
+
+SKILLS CONJURER / CONJ SKILLS (Guide)
+Read [[Conjurer Skills]] for the base progression and [[Conjurer]] for
+class rules. Type skills or spells for your learned abilities, and
+skills info <ability> for personal mechanics. Read your specialization's
+page for its changes; a reference list does not grant or prepare spells.
+#
+
+HALF-ORC / HALF ORC (Guide)
+Half Orc is a creature race used by the world. It is not a normal player
+creation choice. Read [[Races]] for the current player race catalog and
+[[Classes]] for class choices. The creation menu also applies alignment
+and server restrictions.
+#
+
+PROFESSIONS (Guide)
+Read [[Profession]] to distinguish your adventuring class from crafting
+trades. [[Classes]] describes class choices; [[Craft]],
+[[Forge]] and [[Salvage]] describe making equipment and supplies.
+#
+
+MULTI CLASS (Guide)
+The command is multiclass, one word. Read [[Multiclass]] before using it:
+adding a secondary class resets level and experience, clears specialization
+and ordinary learned skills, and has other lasting costs. Type multiclass
+without a choice to inspect your own options; eligibility is restricted.
+#
+
+GROUP VITALITY / GROUP VIT / MASS VITALITY (Guide)
+Miracle grants Vitality, Armor and Bless to the Cleric's groupmates in
+the same room. Read [[Miracle]] and [[Vitality]] for access and effect
+rules; groupmates elsewhere do not receive it. The spell is named miracle,
+not group vitality or mass vitality. Check spells for your own access.
+#
+
+MATERIAL LIST (Guide)
+Read [[MATERIAL_LIST]] for crafting materials and [[Salvage]], [[Craft]],
+[[Forge]] and [[Enhance Material]] for their uses. Type craft info <number>
+or forge info <number> to inspect a known recipe without crafting it.
+There is no player command named material_list.
+#
+
+FOREST SIGHT (Guide)
+The passive Forest Sight innate prevents forest terrain from cutting
+your map sight range. Other limits on vision still apply. Type innate
+info forest sight for its mechanics and innate for your own abilities.
+The equipment effect with the same name sets forest map range to five;
+it is distinct from the innate. See [[Map]] and [[Innate]].
+#
+
+DAZZLER (Guide)
+Dazzler refers to the sparkling protection associated with Dazzle.
+Read [[Dazzle]] for the spell and type skills info dazzle for its duration
+at your level. It can partially blind physical attackers; it is not a
+separate ability you activate as dazzler.
+#
+
+LOCATE OBJECT (Guide)
+Locate Object is not registered as a usable spell in the current game.
+An old item flag or help reference mentioning it does not grant access.
+Type spells for your own spell list. Read [[Map Objects]] for the separate
+map display feature; it is not a global object-locating spell.
+#
+
+NAMECHANGE (Guide)
+There is no player command named namechange. Character renaming is a
+staff operation. Ask staff about a name correction instead of attempting
+to rename yourself. Read [[Names]] for naming guidance.
+#
+
+WET (Guide)
+Wet is a temporary condition applied by some water effects. Fireshield
+can prevent it. Being wet changes some spells: Cone of Cold can weaken
+and slow a wet target more, while Static Discharge has stronger damage.
+Read [[Cone of Cold]] and [[Static Discharge]] and use skills info for
+the relevant spell's current mechanics.
+#
+
+CHILLED (Guide)
+The message that you feel less chilled is the wear-off message for
+Chill Touch. Read [[Chill Touch]] for that spell. Cone of Cold is a
+different cold attack with its own weakening effect; read [[Cone of Cold]]
+or type skills info cone of cold for your level's mechanics.
 #

@@ -4,10 +4,61 @@
 &+R                   PWIPE HAPPENED &+YOCT 28TH 1800 UTC!&n
 &+G                     A NEW SEASON OF BLOOD BEGINS&n
 &+W======================================================================&n
-&+WUpdated: November 14, 2026&n
+&+WUpdated: November 17, 2026&n
 
-Welcome back! Easier help, refreshed Vitality and repaired quest rewards.
+Welcome back! Better pet commands, repaired frags and clearer item names.
 Newest first; later updates replace older rules. Longer archive on web.
+
+&+R11/15/26 - 11/17/26&n &+L-&n &+YPets, frags and the spoils of adventure&n
+&+W----------------------------------------------------------------------&n
+
+&+CChoose which pet goes&n
+&+Y-&n Bards can use &+C'dismiss <pet>'&n to remove a linked pet in the same
+  room. Bare &+C'dismiss'&n still removes only their mirror images. A
+  target that is not your pet now gets an answer. Dismissal destroys the pet.
+
+&+CFrags, rewards and belongings&n
+&+Y-&n Race-filtered frag lists recognize the stored race names. Guild frag
+  totals follow members' PvP gains/losses and are recounted on boot, along
+  with the top fragger. If the current leader falls behind, the displayed
+  leader may wait for another member's gain or the next boot to change.
+&+Y-&n PvP frag losses and the recently-fragged protection survive the victim's
+  death save. A qualifying PvP death clears Spill Blood before extraction,
+  including for Divine Epic participants; the qualifying loss rules remain.
+&+Y-&n Lethal first hits on creatures award their damage experience correctly.
+  Oversized cash totals no longer turn negative in affordability checks.
+  Resurrection preserves oversized corpse coin piles as carried objects
+  and avoids duplicating coins when a wallet withdrawal is refused.
+&+Y-&n &+C'auction pickup'&n and &+C'collector inspect'&n show ordinary item
+  names correctly. Artifacts keep their real holder through locker use,
+  avoiding Unknown ownership and unintended binding to a locker holder.
+
+&+CCombat and spell corrections&n
+&+Y-&n Failed Rage activations have a &+Y2.5%&n improvement chance, subject to
+  normal training limits. Refused attempts do not train it; failed attempts
+  keep their usual lag and grant no Rage effect or recovery timer.
+&+Y-&n Creature thief tricks are now harmless failed-theft messages: they take
+  no gear or coins, add no lag and do not wake sleeping victims.
+&+Y-&n Apocalypse and Judgement take slightly longer to cast. NPC monk chants,
+  Calm, Buddha Palm and Jin Touch use level-based proficiency capped at 100.
+  Shop prices use actual Charisma up to 100, including race differences.
+&+Y-&n Wizard Eye reaches twice your level, capped at &+Y100 rooms&n with the
+  current settings. Blue Haze now grants its intended AC bonus: -20 at herb
+  level 25. Spinal Corruption uses the Power difference for its first save;
+  semi-casters prepare their first three circles at first-circle speed.
+&+Y-&n Epic stones and unusual attack-rate settings avoid divide-by-zero crash
+  paths. Boon route checks and ship-client updates do less repeated work.
+&+Y-&n Leaving water while holding your breath or drowning now tells you when
+  fresh air fills your lungs, and clears those underwater conditions.
+
+&+CHelp for the next question&n
+&+Y-&n New guides include &+C'help epic shop'&n, &+C'help chest lockers'&n,
+  &+C'help forest sight'&n, &+C'help group vitality'&n and
+  &+C'help potion mixing'&n. Dark Dreamer, Shadowmage, Conjurer and Monk
+  searches point to their class and specialization rules.
+&+Y-&n Added lookups explain Ogre Roar, Dazzler, Wet, Chilled, Half Orc,
+  professions, multiclass, materials, name changes and Locate Object's
+  unavailability. Read &+C'help dismiss'&n for the updated pet rules.
 
 &+R11/11/26 - 11/14/26&n &+L-&n &+YFind your way, keep your strength&n
 &+W----------------------------------------------------------------------&n
