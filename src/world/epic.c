@@ -2151,122 +2151,6 @@ vector<epic_zone_data> get_epic_zones()
 	return zones;
 }
 
-// referenced in actwiz.c for existing chars - Drannak
-void do_epic_reset_norefund(P_char ch, char *arg, int /*cmd*/)
-{
-	char buff2[MAX_STRING_LENGTH];
-	char buff3[MAX_STRING_LENGTH];
-
-	argument_interpreter(arg, buff2, buff3);
-
-	if (!ch || !IS_PC(ch))
-		return;
-
-	P_char t_ch = ch;
-
-	// Disabling for equipment wipe - re-enable at a later time - Drannak 8/9/2012
-	//  send_to_char("&+YEpic point resetting has been temporarily &+Rdisabled &+Ywhile we equipment wipe.&n\r\n", ch);
-	//  return;
-	// end disable
-
-	if (IS_TRUSTED(ch) && strlen(buff3))
-	{
-		if (!(t_ch = get_char_vis(ch, buff3)) || !IS_PC(t_ch))
-		{
-			send_to_char("They don't appear to be in the game.\n", ch);
-			return;
-		}
-	}
-
-	// run through skills
-	// for each skill that is epic:
-	//    for each skill point:
-	//      calculate epic pointcost / plat cost
-	//      reimburse points / plat
-
-	/* send_to_char("&+WResetting epic skills:\n", ch); */
-
-	int point_refund = 0;
-	int coins_refund = 0;
-
-	for (int skill_id = 0; skill_id <= MAX_AFFECT_TYPES; skill_id++)
-	{
-		int learned = t_ch->only.pc->skills[skill_id].learned;
-
-		if ((IS_EPIC_SKILL(skill_id) && learned) &&
-		    (strcmp(skills[skill_id].name, "forge")) &&
-		    (strcmp(skills[skill_id].name, "mine")) &&
-		    (strcmp(skills[skill_id].name, "craft")))
-		//  (skills[skill_id].name != ("forge" || "mine" || "craft")))
-		{
-			// find in epic_rewards
-			int s;
-
-			bool found = false;
-			for (s = 0; epic_rewards[s].type; s++)
-			{
-				if (epic_rewards[s].value == skill_id)
-				{
-					found = true;
-					break;
-				}
-			}
-
-			if (!found)
-			{
-				continue;
-			}
-
-			int points = 0;
-			int coins = 0;
-
-			for (int skill_level = 0; skill_level < learned;
-			     skill_level += (int)get_property("epic.skillGain", 10))
-			{
-				float cost_f =
-					1 + skill_level / get_property("epic.progressFactor", 30);
-				int points_cost = (int)(cost_f * epic_rewards[s].points_cost);
-				int coins_cost = (int)(cost_f * epic_rewards[s].coins);
-
-				if (IS_MULTICLASS_PC(t_ch) &&
-				    !IS_SET(epic_rewards[s].classes, t_ch->player.m_class) &&
-				    IS_SET(epic_rewards[s].classes, t_ch->player.secondary_class))
-				{
-					points_cost *= (int)(get_property(
-						"epic.multiclass.EpicSkillCost", 2));
-					coins_cost *= (int)(get_property(
-						"epic.multiclass.EpicPlatCost", 3));
-				}
-
-				points += points_cost;
-				coins += coins_cost;
-			}
-
-			point_refund += points;
-			coins_refund += coins;
-
-			t_ch->only.pc->skills[skill_id].learned =
-				t_ch->only.pc->skills[skill_id].taught = 0;
-		}
-	}
-	/*
-	  snprintf(buff2, MAX_STRING_LENGTH, "Total: &+W%d&n esp, %s&n refunded\r\n", point_refund, coin_stringv(coins_refund));
-	  send_to_char(buff2, ch);
-
-	  if (!insert_money_pickup(GET_PID(t_ch), coins_refund))
-	    logit(LOG_WIZ, "do_epic_reset(): failed to stage refund pickup for pid %d", GET_PID(t_ch));
-	  t_ch->only.pc->epic_skill_points += point_refund;
-
-	  snprintf(buff2, MAX_STRING_LENGTH, "\r\n&+GYour epic skills have been reset: your skill points have been refunded, \r\n&+Gand %s&+G has been reimbursed and is waiting for you at the nearest
-	  auction house.\r\n\r\n", coin_stringv(coins_refund));
-	*/
-	if (!send_to_pid(buff2, GET_PID(t_ch)))
-		send_to_pid_offline(buff2, GET_PID(t_ch));
-
-	if (!do_save_silent(t_ch, 1))
-		logit(LOG_WIZ, "Failed to save %s after epic reset refund.", GET_NAME(t_ch));
-}
-
 void do_epic_reset(P_char ch, char *arg, int /*cmd*/)
 {
 	char buff2[MAX_STRING_LENGTH];
@@ -2312,7 +2196,8 @@ void do_epic_reset(P_char ch, char *arg, int /*cmd*/)
 	int point_refund = 0;
 	int coins_refund = 0;
 
-	for (int skill_id = 0; skill_id <= MAX_AFFECT_TYPES; skill_id++)
+	// Player skill storage holds MAX_SKILLS entries; skills[] is larger.
+	for (int skill_id = 0; skill_id < MAX_SKILLS; skill_id++)
 	{
 		int learned = t_ch->only.pc->skills[skill_id].learned;
 

@@ -224,11 +224,24 @@ def run(binary):
                 assert stats(command(player, 'score')) == after
                 assert saved_skill() == (20, 20)
                 assert saved_player() == before_restart
+                print('PASS Illithid full/injured HP, repeated refreshes, GMCP and clean restart', flush=True)
+
+                # Issue #1089: staff epic reset of an online player crashed the server.
+                god = login(GOD, GOD_ACCOUNT)
+                command(god, f'epic reset {PLAYER}')
+                assert process.poll() is None, 'epic reset crashed the server'
+                save()
+                assert saved_skill() == (0, 0), saved_skill()
+                stop()
+                boot()
+                player = login(PLAYER, ACCOUNT)
+                save()
+                assert saved_skill() == (0, 0), saved_skill()
                 stop()
                 target = ROOT / 'bin/analysis/epic-training'
                 target.mkdir(parents=True, exist_ok=True)
                 (target / 'journey.json').write_text(json.dumps(evidence, indent=2) + '\n')
-                print('PASS Illithid full/injured HP, repeated refreshes, GMCP and clean restart', flush=True)
+                print('PASS staff epic reset clears toughness and the reset survives a restart', flush=True)
             except Exception as error:
                 target = ROOT / 'bin/analysis/epic-training' / f'failure-{time.time_ns()}'
                 target.mkdir(parents=True)

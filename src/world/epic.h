@@ -102,7 +102,6 @@ const char *epic_prestige(P_char);
 void init_guild_frags();
 void epic_publish_zone_touch(const zone_touch_result &result);
 void do_epic_reset(P_char ch, char *arg, int cmd);
-void do_epic_reset_norefund(P_char ch, char *arg, int cmd);
 void do_infuse(P_char ch, char *arg, int cmd);
 struct affected_type *get_epic_task(P_char ch);
 bool has_epic_task(P_char ch);
