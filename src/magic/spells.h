@@ -1130,6 +1130,9 @@
 #define HERB_FIRST HERB_OCULARIUS
 #define HERB_LAST HERB_GOOTWIET
 
+// Medicus lasts this many mud hours (affect ticks).
+#define HERB_MEDICUS_DURATION 5
+
 /* everything below does not make part of players skill data */
 #define FIRST_TAG 2001
 #define TAG_OBJ_DECAY 2001

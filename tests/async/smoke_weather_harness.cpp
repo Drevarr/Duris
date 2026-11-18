@@ -2,6 +2,7 @@
 #include "core/prototypes.h"
 #include "core/structs.h"
 #include "core/utils.h"
+#include "item/objmisc.h"
 #include "world/weather.h"
 
 #include <cassert>
@@ -37,9 +38,10 @@ int in_weather_sector(int)
 	return 0;
 }
 
+static int forced_roll = 0;
 int number(int from, int)
 {
-	return from;
+	return forced_roll ? forced_roll : from;
 }
 
 int BOUNDED(int min, int val, int max)
@@ -69,8 +71,12 @@ char *one_argument(const char *argument, char *first_arg)
 }
 
 // Minimal stubs for smoke.c dependencies not reached by test paths
-P_obj get_obj_in_list_vis(P_char, const char *, P_obj, bool)
+static P_obj test_items[2];
+P_obj get_obj_in_list_vis(P_char, const char *name, P_obj, bool)
 {
+	for (P_obj obj : test_items)
+		if (obj && !std::strcmp(name, obj->name))
+			return obj;
 	return nullptr;
 }
 
@@ -81,12 +87,15 @@ bool isname(const char *, const char *)
 
 void update_pos(P_char) {}
 void extract_obj(P_obj, int) {}
-int get_property(const char *, int)
+int get_property(const char *, int fallback)
 {
-	return 0;
+	return fallback;
 }
-affected_type *affect_to_char(P_char, affected_type *)
+static affected_type medicus_affect;
+affected_type *affect_to_char(P_char, affected_type *af)
 {
+	if (af->type == HERB_MEDICUS)
+		medicus_affect = *af;
 	return nullptr;
 }
 P_char get_linked_char(P_char, unsigned short)
@@ -102,6 +111,8 @@ int GET_CLASS(P_char, unsigned int)
 {
 	return 0;
 }
+
+void herb_medicus(int level, int duration, P_char smoker);
 
 static char_data make_character(int race, int room_num)
 {
@@ -327,6 +338,51 @@ int main()
 		last_output.clear();
 		do_smoke(&ch, arg, 0);
 		assert(last_output.find("kicked up by your movement") != std::string::npos);
+	}
+
+	// 11. Medicus lasts 5 mud hours (ticks), not 5 hours' worth of seconds (#1086)
+	{
+		char_data ch = make_character(RACE_HUMAN, 2000);
+		herb_medicus(30, 99, &ch);
+		assert(medicus_affect.type == HERB_MEDICUS);
+		assert(medicus_affect.duration == 5);
+	}
+
+	// 12. Swamp and fire sectors scale the herb level to 2/3 and 3/5 instead of zeroing it
+	{
+		char herb_name[] = "medicus", pipe_name[] = "pipe";
+		obj_data herb{}, pipe{};
+		herb.name = herb_name;
+		herb.type = ITEM_HERB;
+		herb.value[0] = 30;
+		herb.value[1] = HERB_MEDICUS;
+		pipe.name = pipe_name;
+		pipe.type = ITEM_PIPE;
+		pipe.value[0] = PIPE_REGULAR;
+		test_items[0] = &herb;
+		test_items[1] = &pipe;
+		forced_roll = 100; // the herb does not burn up on the Fire Plane
+		const struct
+		{
+			int sector, level;
+		} cases[] = {
+			{ SECT_FIELD, 30 + 1 }, // human +1
+			{ SECT_SWAMP, 30 * 2 / 3 + 1 },
+			{ SECT_FIREPLANE, 30 * 3 / 5 + 1 },
+		};
+		for (const auto &c : cases)
+		{
+			test_world[3000].sector_type = c.sector;
+			test_world[3000].room_flags = ROOM_NO_PRECIP;
+			char_data ch = make_character(RACE_HUMAN, 3000);
+			char arg[] = "medicus pipe";
+			medicus_affect = {};
+			do_smoke(&ch, arg, 0);
+			assert(medicus_affect.type == HERB_MEDICUS);
+			assert(medicus_affect.modifier == c.level * c.level * 4 / 3);
+		}
+		forced_roll = 0;
+		test_items[0] = test_items[1] = nullptr;
 	}
 
 	std::printf("All underground and surface smoking weather tests passed successfully.\n");

@@ -233,8 +233,14 @@ int main() {
         }
         clear(&pet);
     }
+    // Medicus saved by older builds counted 375 ticks; reloading holds it to its current length.
+    player_snapshot medicus{}; medicus.affects.push_back({}); medicus.affects[0].type=HERB_MEDICUS;
+    medicus.affects[0].duration=375; restore_player(&ch,medicus);
+    assert(ch.affected && ch.affected->duration==HERB_MEDICUS_DURATION); clear(&ch);
+    medicus.affects[0].duration=3; restore_player(&ch,medicus);
+    assert(ch.affected && ch.affected->duration==3); clear(&ch);
     assert(affect_pool.objs_used==0 && event_pool.objs_used==0 && ne_event_counter==0);
-    puts("PASS named cooldowns: swaps, transfers, staff, scheduler expiry, player wire/offline and pet deadlines");
+    puts("PASS named cooldowns: swaps, transfers, staff, scheduler expiry, player wire/offline and pet deadlines; legacy Medicus reload");
 }
 '''
 
