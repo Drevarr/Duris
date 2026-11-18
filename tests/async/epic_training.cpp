@@ -54,11 +54,7 @@ char *coin_stringv(int, int)
 	static char text[] = "fixture coins";
 	return text;
 }
-// These cases submit a full skill name, never the informational quote page.
-void CAP(char *)
-{
-	std::abort();
-}
+void CAP(char *) {}
 void send_to_char(const char *text, P_char)
 {
 	feedback += text;
@@ -193,6 +189,8 @@ int main(int argc, char **argv)
 	skills[SKILL_ANATOMY].name = const_cast<char *>("anatomy");
 	skills[SKILL_IMPROVED_LISTEN].name = const_cast<char *>("improved listen");
 	skills[SKILL_LISTEN].name = const_cast<char *>("listen");
+	skills[SKILL_ENCRUST].name = const_cast<char *>("encrust");
+	skills[SKILL_CRAFT].name = const_cast<char *>("craft");
 	const std::string mode = argv[1];
 	if (mode == "boundaries")
 	{
@@ -223,6 +221,41 @@ int main(int argc, char **argv)
 		practice("improved listen");
 		unchanged();
 		assert(feedback.find("not yet mastered") != std::string::npos);
+		// Each Encrust step needs Craft at the Encrust level it reaches.
+		for (int encrust : { 0, 40 })
+			for (int craft : { encrust + 9, encrust + 10 })
+			{
+				reset(30, 0, 40760);
+				pc.skills[SKILL_TOUGHNESS].learned = 100;
+				pc.skills[SKILL_ENCRUST].learned = pc.skills[SKILL_ENCRUST].taught =
+					encrust;
+				pc.skills[SKILL_CRAFT].learned = craft;
+				practice("encrust");
+				const bool allowed = craft >= encrust + 10;
+				assert(pc.skills[SKILL_ENCRUST].learned ==
+				       (allowed ? encrust + 10 : encrust));
+				assert(ledger.size() == (allowed ? 1u : 0u));
+				assert((feedback.find("more before you can progress") ==
+					std::string::npos) == allowed);
+				// Asking for the price quotes it only when the lesson is allowed.
+				reset(30, 0, 40760);
+				pc.skills[SKILL_ENCRUST].learned = encrust;
+				pc.skills[SKILL_CRAFT].learned = craft;
+				practice("");
+				assert(ledger.empty());
+				assert((feedback.find("It would cost you") != std::string::npos) ==
+				       allowed);
+				assert((feedback.find("encrust&n is not currently available") ==
+					std::string::npos) == allowed);
+			}
+		// The last lesson from 95 needs Craft 100, the Encrust it reaches, not 105.
+		reset(30, 0, 40760);
+		pc.skills[SKILL_TOUGHNESS].learned = 100;
+		pc.skills[SKILL_ENCRUST].learned = pc.skills[SKILL_ENCRUST].taught = 95;
+		pc.skills[SKILL_CRAFT].learned = 100;
+		pupil.points.cash[0] = 1000000000;
+		practice("encrust");
+		assert(pc.skills[SKILL_ENCRUST].learned == 100 && ledger.size() == 1);
 		reset(30);
 		pc.epics = 149;
 		practice();

@@ -5435,8 +5435,8 @@ See Also: BARD, SORCERER, MULTI-CLASS, MEMORIZE
 #
 ENCRUST
 ===========================================================================
-Encrusting is one of the highly sought after skills of the Alchemist Class.
-By collecting various rare gems, the alchemist can bind into other
+Encrusting is one of the highly sought after epic skills.
+By collecting various rare gems, you can bind into other
 equipment items the power of these stones.
 
 The stones themselves can sometimes be found in the corpses of the more
@@ -5451,6 +5451,12 @@ For example if you have "a strange Green stone", and "a steel dagger", just
 make sure both are in your inventory then type: encrust dagger stone
 
 Warning: Encrusting an item, overwrites all existing proc's for that item.
+
+This skill is taught by the vagabond alchemist in the Divine Home.
+Encrust is taught in 10% steps, and your Craft skill must keep pace: each
+step needs Craft at least as high as the Encrust it teaches. For example,
+Encrust 50% needs Craft 50%. Craft rises as you craft items. Learning Craft
+means you cannot learn the Forge or Mine tradeskills.
 ===========================================================================
 
 Encrusting guild-store equipment preserves its buyer restriction. An item
