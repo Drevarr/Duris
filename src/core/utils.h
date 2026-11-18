@@ -1047,8 +1047,8 @@ inline bool is_giant_race(int race)
 	 (cmd == CMD_BODYSLAM) || (cmd == CMD_HEADBUTT) || (cmd == CMD_SPRINGLEAP) ||              \
 	 (cmd == CMD_CHANT) || (cmd == CMD_DRAGONPUNCH) || (cmd == CMD_TRAP) ||                    \
 	 (cmd == CMD_WILL) || (cmd == CMD_STAMPEDE) || (cmd == CMD_CHARGE) || (cmd == CMD_FIRE) || \
-	 (cmd == CMD_BREATH) || (cmd == CMD_OGRE_ROAR) || (cmd == CMD_BEARHUG) ||                  \
-	 (cmd == CMD_THROAT_CRUSH))
+	 (cmd == CMD_AFIRE) || (cmd == CMD_BREATH) || (cmd == CMD_OGRE_ROAR) ||                    \
+	 (cmd == CMD_BEARHUG) || (cmd == CMD_THROAT_CRUSH))
 
 #define IS_AGG_SKILL(skl)                                                                         \
 	((skl == SKILL_BACKSTAB) || (skl == SKILL_BASH) || (skl == SKILL_BUDDHA_PALM) ||          \

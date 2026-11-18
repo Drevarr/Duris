@@ -914,6 +914,7 @@ extern unsigned int game_locked_level;
 #define CMD_CLASS 875
 #define CMD_KEPTCHAR 876
 #define CMD_COPYOVER 877
+#define CMD_AFIRE 878
 
 /* The CMD_s below are not real commands; they tell special procedures which event
  * called them. The char * argument depends on the event, so read it only as the

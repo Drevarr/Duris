@@ -1293,7 +1293,8 @@ const char *command[MAX_CMD] = {
 	"class",
 	"keptchar",
 	"copyover",
-	"\n" /* MAX_CMD = 878, MAX_CMD_LIST = 1000 */
+	"afire",
+	"\n" /* MAX_CMD = 879, MAX_CMD_LIST = 1000 */
 };
 
 const char *fill_words[] = { "in", "from", "with", "the", "on", "at", "to", "\n" };
@@ -1448,6 +1449,7 @@ bool cmd_depends_on_item_movement(int cmd)
 	case CMD_WEAR:
 	case CMD_WIELD:
 	case CMD_FIRE:
+	case CMD_AFIRE:
 	case CMD_GRAB:
 	case CMD_HOLD:
 	case CMD_REMOVE:
@@ -2395,7 +2397,7 @@ void command_interpreter(P_char ch, char *argument)
 					}
 					else
 					{
-						if ((cmd == CMD_FIRE) &&
+						if ((cmd == CMD_FIRE || cmd == CMD_AFIRE) &&
 						    (number(1, 100) <=
 						     GET_CHAR_SKILL(exec_char,
 								    SKILL_SHADOW_ARCHERY)))
@@ -2461,7 +2463,9 @@ void command_interpreter(P_char ch, char *argument)
 				look_at++;
 			}
 
-			if (!no_specials && special(exec_char, cmd, argument + begin + look_at))
+			// do_afire runs specials itself, once it knows which enemy it fires at.
+			if (!no_specials && cmd != CMD_AFIRE &&
+			    special(exec_char, cmd, argument + begin + look_at))
 			{
 				return;
 			}
@@ -3236,6 +3240,7 @@ void assign_command_pointers(void)
 	CMD_N(CMD_FAQ, STAT_SLEEPING + POS_PRONE, do_faq, 0, FALSE);
 	CMD_N(CMD_FILL, STAT_NORMAL + POS_STANDING, do_fill, 0, TRUE);
 	CMD_Y(CMD_FIRE, STAT_NORMAL + POS_STANDING, do_fire, 0, TRUE);
+	CMD_Y(CMD_AFIRE, STAT_NORMAL + POS_STANDING, do_afire, 0, TRUE);
 	CMD_N(CMD_THROW, STAT_NORMAL + POS_STANDING, do_throw, 0, TRUE); /* TASFALEN */
 	CMD_N(CMD_FIRSTAID, STAT_NORMAL + POS_STANDING, do_first_aid, 0, TRUE);
 	CMD_N(CMD_FLY, STAT_NORMAL + POS_SITTING, do_fly, IMMORTAL, TRUE);

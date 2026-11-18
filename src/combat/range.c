@@ -26,6 +26,7 @@
 #include "magic/spells.h"
 #include "world/weather.h"
 #include "abilities/abilities.h"
+#include "world/handler.h"
 
 /*
  * external variables
@@ -44,6 +45,7 @@ extern struct agi_app_type agi_app[];
 extern struct dex_app_type dex_app[];
 extern struct str_app_type str_app[];
 extern struct zone_data *zone_table;
+extern int no_specials;
 
 extern P_char misfire_check(P_char ch, P_char spell_target, int flag);
 
@@ -1335,6 +1337,45 @@ void do_fire(P_char ch, char *argument, int cmd)
 			REMOVE_BIT(ch->specials.affected_by, AFF_HIDE);
 		}
 	}
+}
+
+/*
+ * Fire at whatever someone in the room is fighting.
+ *
+ * AFIRE <tank>
+ */
+void do_afire(P_char ch, char *argument, int /*cmd*/)
+{
+	char name[MAX_INPUT_LENGTH], target[MAX_INPUT_LENGTH];
+	P_char tank, enemy;
+
+	one_argument(argument, name);
+	if (!*name)
+	{
+		send_to_char("Fire at whose opponent?\n", ch);
+		return;
+	}
+	if (!(tank = get_char_room_vis(ch, name)))
+	{
+		send_to_char("You don't see them here.\n", ch);
+		return;
+	}
+	if (!(enemy = GET_OPPONENT(tank)))
+	{
+		act("$N is not fighting anyone.", FALSE, ch, 0, tank, TO_CHAR);
+		return;
+	}
+	if (!get_char_room_target(ch, enemy, target, sizeof target))
+	{
+		act("You can't get a clear shot at whoever $N is fighting.", FALSE, ch, 0, tank,
+		    TO_CHAR);
+		return;
+	}
+	// The interpreter skips specials for afire: they must judge the enemy, not the tank,
+	// exactly as they would for "fire <enemy>".
+	if (!no_specials && special(ch, CMD_FIRE, target))
+		return;
+	do_fire(ch, target, CMD_FIRE);
 }
 
 /*

@@ -136,6 +136,18 @@ process.
 ===========================================================================
 
 #
+AFIRE (Command)
+===========================================================================
+Syntax:    afire <name>
+
+Fires your ranged weapon at whatever <name> is fighting, such as your
+group's tank. <name> and that enemy must both be in your room. It works
+exactly like typing "fire" at that enemy, so the same volley, lag,
+point blank shot and hiding rules apply.
+===========================================================================
+See also: FIRE, ASSIST, "POINT BLANK SHOT"
+
+#
 AFK BRB BBL (Command)
 ===========================================================================
 Common acronyms used by players. These terms are commonly used on Duris by
@@ -6222,7 +6234,7 @@ missile for your particular weapon in order to be able to fire. The number
 of missiles fired depend on the weapon. Elves tend to be very good with 
 range weapons.
 ===========================================================================
-See also: "RANGE WEAPONS", THROW
+See also: AFIRE, "RANGE WEAPONS", THROW
 
 #
 FIREBALL (Spell)
