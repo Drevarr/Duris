@@ -464,7 +464,7 @@ include generic, holy, negative, psionic, spiritual or sound.
 Both melee and spell delivery normally enter `raw_damage()`. Direct callers
 also use it, but their flags can select a different result.
 
-After admission and any not-yet-checked ward, its 15 predicates build another
+After admission and any not-yet-checked ward, its 16 predicates build another
 Added/Increased/More profile. The bounds are -100..100, **.10..4**, and .1..2.
 Unless `PHSDAM_NOREDUCE` is present, one predicate subtracts .75 from Increased:
 the neutral baseline therefore delivers **one quarter** of its incoming
@@ -472,9 +472,9 @@ payload. Other Increased contributions join that same category; they are not
 necessarily multipliers on the quartered result.
 
 The other predicates cover racewar side factors, world-mob bonus, bloodlust,
-the Hardcore adjustment, Holy Sword's flat addition, Paladin and Cleric
-Sanctuary, Consecrated Land, Binding Wind, Protection from Animals, Battlelust,
-Blood Tithe, Orog Fury, and NPC-to-PC context. Ordinary racewar side factors
+the Hardcore outgoing and incoming multipliers, Holy Sword's flat addition,
+Paladin and Cleric Sanctuary, Consecrated Land, Binding Wind, Protection from
+Animals, Battlelust, Blood Tithe, Orog Fury, and NPC-to-PC context. Ordinary racewar side factors
 are all 1 in the committed properties. The NPC-to-PC predicate uses the
 configured value divided by 2, so the committed 2 means neutral at that stage.
 

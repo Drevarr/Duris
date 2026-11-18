@@ -94,17 +94,20 @@ CHECKS
 }
 """
 
-# The modifier is an Increased mod, so it sums with the -0.75 cut: +-0.09 on 0.25 is +-36%.
+# A More mod multiplies damage, so 1.09 / 0.91 in hardcore.cfg mean exactly that, with or
+# without the -0.75 cut. As an Increased mod it would sum with the cut and be worth +-36%.
 CHECKS = r"""
-    expect("Hardcore attacker", ratio(&hardcore, &normal, 0), 1.36);
-    expect("Hardcore victim", ratio(&normal, &hardcore, 0), 0.64);
-    expect("Hardcore pair", ratio(&hardcore, &rival, 0), 1.00);
+    expect("Hardcore attacker", ratio(&hardcore, &normal, 0), 1.09);
+    expect("Hardcore victim", ratio(&normal, &hardcore, 0), 0.91);
+    // Each side's multiplier applies, so they do not cancel out between two Hardcore characters.
+    expect("Hardcore pair", ratio(&hardcore, &rival, 0), 1.09 * 0.91);
     expect("Hardcore attacker, no reduction", ratio(&hardcore, &normal, PHSDAM_NOREDUCE), 1.09);
     expect("Hardcore victim, no reduction", ratio(&normal, &hardcore, PHSDAM_NOREDUCE), 0.91);
     config.bonus_damage_outgoing_multiplier = 1.25f;
     config.bonus_damage_incoming_multiplier = 0.95f;
-    expect("configured attacker", ratio(&hardcore, &normal, 0), 2.00);
-    expect("configured victim", ratio(&normal, &hardcore, 0), 0.80);
+    expect("configured attacker", ratio(&hardcore, &normal, 0), 1.25);
+    expect("configured victim", ratio(&normal, &hardcore, 0), 0.95);
+    expect("configured pair", ratio(&hardcore, &rival, 0), 1.25 * 0.95);
 """
 
 table = (
