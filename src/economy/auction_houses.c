@@ -785,8 +785,11 @@ bool auction_publish_item_claim(P_char ch, const auction_command_result &result,
 		}
 		if (delivered)
 		{
-			send_to_char_f(ch, "&+WYou pick up &n%s&+W.&n\r\n",
-				       item.short_description.c_str());
+			// A snapshot keeps only a restrung description; the rest are the prototype's.
+			const std::string &name = item.short_description.empty() ?
+							  prototype->short_description :
+							  item.short_description;
+			send_to_char_f(ch, "&+WYou pick up &n%s&+W.&n\r\n", name.c_str());
 			continue;
 		}
 		// The committed SQL row stays a saved source when its live body cannot

@@ -5416,7 +5416,7 @@ int spore_ball(P_char ch, P_char /*pl*/, int cmd, char * /*arg*/)
 
 int bridge_troll(P_char ch, P_char pl, int cmd, char *arg)
 {
-	int gold;
+	long long gold;
 	P_char k;
 	char Gbuf1[MAX_STRING_LENGTH];
 
@@ -8136,7 +8136,7 @@ int nw_mirroid(P_char ch, P_char pl, int cmd, char * /*arg*/)
 
 int ghore_paradise(P_char ch, P_char pl, int cmd, char *arg)
 {
-	int beforecash, aftercash;
+	long long beforecash, aftercash;
 
 	/*
 	 * check for periodic event call

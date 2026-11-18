@@ -788,7 +788,7 @@ int get_circle_memtime(P_char ch, int circle, bool bStatOnly, bool roll_nature_b
 	}
 	else if (IS_SEMI_CASTER(ch))
 	{
-		level = MAX(1, level - 2);
+		level = MAX(0, level - 2);
 		time_mult = 2.25;
 	}
 	else

@@ -802,7 +802,7 @@ void shopping_buy(char *arg, P_char ch, P_char keeper, int shop_nr)
 		return;
 	}
 
-	cost_factor = (float)cha_app[STAT_INDEX(MAX(100, GET_C_CHA(ch)))].modifier;
+	cost_factor = (float)cha_app[STAT_INDEX(MIN(100, GET_C_CHA(ch)))].modifier;
 	if (GET_RACE(ch) != GET_RACE(keeper))
 		cost_factor = cost_factor * 2.;
 
@@ -986,7 +986,7 @@ void shopping_sell(char *arg, P_char ch, P_char keeper, int shop_nr)
 		do_tell(keeper, Gbuf1, 0);
 		return;
 	}
-	cost_factor = (float)cha_app[STAT_INDEX(MAX(100, GET_C_CHA(ch)))].modifier;
+	cost_factor = (float)cha_app[STAT_INDEX(MIN(100, GET_C_CHA(ch)))].modifier;
 	if (GET_RACE(ch) != GET_RACE(keeper))
 		cost_factor = cost_factor / 2.;
 
@@ -1130,7 +1130,7 @@ void shopping_value(char *arg, P_char ch, P_char keeper, int shop_nr)
 		return;
 	}
 
-	cost_factor = (float)cha_app[STAT_INDEX(MAX(100, GET_C_CHA(ch)))].modifier;
+	cost_factor = (float)cha_app[STAT_INDEX(MIN(100, GET_C_CHA(ch)))].modifier;
 
 	if (GET_RACE(ch) != GET_RACE(keeper))
 		cost_factor = cost_factor / 2;
@@ -1269,7 +1269,7 @@ void shopping_list(char * /*arg*/, P_char ch, P_char keeper, int shop_nr)
 	if (!(is_ok(keeper, ch, shop_nr)))
 		return;
 
-	cost_factor = (float)cha_app[STAT_INDEX(MAX(100, GET_C_CHA(ch)))].modifier;
+	cost_factor = (float)cha_app[STAT_INDEX(MIN(100, GET_C_CHA(ch)))].modifier;
 	if (GET_RACE(ch) != GET_RACE(keeper))
 		cost_factor = cost_factor * 2.;
 

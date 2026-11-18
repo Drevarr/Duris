@@ -1017,7 +1017,7 @@ void chant_calm(P_char ch, char * /*argument*/, int /*cmd*/)
 	if (IS_PC(ch))
 		skl_lvl = GET_CHAR_SKILL(ch, SKILL_CALM);
 	else
-		skl_lvl = MAX(100, GET_LEVEL(ch) * 3);
+		skl_lvl = MIN(100, GET_LEVEL(ch) * 3);
 
 	send_to_char("You chant for peace and happiness for all.\r\n", ch);
 
@@ -1386,7 +1386,7 @@ void chant_buddha_palm(P_char ch, char * /*argument*/, int /*cmd*/)
 	if (IS_PC(ch))
 		skl_lvl = GET_CHAR_SKILL(ch, SKILL_BUDDHA_PALM);
 	else
-		skl_lvl = MAX(100, GET_LEVEL(ch) * 3);
+		skl_lvl = MIN(100, GET_LEVEL(ch) * 3);
 
 	if (!notch_skill(ch, SKILL_BUDDHA_PALM, get_property("skill.notch.offensive", 10)) &&
 	    number(1, 101) > skl_lvl)
@@ -1695,7 +1695,7 @@ void chant_jin_touch(P_char ch, char *argument, int /*cmd*/)
 		if (IS_PC(ch) || IS_PC_PET(ch))
 			skl_lvl = GET_CHAR_SKILL(ch, SKILL_JIN_TOUCH);
 		else
-			skl_lvl = MAX(100, GET_LEVEL(ch) * 3);
+			skl_lvl = MIN(100, GET_LEVEL(ch) * 3);
 	}
 
 	// debug("(%s) jin skill is (%d).", GET_NAME(ch), skl_lvl);
@@ -2281,7 +2281,7 @@ void do_chant(P_char ch, char *argument, int cmd)
 	if (IS_PC(ch))
 		skl_lvl = IS_TRUSTED(ch) ? 100 : GET_CHAR_SKILL(ch, SKILL_CHANT);
 	else
-		skl_lvl = MAX(100, GET_LEVEL(ch) * 3);
+		skl_lvl = MIN(100, GET_LEVEL(ch) * 3);
 
 	if (!argument || !*argument)
 	{

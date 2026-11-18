@@ -162,6 +162,7 @@ MANUAL_ONLY_TEST_NAMES = frozenset(
         "test_mariadb_auction_coin_put_journey.py",
         "test_mariadb_full_world_boot.py",
         "test_mariadb_locker_journey.py",
+        "test_mariadb_locker_artifact_journey.py",
         "test_pet_restart_journey.py",
     }
 )

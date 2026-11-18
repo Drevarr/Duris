@@ -52,6 +52,7 @@ norent_key_rent $DB python3 tests/async/test_norent_key_rent_journey.py --backen
 websocket_session_guard $DB python3 tests/async/test_websocket_session_guard_journey.py --backend mariadb --server SERVER_BINARY
 storage_chest_crash $DB python3 tests/async/test_storage_chest_crash_journey.py --backend mariadb --server SERVER_BINARY
 locker_restart $DB python3 tests/async/test_mariadb_locker_journey.py --server SERVER_BINARY
+locker_artifact $DB python3 tests/async/test_mariadb_locker_artifact_journey.py --server SERVER_BINARY
 pet_restart $DB python3 tests/async/test_pet_restart_journey.py --server SERVER_BINARY
 shaman_totems $DB python3 tests/async/test_shaman_totems.py --server SERVER_BINARY
 hardcore_third_death $DB python3 tests/async/test_mariadb_hardcore_death_journey.py --server SERVER_BINARY
@@ -72,6 +73,7 @@ death_restart_journey $DB python3 tests/async/test_mariadb_death_restart_journey
 mob_gold_dial $DB python3 tests/async/test_mob_gold_dial_runtime.py --server SERVER_BINARY
 boot_preflight $DB python3 tests/async/test_mariadb_boot_preflight.py --server SERVER_BINARY
 headbutt_feedback $DB python3 tests/async/test_headbutt_feedback_journey.py --server SERVER_BINARY
+lookup_name $DB python3 tests/async/run_lookup_name_journey.py --server SERVER_BINARY
 assassin_combat $DB python3 tests/async/test_assassin_combat_journey.py --server SERVER_BINARY
 conjurer_gameplay $DB python3 tests/async/test_conjurer_gameplay_journey.py --server SERVER_BINARY
 shambler_reflection $DB python3 tests/async/test_shambler_reflection_journey.py --server SERVER_BINARY
@@ -177,6 +179,7 @@ account_character_projection $DB tests/async/run_account_character_projection_my
 account_bank_delta tests/async/run_account_bank_delta_mysql.sh
 legacy_personal_locker_access_repair tests/async/run_legacy_personal_locker_access_repair_mysql.sh
 character_rename_references $DB tests/async/run_character_rename_references_mysql.sh
+guild_frags_load $DB tests/async/run_guild_frags_load_mysql.sh
 sql_pool_interrupt tests/async/run_sql_pool_interrupt_mysql.sh
 corpse_persistence tests/async/run_corpse_persistence_schema_mysql.sh
 lifecycle_archive tests/async/run_lifecycle_archive_schema_mysql.sh

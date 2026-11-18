@@ -647,6 +647,49 @@ int main()
 	assert(divine_boon_reward_zone_eligible(exp_zone, 0) ==
 	       divine_boon_reward_zone_eligible(exp_zone, 1));
 	exits[0].exit_info = 0;
+	// Cached routes are reused; closing both cached routes rebuilds the search
+	// at once and finds the remaining detour through room 5.
+	assert(exp_zone == 18);
+	room_direction_data detour = {};
+	detour.to_room = 2;
+	rooms[5].dir_option[3] = &detour;
+	exits[0].exit_info = exits[1].exit_info = EX_BLOCKED;
+	divine_boon_selection_pulse(3610);
+	assert(divine_boon_reward_zone_eligible(exp_zone, 0));
+	// While the target stays unreachable, the full search is not repeated
+	// every second; a reopened route is found by the next allowed rebuild.
+	rooms[5].dir_option[3] = nullptr;
+	divine_boon_selection_pulse(3611);
+	assert(!divine_boon_reward_zone_eligible(exp_zone, 0));
+	exits[0].exit_info = exits[1].exit_info = 0;
+	divine_boon_selection_pulse(3612);
+	assert(!divine_boon_reward_zone_eligible(exp_zone, 0));
+	divine_boon_selection_pulse(3620);
+	assert(divine_boon_reward_zone_eligible(exp_zone, 0) &&
+	       divine_boon_reward_zone_eligible(exp_zone, 1));
+	// Epic eligibility uses the same cached routes. When an active Epic
+	// target's route closes and a detour exists, the search is rebuilt even
+	// though the active Exp target is still reachable.
+	const auto before_epic = authority;
+	auto exp_slot = std::find_if(authority.slots.begin(), authority.slots.end(),
+				     [](const auto &slot)
+				     { return slot.category == divine_boon_category::experience; });
+	auto epic_slot = exp_slot == authority.slots.begin() ? exp_slot + 1 : exp_slot - 1;
+	exp_slot->zones = { 20, 20 };
+	*epic_slot = *exp_slot;
+	epic_slot->category = divine_boon_category::epic;
+	epic_slot->zones = { 18, 18 };
+	++authority.revision;
+	divine_boon_selection_pulse(3630);
+	assert(divine_boon_reward_zone_eligible(20, 0) && divine_boon_epic_zone_eligible(18, 0));
+	rooms[5].dir_option[3] = &detour;
+	exits[0].exit_info = exits[1].exit_info = EX_BLOCKED;
+	divine_boon_selection_pulse(3631);
+	assert(divine_boon_reward_zone_eligible(20, 0));
+	assert(divine_boon_epic_zone_eligible(18, 0) && divine_boon_epic_zone_eligible(18, 1));
+	rooms[5].dir_option[3] = nullptr;
+	exits[0].exit_info = exits[1].exit_info = 0;
+	authority = before_epic;
 
 	// A refused hour is not replayed after the wall clock advances.
 	queue_accepts = false;

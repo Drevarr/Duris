@@ -7317,7 +7317,6 @@ static bool staff_name_matches(const char *pattern, const char *keywords, const 
 void do_lookup(P_char ch, char *argument, int /*cmd*/)
 {
 	FILE *fp;
-	char *irc;
 	char arg[MAX_STRING_LENGTH], pattern[MAX_INPUT_LENGTH];
 	char buf[MAX_STRING_LENGTH], file[MAX_INPUT_LENGTH];
 	char o_buf[MAX_STRING_LENGTH];
@@ -7332,18 +7331,18 @@ void do_lookup(P_char ch, char *argument, int /*cmd*/)
 
 	if (!*arg || !*pattern)
 	{
-		send_to_char(
-			"Syntax : lookup <pfile | room | zone | mob | obj | random> <pattern>\n",
-			ch);
+		send_to_char("Syntax : lookup <room | zone | mob | obj | random> <pattern>\n", ch);
 		return;
 	}
-	if (strncasecmp(arg, "random", 1) == 0)
+	if (strncasecmp(arg, "random", 2) == 0)
 	{
 		if (strncasecmp(pattern, "zone", 1) == 0 && GET_LEVEL(ch) >= FORGER)
 		{
 			display_random_zones(ch);
 			return;
 		}
+		send_to_char("Syntax : lookup <room | zone | mob | obj> <pattern>\n", ch);
+		return;
 	}
 	if (strncasecmp(arg, "mob", 1) == 0 || strncasecmp(arg, "char", 1) == 0 ||
 	    strncasecmp(arg, "obj", 1) == 0)
@@ -7385,111 +7384,9 @@ void do_lookup(P_char ch, char *argument, int /*cmd*/)
 	{
 		strcpy(file, ZON_LOOKUP);
 	}
-	else if (strncasecmp(arg, "pfile", 1) == 0)
-	{
-		char m_class[MAX_STRING_LENGTH];
-		char race[MAX_STRING_LENGTH];
-		char level[MAX_STRING_LENGTH];
-		char start_letter[MAX_STRING_LENGTH];
-
-		half_chop(pattern, start_letter, buf);
-		// The letter goes into a shell command below, so accept nothing else.
-		if (!isalpha((unsigned char)start_letter[0]) || start_letter[1])
-		{
-			send_to_char("The start letter must be a single letter, such as a or b.\n",
-				     ch);
-			return;
-		}
-		start_letter[0] = LOWER(start_letter[0]);
-
-		half_chop(buf, level, pattern);
-		half_chop(pattern, m_class, buf);
-		half_chop(buf, race, pattern);
-		checked_snprintf(
-			buf, MAX_STRING_LENGTH,
-			"&+RQuery:\n&+WFind all ch with first letter:&+R%s&+W Level:&+R%s&+W Class:&+R%s&+W Race:&+R%s&+W\n",
-			start_letter, level, m_class, race);
-		send_to_char(buf, ch);
-		if (!*start_letter || !*level || !*race || !*m_class)
-		{
-			send_to_char("Syntax : 'lookup pfile a 50 Human Warrior'\n", ch);
-			send_to_char("Syntax : 'lookup pfile d * Ogre *'\n", ch);
-			return;
-		}
-
-		FILE *flist;
-		char Gbuf2[MAX_STRING_LENGTH];
-		char Gbuf3[MAX_STRING_LENGTH];
-		char buffer[MAX_STRING_LENGTH];
-		char tbuf[MAX_STRING_LENGTH];
-		char tbuf2[MAX_STRING_LENGTH];
-
-		int how_many = 0;
-		P_char owner;
-
-		snprintf(buf, MAX_STRING_LENGTH, "&+W%-12s %s %-10s\t %-10s&n\n", "Name", "Lev",
-			 "Class", "Race");
-		send_to_char(buf, ch);
-
-		checked_snprintf(Gbuf3, MAX_STRING_LENGTH, "/bin/ls -1 Players/%s > %s",
-				 start_letter, "temp_letterfile");
-		if (system(Gbuf3) != 0) /* ls a list of Players into the temp_file */
-		{
-			logit(LOG_FILE, "do_players: failed to list Players/%s", start_letter);
-			return;
-		}
-		flist = fopen("temp_letterfile", "r");
-		if (!flist)
-			return;
-
-		while (fscanf(flist, " %s \n", Gbuf2) != EOF)
-		{
-			owner = (struct char_data *)mm_get(dead_mob_pool);
-			ensure_pconly_pool();
-			owner->only.pc = (struct pc_only_data *)mm_get(dead_pconly_pool);
-
-			if (restoreCharOnly(owner, skip_spaces(Gbuf2)) >= 0)
-			{
-				stripansi_2(race_to_string(owner), tbuf);
-				half_chop(tbuf, tbuf, buf);
-				stripansi_2(get_class_string(owner, buffer), tbuf2);
-
-				tbuf2[strlen(tbuf2) - 1] = '\0';
-				if (GET_LEVEL(owner) == (atoi(level)) || isname("*", level))
-				{ // LEVEL
-					if (isname(tbuf2, m_class) || isname("*", m_class))
-					{ // CLASS
-						if (isname(tbuf, race) || isname("*", race))
-						{ // RACE
-							how_many++;
-							snprintf(buf, MAX_STRING_LENGTH,
-								 "%-12s %d\t %-10s\t %-10s\n",
-								 GET_NAME(owner), GET_LEVEL(owner),
-								 get_class_string(owner, buffer),
-								 race_to_string(owner));
-							send_to_char(buf, ch);
-							if (how_many > 20)
-							{
-								send_to_char(
-									"To many results narrow down your search",
-									ch);
-								fclose(flist);
-								return;
-							} // End spam check
-
-						} // end race
-					} // end class
-
-				} // end Level
-
-			} // end restore
-		} // End while
-		fclose(flist);
-		return;
-	}
 	else
 	{
-		send_to_char("Syntax : lookup <pfile room | zone | mob | obj> <pattern>\n", ch);
+		send_to_char("Syntax : lookup <room | zone | mob | obj> <pattern>\n", ch);
 		return;
 	}
 	// Room and zone lookups retain their generated text catalogs.
@@ -7508,9 +7405,8 @@ void do_lookup(P_char ch, char *argument, int /*cmd*/)
 		   is in the line.  If so, pass it to the user. */
 		found = 0;
 		length = 0;
-		do
+		while (fgets(buf, MAX_STRING_LENGTH - 1, fp))
 		{
-			irc = fgets(buf, MAX_STRING_LENGTH - 1, fp);
 			strcpy(arg, buf);
 			strcpy(buf, strip_ansi(buf).c_str());
 			strToLower(buf);
@@ -7520,16 +7416,12 @@ void do_lookup(P_char ch, char *argument, int /*cmd*/)
 				if ((length + strlen(arg) + 40) > MAX_STRING_LENGTH)
 				{
 					strcat(o_buf, "...and the list goes on...\n");
-					irc = NULL;
+					break;
 				}
-				else
-				{
-					length += strlen(arg) + 1;
-					strcat(o_buf, arg);
-					strcat(o_buf, "");
-				}
+				length += strlen(arg) + 1;
+				strcat(o_buf, arg);
 			}
-		} while (irc != NULL);
+		}
 
 		fclose(fp);
 

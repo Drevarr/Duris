@@ -99,18 +99,12 @@ PH 0 0 -1
                 f"UPDATE player_items SET equip_slot=7 WHERE obj_uid={BAIT_UID}")
         rig.boot("--minimal")
         client = journey.reconnect_character(rig.port)
-        rig.wait_for("no thief moved the bait", 150, lambda: item_records(BAIT_UID))
-        theft, = item_records(BAIT_UID)
-        assert "cause=npc_theft" in theft and "room=22800 source=worn" in theft
-        assert "source_slot=6 " in theft
-        assert f"holder_pid={pid} " in theft and "destination_mob_vnum=40053 " in theft
-        assert f"result_uid={BAIT_UID} result_vnum=678" in theft
+        client.expect_any(("tried to steal something from you", "hands in your wallet"), timeout=150)
         quit_character()
-        assert rig.sql(f"SELECT COUNT(*) FROM player_items WHERE obj_uid={BAIT_UID}") == "0"
+        assert rig.sql(f"SELECT pid FROM player_items WHERE obj_uid={BAIT_UID}") == pid
         assert rig.sql(f"SELECT pid FROM player_items WHERE obj_uid={HEAVY_UID}") == pid
-        assert not item_records(HEAVY_UID), records()
-        assert len(item_records(BAIT_UID)) == 1, records()
-        print("scrap and replacement emitted one record each, and theft UID matched the next rent")
+        assert not item_records(BAIT_UID) and not item_records(HEAVY_UID), records()
+        print("scrap and replacement emitted one record each, and thief procs only emitted flavor emotes")
     finally:
         if client:
             client.close()

@@ -2475,7 +2475,7 @@ void spell_transfer_wellness(int level, P_char ch, char * /*arg*/, int /*type*/,
 			     P_obj /*obj*/)
 {
 	int to, from, pos;
-	P_obj t_obj, next_obj, money;
+	P_obj t_obj, next_obj;
 	P_char next_victim;
 	int room;
 	bool explode = FALSE;
@@ -2572,6 +2572,9 @@ void spell_transfer_wellness(int level, P_char ch, char * /*arg*/, int /*type*/,
 	else
 		room = ch->in_room;
 
+	// The wallet becomes a carried pile that drops with everything else, so die()
+	// finds it empty instead of making a second pile for the corpse.
+	(void)money_to_inventory(ch);
 	for (t_obj = ch->carrying; t_obj; t_obj = next_obj)
 	{
 		next_obj = t_obj->next_content;
@@ -2585,13 +2588,6 @@ void spell_transfer_wellness(int level, P_char ch, char * /*arg*/, int /*type*/,
 		{
 			obj_to_room(unequip_char(ch, pos), room);
 		}
-	}
-
-	if (GET_MONEY(ch) > 0)
-	{
-		money = create_money(GET_COPPER(ch), GET_SILVER(ch), GET_GOLD(ch),
-				     GET_PLATINUM(ch));
-		obj_to_room(money, room);
 	}
 
 	char_from_room(ch);

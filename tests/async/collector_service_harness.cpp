@@ -9,6 +9,7 @@
 #include "persistence/persistence_mode.h"
 #include "player/player_load_items.h"
 #include "player/player_snapshot_codec.h"
+#include "world/object_template.h"
 
 #include <algorithm>
 #include <array>
@@ -113,6 +114,13 @@ void complete_detail(collector_listing_outcome outcome = collector_listing_outco
 	result_ready = true;
 	collector_service_pulse();
 }
+}
+
+const object_template *find_object_template(int vnum)
+{
+	static object_template blade;
+	blade.short_description = "a notched prototype blade";
+	return vnum == 501 ? &blade : nullptr;
 }
 
 P_obj object_list = nullptr;
@@ -369,6 +377,18 @@ int main()
 	complete_detail();
 	assert(saw("an old blade") && saw("condition: 83"));
 
+	// An item that was never restrung carries no description; name it from its prototype.
+	clear_messages();
+	player_item_snapshot ordinary = item_snapshot();
+	ordinary.short_description.clear();
+	const std::vector<uint8_t> restrung_blob = detail.item_blob;
+	assert(player_item_snapshot_list_encode({ ordinary }, &detail.item_blob) ==
+	       player_snapshot_codec_result::ok);
+	collector_service_command(&character, inspect, CMD_COLLECTOR);
+	complete_detail();
+	assert(saw("a notched prototype blade") && !saw("an unnamed antiquity"));
+	detail.item_blob = restrung_blob;
+
 	clear_messages();
 	char buy[] = "buy 77";
 	const uint64_t request_before_busy = request_cursor;
@@ -481,8 +501,8 @@ int main()
 	assert(materializations == 3 && saw("now available"));
 
 	const collector_service_health snapshot = collector_service_health_copy();
-	assert(snapshot.pending_details == 0 && snapshot.submitted_details == 7 &&
-	       snapshot.completed_details == 7 && snapshot.rejected_details == 3 &&
+	assert(snapshot.pending_details == 0 && snapshot.submitted_details == 8 &&
+	       snapshot.completed_details == 8 && snapshot.rejected_details == 3 &&
 	       snapshot.submitted_purchases == 1 && snapshot.committed_purchases == 2 &&
 	       snapshot.materialization_failures == 1);
 	collector_service_reset_for_tests();

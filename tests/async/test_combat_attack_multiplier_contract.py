@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""Combat-mind must raise a reduced attack multiplier to its configured floor."""
+"""Combat-mind must raise a reduced attack multiplier to its configured floor,
+and no multiplier above 1.0 may reach the attack divisor (#1044)."""
 
 from _paths import SRC
 from pathlib import Path
@@ -17,5 +18,12 @@ assert "float cmMulti = combat_mind_attack_floor();" in combat_mind
 assert "if (attacksMultiplier < cmMulti)" in combat_mind
 assert "attacksMultiplier = cmMulti;" in combat_mind
 assert "cmMulti = cmMulti;" not in combat_mind
+
+# A multiplier above 1.0 would make div_attacks 0 and index attacks[] past
+# number_attacks, so the clamp must come after every assignment and before use.
+clamp = "attacksMultiplier = MIN(attacksMultiplier, 1.0f);"
+assert fight.count(clamp) == 1
+assert fight.index("attacksMultiplier = cmMulti;") < fight.index(clamp)
+assert fight.index(clamp) < fight.index("div_attacks = (int)(1 / attacksMultiplier);")
 
 print("combat attack multiplier contract passed")

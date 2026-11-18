@@ -58,6 +58,8 @@
 #include "item/item_transfer_command.h"
 #include "item/item_transfer_repository.h"
 #include "item/item_claim_repository.h"
+#include "guild/artifact_admission.h"
+#include "guild/artifact_population_repository.h"
 
 // external tables
 extern P_index obj_index;
@@ -1653,6 +1655,40 @@ struct locker_row_index
 	std::map<int, std::vector<const sql_row *>> affects, extras;
 };
 
+// A saved artifact rejoins its canonical identity through the custody this locker
+// holds, so its later moves keep tracking. Without that custody, or if admission
+// refuses it, the item still loads as before rather than being lost.
+static P_obj locker_read_object(int rnum, const sql_row &row, int locker_id, int chest_id)
+{
+	const unsigned long long uid = row[21] ? strtoull(row[21], NULL, 10) : 0;
+	const unsigned long long extra_flags = row[6] ? strtoull(row[6], NULL, 10) : 0;
+	if (uid && row[31] && (extra_flags & ITEM_ARTIFACT))
+	{
+		artifact_payload_projection source = {};
+		source.domain = artifact_payload_domain::locker;
+		source.row_id = strtoull(row[1], NULL, 10);
+		source.item_uid = uid;
+		source.vnum = obj_index[rnum].virtual_number;
+		source.extra_flags = extra_flags;
+		source.extra_flags_present = true;
+		source.quantity = 1;
+		source.payload_owner = { item_owner_type::locker, static_cast<uint64_t>(locker_id),
+					 static_cast<uint64_t>(chest_id) };
+		source.owner_reference = locker_id;
+		source.owner_context = static_cast<uint64_t>(chest_id);
+		const char *const owner[] = { row[31], row[32], row[33], row[34], row[35],
+					      row[36], row[37], row[38], row[39] };
+		source.custody = sql_persistence_item_owner_entry(uid, owner);
+		source.payload_root_item_uid = source.custody.root_item_uid;
+		source.parent_item_uid = source.custody.parent_item_uid;
+		source.custody_examined = source.custody_found = true;
+		source.custody_owner_revision_found = row[39] != NULL;
+		if (P_obj obj = read_object_for_recovery(source))
+			return obj;
+	}
+	return read_object(rnum, REAL);
+}
+
 // Build the items of one chest level: its rows in order, each with its contents. An
 // item another owner holds is left out and what it contains moves up a level. With
 // chest_obj (a private chest) each item goes into the chest before its contents are
@@ -1684,7 +1720,7 @@ static P_obj locker_items_from_index(const locker_row_index &index, int locker_i
 			      item_id, row[2], locker_id, chest_id);
 			continue;
 		}
-		P_obj obj = read_object(rnum, REAL);
+		P_obj obj = locker_read_object(rnum, row, locker_id, chest_id);
 		if (!obj)
 			continue;
 
@@ -5069,6 +5105,39 @@ Guild *sql_load_guild(unsigned int guild_id)
 			tail->next = mem;
 		tail = mem;
 		guild->member_count++;
+	}
+	mysql_free_result(result);
+
+	// The frag total is the members' frags, which leaving subtracts again. Recount it
+	// from the saved players, so a crash between a PvP outcome and the guild's own save
+	// cannot leave the total apart from its members. The roster also lists enemies,
+	// who are not members.
+	char frags_query[512];
+	snprintf(frags_query, sizeof(frags_query),
+		 "select p.name, p.frags, m.bits from guild_members m join player_data p "
+		 "on p.pid=m.player_pid or (m.player_pid is null and p.name=m.player_name) "
+		 "where m.guild_id=%u order by p.frags desc, p.name",
+		 guild_id);
+	result = db_query("%s", frags_query);
+	if (!result)
+	{
+		logit(LOG_DEBUG, "sql_load_guild: failed to count frags for guild %u", guild_id);
+		delete guild;
+		return NULL;
+	}
+	guild->frags = {};
+	while ((row = mysql_fetch_row(result)))
+	{
+		if (!row[2] || !IS_MEMBER(strtoul(row[2], NULL, 10)))
+			continue;
+		const long member_frags = row[1] ? atol(row[1]) : 0;
+		if (member_frags > guild->frags.top_frags) // the first row has the most
+		{
+			strlcpy(guild->frags.topfragger, row[0] ? row[0] : "",
+				sizeof guild->frags.topfragger);
+			guild->frags.top_frags = member_frags;
+		}
+		guild->frags.frags += member_frags;
 	}
 	mysql_free_result(result);
 

@@ -270,7 +270,7 @@ void do_fraglist(P_char ch, char *arg, int /*cmd*/)
 		{
 			snprintf(filter, sizeof(filter), "race = 'illithid'");
 		}
-		// race filters
+		// race filters: frag_leaderboard.race holds race_names_table[].normal
 		else if (strstr("lich", arg))
 		{
 			snprintf(filter, sizeof(filter), "race = 'lich'");
@@ -293,19 +293,19 @@ void do_fraglist(P_char ch, char *arg, int /*cmd*/)
 		}
 		else if (strstr("drow elf", arg))
 		{
-			snprintf(filter, sizeof(filter), "race = 'drow_elf'");
+			snprintf(filter, sizeof(filter), "race = 'Drow Elf'");
 		}
 		else if (strstr("grey elf", arg))
 		{
-			snprintf(filter, sizeof(filter), "race = 'grey_elf'");
+			snprintf(filter, sizeof(filter), "race = 'Grey Elf'");
 		}
 		else if (strstr("mountain dwarf", arg))
 		{
-			snprintf(filter, sizeof(filter), "race = 'mountain_dwarf'");
+			snprintf(filter, sizeof(filter), "race = 'Mountain Dwarf'");
 		}
 		else if (strstr("duergar dwarf", arg))
 		{
-			snprintf(filter, sizeof(filter), "race = 'duergar_dwarf'");
+			snprintf(filter, sizeof(filter), "race = 'Duergar Dwarf'");
 		}
 		else if (strstr("halfling", arg))
 		{
@@ -317,7 +317,7 @@ void do_fraglist(P_char ch, char *arg, int /*cmd*/)
 		}
 		else if (strstr("storm giant", arg))
 		{
-			snprintf(filter, sizeof(filter), "race = 'storm_giant'");
+			snprintf(filter, sizeof(filter), "race = 'Storm Giant'");
 		}
 		else if (strstr("ogre", arg))
 		{
@@ -377,11 +377,11 @@ void do_fraglist(P_char ch, char *arg, int /*cmd*/)
 		}
 		else if (strstr("pillithid", arg))
 		{
-			snprintf(filter, sizeof(filter), "race = 'planetbound_illithid'");
+			snprintf(filter, sizeof(filter), "race = 'Planetbound Illithid'");
 		}
 		else if (strstr("wood elf", arg))
 		{
-			snprintf(filter, sizeof(filter), "race = 'wood_elf'");
+			snprintf(filter, sizeof(filter), "race = 'Wood Elf'");
 		}
 		else if (strstr("kobold", arg))
 		{
@@ -389,7 +389,7 @@ void do_fraglist(P_char ch, char *arg, int /*cmd*/)
 		}
 		else if (strstr("kuo toa", arg))
 		{
-			snprintf(filter, sizeof(filter), "race = 'kuo_toa'");
+			snprintf(filter, sizeof(filter), "race = 'Kuo Toa'");
 		}
 		else if (strstr("firbolg", arg))
 		{

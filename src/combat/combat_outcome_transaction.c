@@ -22,6 +22,7 @@
 #include "economy/divine_boon_delivery.h"
 #include "guild/artifact_guild_delivery.h"
 #include "guild/artifact_guild_state.h"
+#include "guild/assocs.h"
 #include "world/epic.h"
 
 #include <algorithm>
@@ -81,6 +82,15 @@ void apply_live(const combat_outcome_payload &payload)
 			character->only.pc->oldfrags = character->only.pc->frags;
 			character->only.pc->frags += entry.frag_delta;
 			++character->only.pc->frag_revision;
+			// A guild's total is its members' frags; leaving subtracts the member's
+			// frags at that time, so every change must reach the total too. An
+			// applicant already points at the guild but is not counted yet.
+			Guild *guild = GET_ASSOC(character);
+			if (guild && IS_MEMBER(GET_A_BITS(character)))
+			{
+				guild->add_frags(character, entry.frag_delta);
+				guild->save();
+			}
 		}
 		if (entry.epic_delta && !(entry.flags & COMBAT_PARTICIPANT_DIVINE_EPIC))
 		{

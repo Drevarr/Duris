@@ -7120,7 +7120,7 @@ void spell_sense_holiness(int /*level*/, P_char /*ch*/, char * /*arg*/, [[maybe_
 // How far wizard eye sees across the map at cast level `level`, in rooms.
 static int wizard_eye_distance(int level)
 {
-	return MAX(level * 2, (int)get_property("spell.wizardEye.maxDistance", 100));
+	return MIN(level * 2, (int)get_property("spell.wizardEye.maxDistance", 100));
 }
 
 std::string wizard_eye_facts(P_char ch)
@@ -21053,12 +21053,27 @@ std::string resurrect_facts(P_char ch)
 	return fact("Your lag", seconds(resurrect_lag(ch, GET_LEVEL(ch))));
 }
 
+// Credit a corpse's coin pile to the wallet. ADD_MONEY takes an int, so a pile worth
+// more stays with the character as a pile instead of being destroyed.
+static void resurrect_coin_pile(P_char ch, P_obj pile)
+{
+	const long long value = pile->value[0] + 10LL * pile->value[1] + 100LL * pile->value[2] +
+				1000LL * pile->value[3];
+	if (value > INT_MAX)
+	{
+		obj_to_char(pile, ch);
+		return;
+	}
+	ADD_MONEY(ch, static_cast<int>(value));
+	extract_obj(pile);
+}
+
 bool resurrect_corpse(int level, P_char ch, P_obj obj)
 {
 	bool loss_flag = FALSE;
 	int l, found;
 	long resu_exp;
-	P_obj obj_in_corpse, next_obj, t_obj, money;
+	P_obj obj_in_corpse, next_obj, t_obj;
 	struct affected_type *af, *next_af;
 	P_char t_ch;
 
@@ -21205,17 +21220,14 @@ bool resurrect_corpse(int level, P_char ch, P_obj obj)
 			}
 		}
 
-		if (GET_MONEY(t_ch) > 0)
-		{
-			/*
-			 * make a 'pile of coins' object to hold victim's cash
-			 */
+		// Take the coins before making the pile, so a refused or oversized
+		// subtraction leaves them with the victim instead of copying them.
+		const int copper = GET_COPPER(t_ch), silver = GET_SILVER(t_ch),
+			  gold = GET_GOLD(t_ch), platinum = GET_PLATINUM(t_ch);
+		const long long wallet = GET_MONEY(t_ch);
+		if (wallet > 0 && wallet <= INT_MAX && SUB_MONEY(t_ch, (int)wallet, 0) == 0)
+			obj_to_room(create_money(copper, silver, gold, platinum), t_ch->in_room);
 
-			money = create_money(GET_COPPER(t_ch), GET_SILVER(t_ch), GET_GOLD(t_ch),
-					     GET_PLATINUM(t_ch));
-			SUB_MONEY(t_ch, GET_MONEY(t_ch), 0);
-			obj_to_room(money, t_ch->in_room);
-		}
 		for (t_obj = t_ch->carrying; t_obj != NULL; t_obj = next_obj)
 		{
 			next_obj = t_obj->next_content;
@@ -21263,10 +21275,7 @@ bool resurrect_corpse(int level, P_char ch, P_obj obj)
 		obj_from_obj(obj_in_corpse);
 		if (obj_in_corpse->type == ITEM_MONEY)
 		{
-			ADD_MONEY(t_ch, obj_in_corpse->value[0] + obj_in_corpse->value[1] * 10 +
-						obj_in_corpse->value[2] * 100 +
-						obj_in_corpse->value[3] * 1000);
-			extract_obj(obj_in_corpse);
+			resurrect_coin_pile(t_ch, obj_in_corpse);
 			obj_in_corpse = NULL;
 		}
 		else
@@ -21472,7 +21481,7 @@ void spell_lesser_resurrect(int level, P_char ch, char * /*arg*/, [[maybe_unused
 {
 	bool loss_flag = FALSE;
 	int chance, l, found, ss_roll;
-	P_obj obj_in_corpse, next_obj, t_obj, money;
+	P_obj obj_in_corpse, next_obj, t_obj;
 	struct affected_type *af, *next_af;
 	P_char t_ch;
 
@@ -21641,17 +21650,14 @@ void spell_lesser_resurrect(int level, P_char ch, char * /*arg*/, [[maybe_unused
 				affect_remove(t_ch, af);
 		}
 
-		if (GET_MONEY(t_ch) > 0)
-		{
-			/*
-			 * make a 'pile of coins' object to hold victim's cash
-			 */
+		// Take the coins before making the pile, so a refused or oversized
+		// subtraction leaves them with the victim instead of copying them.
+		const int copper = GET_COPPER(t_ch), silver = GET_SILVER(t_ch),
+			  gold = GET_GOLD(t_ch), platinum = GET_PLATINUM(t_ch);
+		const long long wallet = GET_MONEY(t_ch);
+		if (wallet > 0 && wallet <= INT_MAX && SUB_MONEY(t_ch, (int)wallet, 0) == 0)
+			obj_to_room(create_money(copper, silver, gold, platinum), t_ch->in_room);
 
-			money = create_money(GET_COPPER(t_ch), GET_SILVER(t_ch), GET_GOLD(t_ch),
-					     GET_PLATINUM(t_ch));
-			SUB_MONEY(t_ch, GET_MONEY(t_ch), 0);
-			obj_to_room(money, t_ch->in_room);
-		}
 		for (t_obj = t_ch->carrying; t_obj != NULL; t_obj = next_obj)
 		{
 			next_obj = t_obj->next_content;
@@ -21702,10 +21708,7 @@ void spell_lesser_resurrect(int level, P_char ch, char * /*arg*/, [[maybe_unused
 		obj_from_obj(obj_in_corpse);
 		if (obj_in_corpse->type == ITEM_MONEY)
 		{
-			ADD_MONEY(t_ch, obj_in_corpse->value[0] + obj_in_corpse->value[1] * 10 +
-						obj_in_corpse->value[2] * 100 +
-						obj_in_corpse->value[3] * 1000);
-			extract_obj(obj_in_corpse);
+			resurrect_coin_pile(t_ch, obj_in_corpse);
 			obj_in_corpse = NULL;
 		}
 		else

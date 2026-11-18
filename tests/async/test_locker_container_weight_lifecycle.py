@@ -76,6 +76,8 @@ harness = r'''
 #include "sql/sql_work.h"
 #include "sql/sql.h"
 #include "sql/item_extra_descr_codec.h"
+#include "guild/artifact_admission.h"
+#include "guild/artifact_population_repository.h"
 #include <algorithm>
 #include <cassert>
 #include <cstdio>
@@ -231,6 +233,11 @@ bool sql_persistence_item_owner_fields_match(
     unsigned long long, const char *, unsigned long long, unsigned long long, const char *const *) {
     return true;
 }
+// These fixtures hold no artifacts, so the canonical recovery path never applies.
+item_ownership_runtime_entry sql_persistence_item_owner_entry(unsigned long long, const char *const *) {
+    return {};
+}
+P_obj read_object_for_recovery(const artifact_payload_projection &) { return nullptr; }
 static void sql_add_item_extra_descr(P_obj, const char *, const char *, const char *, int,
                                    extra_descr_data **) {}
 

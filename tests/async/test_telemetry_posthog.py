@@ -592,6 +592,7 @@ def main() -> None:
                 str(ROOT / "src/telemetry/telemetry_combat_summary.c"),
                 str(ROOT / "tests/async/telemetry_posthog_harness.cc"),
                 str(ROOT / "tests/async/telemetry_posthog_reducer_harness.cc"),
+                "-Wl,--wrap=curl_multi_add_handle",
                 "-lcrypto", "-lcjson", "-lcurl", "-o", str(binary),
             ], cwd=ROOT, env=TEST_ENV, check=True, timeout=60)
             encoding_tests(binary)

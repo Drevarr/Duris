@@ -11,6 +11,7 @@ server must shut down cleanly and its logs must hold no crash or sanitizer repor
 Scenario lines (see tests/scenarios/README.md):
 
     actor Name [class=MONK] [spec=WAYOFSNAKE] [level=40] [skill=SKILL_BASH:100]...
+               [race=ORC racewar=EVIL] [affect=TAG_EPIC_ERRAND:10000000]...
     staff Name                 a level-62 actor for load/restore/tranquilize
     Name> command              send a command and wait until it has finished
     Name? REGEX                REGEX matches what reached Name since Name's last check
@@ -18,6 +19,7 @@ Scenario lines (see tests/scenarios/README.md):
     until Name /REGEX/ [max K] command
                                send command again until its output matches (K tries, 20 by default)
     restart                    save everyone, stop, boot again and log everyone back in
+    login Name                 reconnect Name and enter the game again, e.g. after dying
 """
 
 from __future__ import annotations
@@ -52,7 +54,7 @@ class ScenarioError(Exception):
 
 
 def define(name: str) -> int:
-    match = re.search(rf"^#define {re.escape(name)}\s+(BIT_)?(\d+)\b", DEFINES, re.M)
+    match = re.search(rf"^#define {re.escape(name)}\s+(?:\\\n\s*)?(BIT_)?(\d+)\b", DEFINES, re.M)
     if not match:
         raise ScenarioError(f"unknown name {name}")
     return 1 << (int(match[2]) - 1) if match[1] else int(match[2])
@@ -65,6 +67,9 @@ class Actor:
     spec: int = 0
     level: int = 1
     skills: list[tuple[int, int]] = field(default_factory=list)
+    race: int = 0
+    racewar: int = 0
+    affects: list[tuple[int, int]] = field(default_factory=list)
     client: object = None
     checked: int = 0
 
@@ -109,12 +114,24 @@ def parse(path: pathlib.Path) -> tuple[dict[str, Actor], list[tuple[int, str, st
                 elif key == "skill":
                     skill, _, learned = value.partition(":")
                     actor.skills.append((define(skill.upper()), int(learned or 100)))
+                elif key == "race":
+                    actor.race = define("RACE_" + value.upper())
+                elif key == "racewar":
+                    actor.racewar = define("RACEWAR_" + value.upper())
+                elif key == "affect":
+                    kind, _, modifier = value.partition(":")
+                    actor.affects.append((define(kind.upper()), int(modifier or 0)))
                 else:
                     raise ScenarioError(f"{where}: unknown actor option {key}")
             actors[name] = actor
             continue
         if line == "restart":
             steps.append((number, "restart", "", ""))
+            continue
+        if words[0] == "login":
+            if len(words) != 2 or words[1] not in actors:
+                raise ScenarioError(f"{where}: expected 'login Name'")
+            steps.append((number, "login", words[1], ""))
             continue
         if words[0] == "until":
             match = re.fullmatch(r"until ([A-Z][a-z]+) /((?:[^/\\]|\\.)+)/(?: max (\d+))? (.+)", line)
@@ -139,9 +156,22 @@ def seed(sql, actors: dict[str, Actor]) -> None:
         statements = [f"UPDATE player_data SET level={actor.level},highest_level={actor.level},{stats}"
                       + (f",m_class={actor.classes}" if actor.classes else "")
                       + (f",spec={actor.spec}" if actor.spec else "")
+                      + (f",race={actor.race}" if actor.race else "")
+                      + (f",racewar={actor.racewar}" if actor.racewar else "")
                       + f" WHERE pid={pid}"]
         statements += [f"REPLACE INTO player_skills(pid,skill_id,learned,taught) VALUES({pid},{skill},{learned},{learned})"
                        for skill, learned in actor.skills]
+        if actor.racewar:
+            # The character list keeps its own copy, and creation played the account as
+            # Good, which would start the side-switch cooldown.
+            statements.append(f"UPDATE account_characters SET racewar={actor.racewar} WHERE pid={pid}")
+            statements.append(f"UPDATE accounts SET last_good_char=NULL,last_evil_char=NULL "
+                              f"WHERE account_name='{actor.account}'")
+        # A stored, permanent tag, such as an epic task.
+        flags = define("AFFTYPE_NOAPPLY") | define("AFFTYPE_NODISPEL") | define("AFFTYPE_NOSHOW") \
+            | define("AFFTYPE_PERM")
+        statements += [f"INSERT INTO player_affects(pid,type,duration,flags,modifier) "
+                       f"VALUES({pid},{kind},-1,{flags},{modifier})" for kind, modifier in actor.affects]
         sql(";".join(statements))
 
 
@@ -242,6 +272,10 @@ def run_scenario(binary: pathlib.Path, path: pathlib.Path, rng_seed: int) -> Non
                         login(actor)
                     continue
                 actor = actors[name]
+                if kind == "login":
+                    actor.client.close()
+                    login(actor)
+                    continue
                 if kind == ">":
                     command(actor.client, text)
                     continue

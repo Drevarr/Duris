@@ -1941,8 +1941,7 @@ void spell_spinal_corruption(int level, P_char ch, char * /*arg*/, [[maybe_unuse
 		return;
 	}
 
-	if (StatSave(victim, APPLY_POW,
-		     MIN(1, GET_LEVEL(ch) - GET_LEVEL(victim)) * POW_DIFF(ch, victim)))
+	if (StatSave(victim, APPLY_POW, POW_DIFF(ch, victim)))
 	{
 		send_to_char("&+RYou feel a twinge of pain along your spine.&n\r\n", victim);
 		return;

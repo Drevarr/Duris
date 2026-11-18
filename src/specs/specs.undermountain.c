@@ -1780,7 +1780,7 @@ int um_essra(P_char ch, P_char /*pl*/, int cmd, char * /*arg*/)
 int um_mezzoloth(P_char ch, P_char pl, int cmd, char *arg)
 {
 	static int hired;
-	int gold;
+	long long gold;
 
 	if (cmd == CMD_SET_PERIODIC)
 		return TRUE;

@@ -31,6 +31,7 @@
 #include "item/item_ownership_runtime.h"
 #include "player/player_load_items.h"
 #include "player/player_snapshot_codec.h"
+#include "world/object_template.h"
 
 #include <algorithm>
 #include <array>
@@ -388,6 +389,12 @@ void show_inspection(P_char character, const collector::record &entry,
 	const std::string price = currency_text(entry.price_value);
 	const uint64_t now = static_cast<uint64_t>(time(nullptr));
 	const uint64_t remaining = seconds_remaining(entry.expires_at, now);
+	// A snapshot keeps only a restrung description; the rest are the prototype's.
+	const char *name = "an unnamed antiquity";
+	if (!item.short_description.empty())
+		name = item.short_description.c_str();
+	else if (const object_template *prototype = find_object_template(item.vnum))
+		name = prototype->short_description.c_str();
 	send_to_char_f(character,
 		       "&+WCollector listing %" PRIu64 "&n\r\n"
 		       "  %s\r\n"
@@ -395,11 +402,9 @@ void show_inspection(P_char character, const collector::record &entry,
 		       "  condition: %d   weight: %d   stored base value: %d copper\r\n"
 		       "  buyback price: %s\r\n"
 		       "  holding time remaining: %" PRIu64 "h %" PRIu64 "m\r\n",
-		       entry.listing,
-		       item.short_description.empty() ? "an unnamed antiquity" :
-							item.short_description.c_str(),
-		       item.object_uid, item.vnum, static_cast<int>(item.condition), item.weight,
-		       item.cost, price.c_str(), remaining / 3600, (remaining / 60) % 60);
+		       entry.listing, name, item.object_uid, item.vnum,
+		       static_cast<int>(item.condition), item.weight, item.cost, price.c_str(),
+		       remaining / 3600, (remaining / 60) % 60);
 }
 
 P_obj find_live_item(uint64_t uid)

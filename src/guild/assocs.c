@@ -384,8 +384,8 @@ void Guild::add_frags(P_char ch, long new_frags)
 		return;
 	}
 
-	// new frag leader in guild?
-	if (GET_FRAGS(ch) > frags.top_frags)
+	// new frag leader in guild, or the leader's own total moved?
+	if (GET_FRAGS(ch) > frags.top_frags || !strcasecmp(GET_NAME(ch), frags.topfragger))
 	{
 		snprintf(frags.topfragger, sizeof(frags.topfragger), "%s", GET_NAME(ch));
 		frags.top_frags = GET_FRAGS(ch);

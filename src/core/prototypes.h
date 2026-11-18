@@ -2521,6 +2521,7 @@ void exec_social(P_char, char *, int, int *, void **);
 void firesector(P_char);
 void npc_steal(P_char, P_char);
 void underwatersector(P_char);
+void breathe_air(P_char);
 void swimming_char(P_char);
 void negsector(P_char);
 
