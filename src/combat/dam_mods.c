@@ -917,16 +917,6 @@ dam_mod->type = dam_mod_type::Increased;
 }
 }
 }
-, { MAKE_DAM_MOD_PRED(){ if (IS_HARDCORE(caster)){ dam_mod->mod += 0.09;
-dam_mod->type = dam_mod_type::Increased;
-}
-if (IS_HARDCORE(victim))
-{
-	dam_mod->mod += -0.09;
-	dam_mod->type = dam_mod_type::Increased;
-}
-}
-}
 , { MAKE_DAM_MOD_PRED(){ if (IS_HARDCORE(caster)){
 	  dam_mod->mod += hardcore_config_get()->bonus_damage_outgoing_multiplier - 1.0f;
 dam_mod->type = dam_mod_type::Increased;
