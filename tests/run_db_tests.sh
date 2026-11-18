@@ -57,6 +57,7 @@ pet_restart $DB python3 tests/async/test_pet_restart_journey.py --server SERVER_
 shaman_totems $DB python3 tests/async/test_shaman_totems.py --server SERVER_BINARY
 hardcore_third_death $DB python3 tests/async/test_mariadb_hardcore_death_journey.py --server SERVER_BINARY
 ranged_kill_xp $DB python3 tests/async/test_ranged_kill_xp_journey.py --server SERVER_BINARY
+ranged_cover_message $DB python3 tests/async/test_ranged_cover_message_journey.py --server SERVER_BINARY
 account_recovery_journey $DB python3 tests/async/test_account_recovery_journey.py --server SERVER_BINARY
 first_session_currency $DB python3 tests/async/test_mariadb_first_session_currency.py --server SERVER_BINARY
 area_coin_pickup $DB python3 tests/async/test_area_coin_pickup.py --server SERVER_BINARY

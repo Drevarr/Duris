@@ -2503,7 +2503,7 @@ P_char get_char_room(const char *name, int room)
 
 P_char get_char_ranged(const char *name, P_char ch, int distance, int dir)
 {
-	P_char vict = NULL;
+	P_char vict = NULL, covered = NULL;
 	int source_room, old_cord;
 	int target_room2, target_room, i;
 	char tmp[MAX_STRING_LENGTH];
@@ -2530,7 +2530,10 @@ P_char get_char_ranged(const char *name, P_char ch, int distance, int dir)
 				if (vict)
 				{
 					if (!IS_TRUSTED(ch) && IS_AFFECTED3(vict, AFF3_COVER))
+					{
+						covered = vict;
 						vict = NULL;
+					}
 					else
 						break;
 				}
@@ -2593,6 +2596,7 @@ P_char get_char_ranged(const char *name, P_char ch, int distance, int dir)
 					}
 					else if (!IS_TRUSTED(ch) && IS_AFFECTED3(vict, AFF3_COVER))
 					{
+						covered = vict;
 						vict = NULL;
 					}
 					else
@@ -2646,6 +2650,7 @@ P_char get_char_ranged(const char *name, P_char ch, int distance, int dir)
 				{
 					if (i == 0 && IS_AFFECTED3(vict, AFF3_COVER))
 					{
+						covered = vict;
 						vict = NULL;
 						break;
 					}
@@ -2675,6 +2680,12 @@ P_char get_char_ranged(const char *name, P_char ch, int distance, int dir)
 				     ch);
 			return NULL;
 		}
+	}
+	else if (covered)
+	{
+		act("$N is under cover; you can't reach $M from there.", FALSE, ch, 0, covered,
+		    TO_CHAR);
+		return NULL;
 	}
 	else
 	{

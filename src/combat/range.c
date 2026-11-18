@@ -690,13 +690,9 @@ void do_fire(P_char ch, char *argument, int cmd)
 			return;
 		}
 
+		// get_char_ranged() tells the shooter why no target was found.
 		if (!(victim = get_char_ranged(tararg, ch, 10, dir)))
-		{
-			checked_snprintf(buf, sizeof buf, "Could not find target '%s' to the %s.\n",
-					 tararg, dirs[dir]);
-			send_to_char(buf, ch);
 			return;
-		}
 
 		// If passed, than there's no wall, or we're going to arc, so check for walls directly.
 		wallcheck = check_wall(ch->in_room, dir);
@@ -1482,13 +1478,10 @@ void do_throw(P_char ch, char *argument, int /*cmd*/)
 
 		max_range = IS_OBJ_STAT(weapon, ITEM_CAN_THROW2) ? 2 : 1;
 
-		if ((vict = get_char_ranged(arg2, ch, max_range, far_room)))
-			target_room = vict->in_room;
-		else
-		{
-			send_to_char("Your target doesn't seem to be here.\r\n", ch);
+		// get_char_ranged() tells the thrower why no target was found.
+		if (!(vict = get_char_ranged(arg2, ch, max_range, far_room)))
 			return;
-		}
+		target_room = vict->in_room;
 	}
 	else
 	{

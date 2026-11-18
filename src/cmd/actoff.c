@@ -1070,11 +1070,9 @@ void lance_charge(P_char ch, char *argument)
 			return;
 		}
 
+		// get_char_ranged() tells the rider why no target was found.
 		if (!(victim = get_char_ranged(arg1, ch, 1, dir)))
-		{
-			send_to_char("Couldn't find that target.\n", ch);
 			return;
-		}
 	}
 	else
 		victim = ParseTarget(ch, arg1);
@@ -1638,11 +1636,9 @@ void do_charge(P_char ch, char *argument, int /*cmd*/)
 			return;
 		} /* end case */
 
+		// get_char_ranged() tells the charger why no target was found.
 		if (!(victim = get_char_ranged(arg1, ch, 1, dir)))
-		{
-			send_to_char("Your target doesn't seem to be there.\n", ch);
 			return;
-		} /* could find victim */
 
 		if (IS_ROOM(victim->in_room, ROOM_SINGLE_FILE) ||
 		    IS_ROOM(victim->in_room, ROOM_TUNNEL))
@@ -11954,11 +11950,9 @@ void do_springleap(P_char ch, char *argument, int /*cmd*/)
 				return;
 			} /* end case */
 
+			// get_char_ranged() tells the leaper why no target was found.
 			if (!(vict = get_char_ranged(name, ch, 1, dir)))
-			{
-				send_to_char("Your target doesn't seem to be there.\n", ch);
 				return;
-			} /* could find victim */
 
 			appear(ch);
 

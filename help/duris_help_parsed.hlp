@@ -10010,24 +10010,36 @@ eat ,drink ,sip ,taste ,pour
 #0
 
 Fire
-Fire - Last Edited: 2010-02-07 01:24:14 by zion
-===============================================
-* Area of effect: <victim> | <victim> <direction>
-* Aggressive:     Yes
-* Cumulative:     No
-* Duration:       Instantaneous
-Fire command is used by Rangers & Shadow Archers when:
-*1. Wielding a bow
-*2. Wearing a Quiver
-*3. Quiver contains arrows.
-The effects can be used for both in room and for ranged effects. When using the bow and
-targeting a mob in a room type "fire <victim> <direction>". Search the mob after its dead many
-times the arrows are not broken and many be retrieved and reused again.
-    Note:  Quality of the Bow and Arrows do influence the damage they inflict.
+Fire - Last Edited: 2026-11-19
+============================================================
+Fire shoots your wielded bow or crossbow at a target.
+
+==Syntax==
+
+fire <target>
+fire <target> <direction>
+
+==Description==
+
+To fire you must:
+* Wield the bow or crossbow in your main hand.
+* Wear a quiver holding arrows or bolts that fit the weapon.
+
+Without a direction, fire targets someone in your room. With a direction, it
+looks along that line of rooms through open exits; a closed door stops the
+search. The target must be in the same zone as you.
+
+Some targets are under cover and cannot be shot from another room. Every
+creature that never leaves its post is under cover. Fire then tells you the
+target is under cover; walk into its room and fire without a direction.
+
+Arrows often survive the shot. While wearing your quiver, type gather in the
+room where they landed, or gather <corpse> to take them from a corpse. The
+quality of the bow and arrows affects the damage they inflict.
 
 ==See also==
 
-range, ranged
+[[Archery]], [[Ranged weapons]]
 
 #0
 
