@@ -231,6 +231,10 @@ void remove_deleted_account_characters(P_desc deleting_session,
 		for (const auto &identity : identities)
 			if (GET_PID(character) == identity.pid)
 			{
+				// End a switch first, or the other body keeps the closed descriptor.
+				// Staff switched into this body go back to their own, still online.
+				if (character->desc)
+					return_from_staff_switch(character->desc);
 				if (character->desc)
 				{
 					P_desc character_desc = character->desc;

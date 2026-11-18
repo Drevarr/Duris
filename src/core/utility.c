@@ -913,7 +913,7 @@ void ereglog(int level, const char *format, ...)
 		return;
 	for (d = descriptor_list; d; d = d->next)
 	{
-		if (d->connected == CON_PLAYING && IS_TRUSTED(d->character) &&
+		if (d->connected == CON_PLAYING && d->character && IS_TRUSTED(d->character) &&
 		    GET_LEVEL(d->character) >= level &&
 		    IS_SET(d->character->specials.act, PLR_SNOTIFY))
 		{
@@ -937,7 +937,7 @@ void wizlog(int level, const char *format, ...)
 
 	for (d = descriptor_list; d; d = d->next)
 	{
-		if (d->connected == CON_PLAYING && IS_TRUSTED(d->character) &&
+		if (d->connected == CON_PLAYING && d->character && IS_TRUSTED(d->character) &&
 		    GET_LEVEL(d->character) >= level &&
 		    IS_SET(d->character->specials.act, PLR_WIZLOG))
 		{
@@ -1332,7 +1332,7 @@ void loginlog(int level, const char *format, ...)
 
 	for (d = descriptor_list; d; d = d->next)
 	{
-		if ((d->connected == CON_PLAYING) && IS_TRUSTED(d->character) &&
+		if (d->connected == CON_PLAYING && d->character && IS_TRUSTED(d->character) &&
 		    (GET_LEVEL(d->character) >= level) &&
 		    IS_SET(d->character->specials.act, PLR_PLRLOG))
 		{
@@ -1356,7 +1356,7 @@ void statuslog(int level, const char *format, ...)
 
 	for (d = descriptor_list; d; d = d->next)
 	{
-		if (d->connected == CON_PLAYING && IS_TRUSTED(d->character) &&
+		if (d->connected == CON_PLAYING && d->character && IS_TRUSTED(d->character) &&
 		    GET_LEVEL(d->character) >= level &&
 		    IS_SET(d->character->specials.act, PLR_STATUS))
 		{
@@ -1386,7 +1386,7 @@ void epiclog(int level, const char *format, ...)
 
 	for (d = descriptor_list; d; d = d->next)
 	{
-		if (d->connected == CON_PLAYING && IS_TRUSTED(d->character) &&
+		if (d->connected == CON_PLAYING && d->character && IS_TRUSTED(d->character) &&
 		    GET_LEVEL(d->character) >= level &&
 		    IS_SET(d->character->specials.act3, PLR3_EPICWATCH))
 		{
@@ -1417,7 +1417,7 @@ void banlog(int level, const char *format, ...)
 
 	for (d = descriptor_list; d; d = d->next)
 	{
-		if (d->connected == CON_PLAYING && IS_TRUSTED(d->character) &&
+		if (d->connected == CON_PLAYING && d->character && IS_TRUSTED(d->character) &&
 		    GET_LEVEL(d->character) >= level && IS_SET(d->character->specials.act, PLR_BAN))
 		{
 			send_to_char(lbuf, d->character);

@@ -46,8 +46,8 @@ def register(server, name):
     return client
 
 
-def websocket_login(server, name):
-    client = WebSocketClient(server.websocket_port)
+def websocket_login(server, name, source_host=None):
+    client = WebSocketClient(server.websocket_port, source_host=source_host)
     return client, client.command("login", {"account": name, "password": account.OLD_PASSWORD}, "auth")
 
 
@@ -70,6 +70,15 @@ def in_game_commands(server):
     assert "Your starter kit is ready" in json.dumps(entered), entered
     assert "couldn't load" not in json.dumps(entered), entered
     save(client)
+    # A new login takes over a live WebSocket body. Closing the detached old
+    # descriptor logs the close before it leaves descriptor_list.
+    for _ in range(2):
+        replacement, resumed = websocket_login(server, account.ACCOUNT)
+        assert resumed["status"] == "reconnected", resumed
+        client.close()
+        client = replacement
+        save(client)
+        assert server.process.poll() is None
     refused = client.command("login", {"account": OTHER, "password": account.OLD_PASSWORD}, "auth")
     assert refused["status"] == "failed", refused
     refused = client.command("login", {"account": account.ACCOUNT, "password": "wrong-password-1"}, "auth")
@@ -105,8 +114,8 @@ def delete_at_first_play(server):
     telnet.close()
 
 
-def waiting_application(server, sql):
-    """Enter and delete leave a pending application in the queue and approvable."""
+def staff_in_game(server, sql):
+    """Telnet staff playing an Overlord on account.ACCOUNT."""
     staff = account.MudClient(server.plain_port)
     account.create_account(staff, account.OLD_PASSWORD)
     character_choices(staff, STAFF)
@@ -124,7 +133,66 @@ def waiting_application(server, sql):
     for directory in ("Players/Accepted/t", "Players/Declined/v"):
         (server.run_root / directory).mkdir(parents=True, exist_ok=True)
     creation.reboot(server)
-    staff = enter_staff(server)
+    return enter_staff(server)
+
+
+def staff_takeover(server, sql):
+    """Taking over or dropping a staff session ends its snoop and switch with it."""
+    staff = staff_in_game(server, sql)
+    mortal = register(server, OWNER)
+    websocket_character(mortal)
+    drain(mortal, 1)
+    send(mortal, "enter", {"character": "Taverek"})
+    assert "Your starter kit is ready" in json.dumps(drain(mortal, 15, "Your starter kit is ready"))
+    creation.reply(staff, "snoop taverek", "Ok.")
+    # Staff logins come from their own addresses, within the per-address login limit.
+    staff_web, resumed = websocket_login(server, account.ACCOUNT, "127.0.0.2")
+    assert resumed["status"] == "reconnected", resumed
+    staff.close()
+    drain(staff_web, 2)
+    send(mortal, "game", "save")
+    assert "Saving Taverek." in json.dumps(drain(mortal, 10, "Saving Taverek."))
+    assert "Saving Taverek." not in json.dumps(drain(staff_web, 2)), "the snoop outlived its session"
+    # With the staff body link-dead, a leftover snoop crashed the old server on this output.
+    staff_web.close()
+    save(mortal)
+    mortal.close()
+    assert server.process.poll() is None
+    # Staff switched into the link-dead Taverek: a staff login, Taverek's own login, or a
+    # link drop ends the switch, and neither body keeps a closed descriptor.
+    for ending in ("staff login", "owner login", "link drop"):
+        staff_web, resumed = websocket_login(server, account.ACCOUNT, "127.0.0.2")
+        assert resumed["status"] == "reconnected", resumed
+        send(staff_web, "game", "switch taverek")
+        assert "Ok." in json.dumps(drain(staff_web, 5, "Ok."))
+        if ending == "staff login":
+            replacement, resumed = websocket_login(server, account.ACCOUNT, "127.0.0.3")
+            assert resumed["status"] == "reconnected", resumed
+            staff_web.close()
+            staff_web = replacement
+        elif ending == "link drop":
+            staff_web.close()
+        mortal, resumed = websocket_login(server, OWNER)
+        assert resumed["status"] == "reconnected", resumed
+        save(mortal)
+        mortal.close()
+        if ending != "link drop":
+            # The staff session plays its own body.
+            send(staff_web, "game", "save")
+            assert f"Saving {STAFF}." in json.dumps(drain(staff_web, 10, f"Saving {STAFF}."))
+            staff_web.close()
+        assert server.process.poll() is None
+    # The staff body went link-dead in its own skin.
+    staff_web, resumed = websocket_login(server, account.ACCOUNT, "127.0.0.3")
+    assert resumed["status"] == "reconnected", resumed
+    send(staff_web, "game", "save")
+    assert f"Saving {STAFF}." in json.dumps(drain(staff_web, 10, f"Saving {STAFF}."))
+    staff_web.close()
+
+
+def waiting_application(server, sql):
+    """Enter and delete leave a pending application in the queue and approvable."""
+    staff = staff_in_game(server, sql)
     creation.reply(staff, "approve on", "Pos: standing >")
     client = register(server, OWNER)
     kept = websocket_character(client)
@@ -197,7 +265,8 @@ def chaos_change(binary):
 
 
 def run(binary, backend):
-    for journey in (in_game_commands, delete_at_first_play, waiting_application, fenced_login):
+    for journey in (in_game_commands, staff_takeover, delete_at_first_play, waiting_application,
+                    fenced_login):
         with persistence(backend) as (environment, sql):
             fixture = account.IsolatedServer(binary, dict(environment, DURIS_WEBSOCKET="TRUE"))
             if backend == "flatfile":
@@ -205,7 +274,8 @@ def run(binary, backend):
                 subprocess.run([str(INSPECTOR), str(fixture.state_root), "empty-authorities"], check=True)
             with fixture as server:
                 try:
-                    journey(*((server, sql) if journey in (waiting_application, fenced_login) else (server,)))
+                    journey(*((server, sql) if journey in (staff_takeover, waiting_application, fenced_login)
+                               else (server,)))
                 except Exception:
                     print(server.server_output()[-2000:])
                     print(server.runtime_logs()[-3000:])

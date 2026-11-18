@@ -1345,9 +1345,17 @@ void ws_finish_login(struct descriptor_data *d, int password_valid)
 		{
 			struct descriptor_data *old_desc = online_char->desc;
 
+			// A staff switch ends first, or the worn body keeps the closed descriptor.
+			// Staff who wore this body stay online in their own.
+			if (old_desc && return_from_staff_switch(old_desc) &&
+			    old_desc->character != online_char)
+				old_desc = NULL;
+
 			/* close old descriptor if exists */
 			if (old_desc && old_desc != d)
 			{
+				// close_socket() cannot end a snoop for a session with no body.
+				stop_snooping(old_desc);
 				old_desc->character = NULL;
 
 				if (old_desc->websocket)

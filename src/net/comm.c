@@ -3693,6 +3693,8 @@ static void forget_hostname(int descriptor);
 
 void close_socket(struct descriptor_data *d)
 {
+	// Staff go link-dead in their own body: neither body may keep this descriptor.
+	return_from_staff_switch(d);
 	gmcp_item_edit_done(d);
 	locker_invalidate_chest_access(d->character);
 	locker_invalidate_chest_access(d->original);
