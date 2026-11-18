@@ -641,13 +641,12 @@ void herb_blue_haze(int level, int duration, P_char smoker)
 	{
 		struct affected_type *af1;
 
-		// Renew the affect (although if the last time they smoked it didn't apply the vitality, resmoking doesn't either).
+		// Renew every part of the affect (although if the last time they smoked it didn't apply the vitality, resmoking doesn't either).
 		for (af1 = smoker->affected; af1; af1 = af1->next)
 		{
 			if (af1->type == HERB_BLUE_HAZE)
 			{
 				af1->duration += duration;
-				break;
 			}
 		}
 		send_to_char(
@@ -777,13 +776,12 @@ void herb_black_kush(int level, int duration, P_char smoker)
 	{
 		struct affected_type *af1;
 
-		// Renew the affect.
+		// Renew every part of the affect.
 		for (af1 = smoker->affected; af1; af1 = af1->next)
 		{
 			if (af1->type == HERB_BLACK_KUSH)
 			{
 				af1->duration += duration;
-				break;
 			}
 		}
 		send_to_char("&nYou feel your mind expand with the &+Ws&+wm&+Wo&+wk&+We&n.\n\r",

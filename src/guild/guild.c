@@ -314,6 +314,16 @@ again:
 		}
 	}
 
+	// Notching stops at the cap, so reaching it is announced once.
+	if (l == t)
+	{
+		snprintf(buf, MAX_STRING_LENGTH,
+			 t >= 100 ? "&+cYou have mastered &+W%s&+c.&n\n" :
+				    "&+cYour skill in &+W%s&+c has reached your current limit.&n\n",
+			 skills[skill].name);
+		send_to_char(buf, ch);
+	}
+
 	if (l < t && learning_extra_notch_roll(live_rolls) && affected_by_spell(ch, SPELL_LEARNING))
 		goto again; // 2 notches on average
 

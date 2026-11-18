@@ -5153,12 +5153,23 @@ void create_poisons()
 
 void create_tags()
 {
-	TAG_CREATE("stoned", HERB_SMOKED);
-	TAG_CREATE("ocularius", HERB_OCULARIUS);
-	TAG_CREATE("blue haze", HERB_BLUE_HAZE);
-	TAG_CREATE("medicus", HERB_MEDICUS);
-	TAG_CREATE("black kush", HERB_BLACK_KUSH);
-	TAG_CREATE("gootwiet", HERB_GOOTWIET);
+	TAG_CREATE_WITH_MESSAGES(
+		"stoned", HERB_SMOKED,
+		"&nYour &+Ml&+mu&+Mn&+mg&+Ms&n have recovered from the &+Ws&+wm&+Wo&+wk&+We&n.",
+		NULL);
+	TAG_CREATE_WITH_MESSAGES(
+		"ocularius", HERB_OCULARIUS,
+		"&nThe &+Ws&+wm&+Wo&+wk&+We&n-fed paranoia fades from your senses.", NULL);
+	TAG_CREATE_WITH_MESSAGES("blue haze", HERB_BLUE_HAZE,
+				 "&nThe &+ch&+Ca&+cz&+Ce&n lifts from your body.", NULL);
+	TAG_CREATE_WITH_MESSAGES("medicus", HERB_MEDICUS,
+				 "&nThe &+ch&+Ge&+cr&+Gb&+cs&n stop helping your body mend itself.",
+				 NULL);
+	TAG_CREATE_WITH_MESSAGES("black kush", HERB_BLACK_KUSH,
+				 "&nYour mind settles as the &+Gk&+Lu&+Gs&+Lh&n wears off.", NULL);
+	TAG_CREATE_WITH_MESSAGES(
+		"gootwiet", HERB_GOOTWIET,
+		"&nThe floral &+Ws&+wm&+Wo&+wk&+We&n of the gootwiet clears from your head.", NULL);
 
 	TAG_CREATE("nchat spammer", TAG_NCHATSPAMMER);
 

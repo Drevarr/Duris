@@ -22,7 +22,9 @@ int main()
     assert(payload);
     cached = payload;
     free(payload);
-    assert(cached.starts_with("FRAGLIST2\n"));
+    assert(cached.starts_with("FRAGLIST3\n"));
+    assert(cached.find("Total Frags:   &+WGood &+w1.20&n, &+REvil &+w-0.25") != std::string::npos);
+    assert(cached.find("Nobody") == std::string::npos);
     assert(cached.find("1.20") != std::string::npos && cached.find("-0.25") != std::string::npos);
     assert(cached.find("Alice") != std::string::npos && cached.find("Bob") != std::string::npos);
     for (const char *private_text : {"World level cap", "earned", "acceleration", "opening"})
@@ -31,6 +33,12 @@ int main()
     char *rendered = redis_get_fraglist();
     assert(rendered && std::string(rendered) == cached.substr(10));
     free(rendered);
+    // A side with no qualifying entries says so once instead of listing zero rows.
+    const std::string empty = fraglist_report({{{"top", "Alice", "150"}}});
+    assert(empty.find("Nobody yet.") != std::string::npos &&
+           empty.find("Nobody yet.") == empty.rfind("Nobody yet."));
+    cached = "FRAGLIST2\nretired padded layout";
+    assert(!redis_get_fraglist());
     cached = "FRC1|old countdown and cap state";
     assert(!redis_get_fraglist());
     cached = "bad";

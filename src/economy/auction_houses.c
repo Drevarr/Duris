@@ -606,6 +606,8 @@ bool auction_resort(P_char ch, char *args)
 		});
 }
 
+static bool auction_pickup_read(P_char ch, bool continuing);
+
 namespace
 {
 bool auction_copy_text(char *destination, size_t capacity, const char *source)
@@ -707,10 +709,21 @@ void auction_money_claim_completed(P_char ch, bool committed, const auction_comm
 	if (!ch)
 		return;
 	if (!committed)
+	{
 		send_to_char("Your auction money remains available for pickup.\r\n", ch);
-	else
-		send_to_char_f(ch, "&+WYou pick up &n%s&+W.&n\r\n",
-			       coin_stringv(static_cast<int>(result.wallet_value_delta)));
+		return;
+	}
+	send_to_char_f(ch, "&+WYou pick up &n%s&+W.&n\r\n",
+		       coin_stringv(static_cast<int>(result.wallet_value_delta)));
+	auction_pickup_read(ch, true);
+}
+
+// Each item claim that commits looks for the next, so one pickup collects every purchase.
+void auction_item_claim_completed(P_char ch, bool committed, const auction_command_result &,
+				  unsigned int, const auction_command_payload &)
+{
+	if (ch && committed)
+		auction_pickup_read(ch, true);
 }
 
 bool auction_encode_items(auction_command_payload *payload,
@@ -1413,8 +1426,8 @@ bool auction_bid(P_char ch, char *args)
 }
 
 // Submits the claim for what the writer found waiting for ch: its money first, else the
-// items of its oldest auction.
-static void auction_pickup_claim(P_char ch, const sql_rows &rows)
+// items of its oldest auction. A continuing pickup says nothing when nothing is left.
+static void auction_pickup_claim(P_char ch, const sql_rows &rows, bool continuing)
 {
 	if (auction_transaction_player_busy(ch))
 	{
@@ -1443,7 +1456,7 @@ static void auction_pickup_claim(P_char ch, const sql_rows &rows)
 		if (!auction_transaction_submit(ch, payload, auction_money_claim_completed))
 			send_to_char("The auction house is busy; your money remains staged.\r\n",
 				     ch);
-		else
+		else if (!continuing)
 			send_to_char("Your auction money pickup is being committed.\r\n", ch);
 		return;
 	}
@@ -1472,7 +1485,8 @@ static void auction_pickup_claim(P_char ch, const sql_rows &rows)
 	}
 	if (!payload.item_count)
 	{
-		send_to_char("&+WYou have no items or money to pickup!&n\r\n", ch);
+		if (!continuing)
+			send_to_char("&+WYou have no items or money to pickup!&n\r\n", ch);
 		return;
 	}
 	std::vector<player_item_snapshot> claimed_items;
@@ -1536,9 +1550,9 @@ static void auction_pickup_claim(P_char ch, const sql_rows &rows)
 		auction_error(ch);
 		return;
 	}
-	if (!auction_transaction_submit(ch, payload, nullptr))
+	if (!auction_transaction_submit(ch, payload, auction_item_claim_completed))
 		send_to_char("The auction house is busy; your items remain staged.\r\n", ch);
-	else
+	else if (!continuing)
 		send_to_char("Your auction item pickup is being committed.\r\n", ch);
 }
 
@@ -1557,7 +1571,13 @@ bool auction_pickup(P_char ch, char *args)
 		send_to_char("Your previous auction request is still being committed.\r\n", ch);
 		return true;
 	}
-	// What waits for ch is read on the writer: its money, or else its oldest auction's items.
+	return auction_pickup_read(ch, false);
+}
+
+// What waits for ch is read on the writer: its money, or else its oldest auction's items.
+// A continuing read follows a committed claim, from inside that claim's completion.
+static bool auction_pickup_read(P_char ch, bool continuing)
+{
 	const int pid = GET_PID(ch);
 	return sql_read_work_for(
 		ch,
@@ -1583,7 +1603,8 @@ bool auction_pickup(P_char ch, char *args)
 					pid, pid, static_cast<int>(AUCTION_COMMAND_MAX_ITEMS)),
 				rows);
 		},
-		auction_pickup_claim);
+		[continuing](P_char viewer, const sql_rows &rows)
+		{ auction_pickup_claim(viewer, rows, continuing); });
 }
 
 bool auction_help(P_char ch, const char * /*arg*/)

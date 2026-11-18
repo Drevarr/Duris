@@ -133,13 +133,13 @@ def run(backend, binary):
                 for client in (player,victim):
                     for view in ("fraglist", "fraglist normal"):
                         shown = plain_text(command(client, view))
-                        assert "Faction level caps: Good 31 / Evil 31" in shown and "Good 0.05 / Evil 0.10" in shown, shown
+                        assert "Faction Caps:  Good 31, Evil 31" in shown and "Round Frags:   Good 0.05, Evil 0.10" in shown, shown
                         assert "Result in" in shown and "Evil currently leads" in shown, shown
                 if sql:
                     keys = subprocess.check_output(["redis-cli", "-s", str(redis_socket), "--raw", "keys", "*fraglist*"], text=True).splitlines()
                     assert len(keys) == 1, keys
                     cached = subprocess.check_output(["redis-cli", "-s", str(redis_socket), "--raw", "get", keys[0]], text=True)
-                    assert cached.startswith("FRAGLIST2\n") and "earned" not in cached and "Faction level caps" not in cached
+                    assert cached.startswith("FRAGLIST3\n") and "earned" not in cached and "Faction Caps" not in cached
 
                 room, mob, keyword = experience_site(SEED[0]["number"])
                 command(god, f"goto {room}")
@@ -170,7 +170,7 @@ def run(backend, binary):
                 deadline = time.monotonic() + 20
                 while True:
                     shown = plain_text(command(player, "fraglist"))
-                    assert "Faction level caps: Good 31 / Evil 31" in shown, shown
+                    assert "Faction Caps:  Good 31, Evil 31" in shown, shown
                     if "Good currently leads" in shown:
                         break
                     assert time.monotonic() < deadline and time.time() < earliest, shown
@@ -185,7 +185,7 @@ def run(backend, binary):
                 deadline = time.monotonic() + 190
                 while True:
                     shown = plain_text(command(player, "fraglist normal"))
-                    if "Faction level caps: Good 32 / Evil 31" in shown:
+                    if "Faction Caps:  Good 32, Evil 31" in shown:
                         break
                     assert time.monotonic() < deadline, shown
                     time.sleep(1)
@@ -213,19 +213,19 @@ def run(backend, binary):
                 player = connect(PLAYER)
                 assert re.search(r"Level:\s*32\b", plain_text(command(player, "score")))
                 shown = plain_text(command(player, "fraglist"))
-                assert "Faction level caps: Good 32 / Evil 31" in shown and "Good 0.00 / Evil 0.00" in shown, shown
+                assert "Faction Caps:  Good 32, Evil 31" in shown and "Round Frags:   Good 0.00, Evil 0.00" in shown, shown
                 assert fixture("inspect") == confirmed
                 stop()
-                for action,expected in (("quiet","Good 33 / Evil 32"),("circle","Good 36 / Evil 36")):
+                for action,expected in (("quiet","Good 33, Evil 32"),("circle","Good 36, Evil 36")):
                     fixture(action,PLAYER,int(time.time())+30)
                     boot();player=connect(PLAYER)
                     deadline=time.monotonic()+110
                     while True:
                         shown=plain_text(command(player,"fraglist normal"))
-                        if "Faction level caps: "+expected in shown:break
+                        if "Faction Caps:  "+expected in shown:break
                         assert time.monotonic()<deadline,shown
                         time.sleep(1)
-                    assert "Good 0.00 / Evil 0.00" in shown,shown
+                    assert "Round Frags:   Good 0.00, Evil 0.00" in shown,shown
                     assert re.search(r"Level:\s*32\b",plain_text(command(player,"score"))),"quiet result granted a free character level"
                     stop()
                     print(f"{backend}: no-PvP {action} result {expected}",flush=True)
