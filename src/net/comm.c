@@ -2263,6 +2263,14 @@ static void run_output_phase(game_loop_pulse_context &ctx)
 	const uint64_t prompts_us = latency_trace_elapsed_us(prompts_begin_us, loop_monotonic_us());
 	latency_trace_record("prompts", prompts_us, loop_tick);
 
+	/* Room.Info writes at once, so send it right after the text above that
+	 * announces the move. Every pulse, so it never waits a pulse behind that text. */
+	const uint64_t rooms_begin_us = loop_monotonic_us();
+	gmcp_flush_dirty_rooms();
+	latency_trace_record("gmcp_flush_dirty_rooms",
+			     latency_trace_elapsed_us(rooms_begin_us, loop_monotonic_us()),
+			     loop_tick);
+
 	ctx.prompts_us = prompts_us;
 }
 
@@ -2397,13 +2405,11 @@ static void run_recurring_persistence_phase(game_loop_pulse_context &ctx)
 		job_begin_us = loop_monotonic_us();
 	};
 
-	/* Flush dirty room GMCP updates every 2 pulses (~500ms) */
+	/* Flush GMCP state every 2 pulses (~500ms); dirty rooms flush after output. */
 	if (!(pulse % 2))
 	{
 		gmcp_flush_initial_states();
 		record_job("gmcp_flush_initial_states");
-		gmcp_flush_dirty_rooms();
-		record_job("gmcp_flush_dirty_rooms");
 		const auto ship_bridges = gmcp_ship_bridges();
 		gmcp_flush_dirty_ship_contacts(ship_bridges);
 		record_job("gmcp_flush_dirty_ship_contacts");

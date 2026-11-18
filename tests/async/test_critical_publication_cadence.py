@@ -46,7 +46,6 @@ static void logit(int, const char *, ...) { assert(false); } // No job advances 
 
 #define SPY(name) static void name() { calls.emplace_back(#name); }
 SPY(gmcp_flush_initial_states)
-SPY(gmcp_flush_dirty_rooms)
 static int gmcp_ship_bridges() { return 0; }
 static void gmcp_flush_dirty_ship_contacts(int) { calls.emplace_back("gmcp_flush_dirty_ship_contacts"); }
 static void gmcp_flush_dirty_ship_info(int) { calls.emplace_back("gmcp_flush_dirty_ship_info"); }
@@ -131,9 +130,9 @@ static void tick(int number) {
     run_recurring_persistence_phase(context);
     std::vector<std::string> expected;
     if (!(pulse % 2))
-        expected = {"gmcp_flush_initial_states", "gmcp_flush_dirty_rooms",
-                    "gmcp_flush_dirty_ship_contacts", "gmcp_flush_dirty_ship_info",
-                    "flush_pending_ship_saves", "retry_unplaced_ships", "locker_async_pulse"};
+        expected = {"gmcp_flush_initial_states", "gmcp_flush_dirty_ship_contacts",
+                    "gmcp_flush_dirty_ship_info", "flush_pending_ship_saves",
+                    "retry_unplaced_ships", "locker_async_pulse"};
     expected.emplace_back("critical");
     expected.emplace_back("combat_outcome_transaction_pulse");
     if (!(pulse % 2)) {

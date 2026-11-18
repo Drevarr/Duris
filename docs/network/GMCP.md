@@ -410,9 +410,13 @@ with and without MCCP, and the native copyover matrix covers versions 12-22.
 retains the client handoff and delivery scope. These focused checks do not establish
 general player capacity or negligible overhead.
 
-The existing latency trace reports `gmcp_protocol` around the initial/item, room
-and ship protocol flushes, ending before queued ship saves and other persistence
-completion work. The older `gmcp_flush` span includes that additional work and
+The existing latency trace reports `gmcp_protocol` around the initial/item and
+ship protocol flushes, ending before queued ship saves and other persistence
+completion work. Room updates are reported separately as
+`gmcp_flush_dirty_rooms`: every pulse, at the end of the output phase, each
+character in a room whose occupants changed, the mover included, gets
+`Room.Info` right after the text announcing the move, never a pulse before or
+after it. The older `gmcp_flush` span includes that additional work and
 must not be treated as serialization time. Both use the existing bounded tracer.
 
 ## Char.SpellPreparation, version 1

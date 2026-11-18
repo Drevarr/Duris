@@ -244,14 +244,14 @@ def run(binary):
                 command(staff, "open panel")
                 before = len(monk.raw_transcript)
                 command(monk, "north")
-                # Existing movement sends directly and via the room-dirty broadcast.
-                # Drain that broadcast and ensure automatic look adds no third send.
+                # Movement sends once, via the room-dirty broadcast after its text.
+                # Drain that broadcast and ensure automatic look adds no second send.
                 deadline = time.monotonic() + 1
                 while time.monotonic() < deadline:
                     monk._receive()
                 moved = packets(monk, before)
-                assert len(moved) == 2 and all(room["num"] == 22801 for room in moved), moved
-                passed("I39: look/discovery refresh once, item search stays quiet, movement retains its two existing sends")
+                assert len(moved) == 1 and moved[0]["num"] == 22801, moved
+                passed("I39: look/discovery refresh once, item search stays quiet, movement sends once")
                 command(monk, "save")
                 stop()
                 process = boot()
