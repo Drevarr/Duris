@@ -228,8 +228,12 @@ def run(binary):
 
                 # Issue #1089: staff epic reset of an online player crashed the server.
                 god = login(GOD, GOD_ACCOUNT)
-                command(god, f'epic reset {PLAYER}')
+                confirmed = command(god, f'epic reset {PLAYER}')
                 assert process.poll() is None, 'epic reset crashed the server'
+                assert f"You reset {PLAYER}'s epic skills." in confirmed, confirmed
+                player.expect('Your epic skills have been reset.', timeout=20)
+                reset = stats(command(player, 'score'))
+                assert reset['max_hp'] == after['max_hp'] - 10, (after, reset)
                 save()
                 assert saved_skill() == (0, 0), saved_skill()
                 stop()
@@ -237,11 +241,45 @@ def run(binary):
                 player = login(PLAYER, ACCOUNT)
                 save()
                 assert saved_skill() == (0, 0), saved_skill()
+
+                # A link-dead target is still in the game; it hears of the reset at next login.
+                god = login(GOD, GOD_ACCOUNT)
+                player.close()
+                clients.remove(player)
+                time.sleep(1)
+                confirmed = command(god, f'epic reset {PLAYER}')
+                assert f"You reset {PLAYER}'s epic skills." in confirmed, confirmed
+                notices = f"SELECT message FROM offline_messages WHERE pid=(SELECT pid FROM player_data WHERE name='{PLAYER}')"
+                deadline = time.monotonic() + 30
+                while 'Your epic skills have been reset.' not in (sql(notices) or ''):
+                    assert time.monotonic() < deadline, 'no offline notice for a link-dead target'
+                    time.sleep(.2)
+                player = journey.reconnect_character(plain, expected_room=None, account=ACCOUNT, character=PLAYER)
+                clients.append(player)
+
+                # Losing 50 toughness HP at 20 HP is fatal, as when the gear that
+                # gave them is removed. The reset must not touch the freed target.
+                command(god, f"setbit char {PLAYER} skill 'toughness' 100")
+                command(god, f"setbit char {PLAYER} taught 'toughness' 100")
+                save()
+                assert saved_skill() == (100, 100), saved_skill()
+                command(god, f'setbit char {PLAYER} hit 20')
+                assert stats(command(player, 'score'))['hp'] == 20
+                confirmed = command(god, f'epic reset {PLAYER}')
+                assert f"You reset {PLAYER}'s epic skills." in confirmed, confirmed
+                player.expect('Your epic skills have been reset.', timeout=20)
+                player.expect('ACCOUNT MENU', timeout=30)
+                command(god, 'score')  # the server still answers
+                assert process.poll() is None, 'fatal epic reset crashed the server'
+                deadline = time.monotonic() + 30
+                while saved_skill() != (0, 0):  # the death save
+                    assert time.monotonic() < deadline, saved_skill()
+                    time.sleep(.2)
                 stop()
                 target = ROOT / 'bin/analysis/epic-training'
                 target.mkdir(parents=True, exist_ok=True)
                 (target / 'journey.json').write_text(json.dumps(evidence, indent=2) + '\n')
-                print('PASS staff epic reset clears toughness and the reset survives a restart', flush=True)
+                print('PASS staff epic reset clears toughness, drops its HP, notifies both, survives a restart and a fatal reset', flush=True)
             except Exception as error:
                 target = ROOT / 'bin/analysis/epic-training' / f'failure-{time.time_ns()}'
                 target.mkdir(parents=True)

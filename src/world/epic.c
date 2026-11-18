@@ -55,6 +55,7 @@ using namespace std;
 #include "redis/redis_key_registry.h"
 #include "redis/redis_report_cache.h"
 #include "magic/spells.h"
+#include "net/gmcp.h"
 #include "persistence/persistence_checkpoint.h"
 #include "sql/sql.h"
 #include "sql/sql_async.h"
@@ -2268,8 +2269,19 @@ void do_epic_reset(P_char ch, char *arg, int /*cmd*/)
 	  snprintf(buff2, MAX_STRING_LENGTH, "\r\n&+GYour epic skills have been reset: your skill points have been refunded, \r\n&+Gand %s&+G has been reimbursed and is waiting for you at the nearest
 	  auction house.\r\n\r\n", coin_stringv(coins_refund));
 	*/
-	if (!send_to_pid(buff2, GET_PID(t_ch)))
-		send_to_pid_offline(buff2, GET_PID(t_ch));
+	// A link-dead or morphed target has no connection of its own to hear this.
+	const char *notice = "&+GYour epic skills have been reset.&n\r\n";
+	if (!send_to_pid(notice, GET_PID(t_ch)))
+		send_to_pid_offline(notice, GET_PID(t_ch));
+	if (t_ch != ch)
+		send_to_char_f(ch, "You reset %s's epic skills.\r\n", GET_NAME(t_ch));
+
+	// Toughness and other epic skills feed derived stats, as in a purchase.
+	// Losing their hit points can kill the target, and die() saves and frees it.
+	if (affect_total(t_ch, TRUE))
+		return;
+	update_group_vitals(t_ch);
+	gmcp_char_vitals(t_ch);
 
 	if (!do_save_silent(t_ch, 1))
 		logit(LOG_WIZ, "Failed to save %s after epic reset refund.", GET_NAME(t_ch));
