@@ -109,6 +109,8 @@ void update_character_list(P_desc, char *);
 void add_ip_entry(P_acct, P_desc);
 struct acct_ip *find_ip_entry(P_acct, P_desc);
 int can_connect(struct acct_chars *, P_desc);
+// A session given a morphed player plays the morph. False if the morph link is broken.
+bool attach_session_to_morph(P_desc d);
 int is_char_in_game(struct acct_chars *, P_desc);
 struct acct_chars *find_char_in_list(struct acct_chars *, const char *);
 P_char load_char_into_game(struct acct_chars *, P_desc);

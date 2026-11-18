@@ -190,6 +190,84 @@ def staff_takeover(server, sql):
     staff_web.close()
 
 
+def telnet_reconnect(server, account_name, name):
+    client = login(server, account_name)
+    creation.reply(client, "1", name)
+    creation.reply(client, name, "Reconnecting...")
+    return client
+
+
+def reconnect_while_wearing(server, sql):
+    """A login takes over a silent switch or a morph, and frees a body staff are wearing."""
+    staff = staff_in_game(server, sql)
+    mortal = register(server, OWNER)
+    websocket_character(mortal)
+    drain(mortal, 1)
+    send(mortal, "enter", {"character": "Taverek"})
+    assert "Your starter kit is ready" in json.dumps(drain(mortal, 15, "Your starter kit is ready"))
+    mortal.close()
+    time.sleep(1)  # Taverek goes link-dead.
+    # A silent switch leaves the staff body with no session. The old server took it for
+    # link-dead and gave the WebSocket login a second session on it.
+    staff_web, resumed = websocket_login(server, account.ACCOUNT, "127.0.0.2")
+    assert resumed["status"] == "reconnected", resumed
+    staff.close()
+    send(staff_web, "game", "switch taverek silent")
+    assert "Ok." in json.dumps(drain(staff_web, 5, "Ok."))
+    replacement, resumed = websocket_login(server, account.ACCOUNT, "127.0.0.3")
+    assert resumed["status"] == "reconnected", resumed
+    kicked = drain(staff_web, 5, "Reconnected from another session.")
+    assert "Reconnected from another session." in json.dumps(kicked), "the switched session lived on"
+    staff_web.close()
+    send(replacement, "game", "save")
+    assert f"Saving {STAFF}." in json.dumps(drain(replacement, 10, f"Saving {STAFF}."))
+    # Staff wear link-dead Taverek. The old server missed the worn body on a Telnet login
+    # and loaded a second Taverek; now staff go back to their own body and stay online.
+    send(replacement, "game", "switch taverek")
+    assert "Ok." in json.dumps(drain(replacement, 5, "Ok."))
+    owner = telnet_reconnect(server, OWNER, "Taverek")
+    creation.reply(owner, "save", "Saving Taverek.")
+    owner.close()
+    send(replacement, "game", "save")
+    assert f"Saving {STAFF}." in json.dumps(drain(replacement, 10, f"Saving {STAFF}."))
+    # A morph stays on, and the WebSocket login plays it. The old server put the login
+    # in the player's own body and left the morph to the old session.
+    send(replacement, "game", "cast 'beastform'")
+    for _ in range(30):
+        send(replacement, "game", "return")
+        if "shape me" in json.dumps(drain(replacement, 1, "shape me")):
+            break
+    else:
+        raise AssertionError("beastform failed")
+    staff_web, resumed = websocket_login(server, account.ACCOUNT, "127.0.0.2")
+    assert resumed["status"] == "reconnected", resumed
+    assert resumed["data"]["character"]["name"] == STAFF, resumed
+    kicked = drain(replacement, 5, "Reconnected from another session.")
+    assert "Reconnected from another session." in json.dumps(kicked), "the morphed session lived on"
+    replacement.close()
+    send(staff_web, "game", "return")
+    assert "shape me" in json.dumps(drain(staff_web, 5, "shape me")), "the login missed the morph"
+    # Telnet keeps the morph too.
+    staff = telnet_reconnect(server, account.ACCOUNT, STAFF)
+    staff_web.close()
+    creation.reply(staff, "return", 'Use "shape me"')
+    staff.close()
+    # A Telnet session waiting at the menu while a WebSocket session plays the morph takes
+    # that session over. The old server matched sessions by the morph's name, missed it,
+    # and gave the morph a second session.
+    staff = login(server, account.ACCOUNT)
+    staff_web, resumed = websocket_login(server, account.ACCOUNT, "127.0.0.2")
+    assert resumed["status"] == "reconnected", resumed
+    creation.reply(staff, "1", STAFF)
+    staff.send(STAFF)
+    outcome, _ = staff.expect_any(("Reconnecting...", "Overriding old connection..."))
+    assert outcome == "Overriding old connection...", "the morphed session lived on"
+    creation.reply(staff, "return", 'Use "shape me"')
+    staff_web.close()
+    staff.close()
+    assert server.process.poll() is None
+
+
 def waiting_application(server, sql):
     """Enter and delete leave a pending application in the queue and approvable."""
     staff = staff_in_game(server, sql)
@@ -265,8 +343,8 @@ def chaos_change(binary):
 
 
 def run(binary, backend):
-    for journey in (in_game_commands, staff_takeover, delete_at_first_play, waiting_application,
-                    fenced_login):
+    for journey in (in_game_commands, staff_takeover, reconnect_while_wearing, delete_at_first_play,
+                    waiting_application, fenced_login):
         with persistence(backend) as (environment, sql):
             fixture = account.IsolatedServer(binary, dict(environment, DURIS_WEBSOCKET="TRUE"))
             if backend == "flatfile":
@@ -274,7 +352,8 @@ def run(binary, backend):
                 subprocess.run([str(INSPECTOR), str(fixture.state_root), "empty-authorities"], check=True)
             with fixture as server:
                 try:
-                    journey(*((server, sql) if journey in (staff_takeover, waiting_application, fenced_login)
+                    journey(*((server, sql) if journey in (staff_takeover, reconnect_while_wearing,
+                                                               waiting_application, fenced_login)
                                else (server,)))
                 except Exception:
                     print(server.server_output()[-2000:])

@@ -2299,6 +2299,24 @@ bool account_character_body_held(int pid, P_desc except)
 	return false;
 }
 
+bool attach_session_to_morph(P_desc d)
+{
+	P_char ch = d->character;
+	if (!IS_SET(ch->specials.act, PLR_MORPH))
+		return true;
+	P_char morph = ch->only.pc->switched;
+	if (!morph || !IS_MORPH(morph) || morph->only.npc->orig_char != ch)
+	{
+		logit(LOG_EXIT, "Something fucked while trying to reconnect linkless morph");
+		return false;
+	}
+	d->original = ch;
+	d->character = morph;
+	morph->desc = d;
+	ch->desc = NULL;
+	return true;
+}
+
 int is_char_in_game(struct acct_chars *c, P_desc d)
 {
 	if (!c || !d)
@@ -2314,12 +2332,13 @@ int is_char_in_game(struct acct_chars *c, P_desc d)
 		    !candidate->account->acct_name || !d->account->acct_name ||
 		    strcasecmp(candidate->account->acct_name, d->account->acct_name))
 			continue;
+		// A session playing c's morph or switch body belongs to c too.
 		P_char owner = GET_PLYR(candidate->character);
-		if (IS_PC(owner) && GET_PID(owner) == c->pid && GET_NAME(candidate->character) &&
-		    !strcasecmp(GET_NAME(candidate->character), c->charname))
+		if (IS_PC(owner) && GET_PID(owner) == c->pid && GET_NAME(owner) &&
+		    !strcasecmp(GET_NAME(owner), c->charname))
 		{
 			previous_descriptor = candidate;
-			ch = candidate->character;
+			ch = owner;
 			break;
 		}
 	}
@@ -2327,10 +2346,15 @@ int is_char_in_game(struct acct_chars *c, P_desc d)
 	{
 		for (P_char candidate = character_list; candidate; candidate = candidate->next)
 		{
-			if (IS_PC(candidate) && GET_PID(candidate) == c->pid && !candidate->desc &&
+			if (IS_PC(candidate) && GET_PID(candidate) == c->pid &&
 			    GET_NAME(candidate) && !strcasecmp(GET_NAME(candidate), c->charname))
 			{
-				ch = candidate;
+				// Account login closed this account's own sessions. Staff wearing
+				// the link-dead body go back to their own, still online.
+				if (candidate->desc)
+					return_from_staff_switch(candidate->desc);
+				if (!candidate->desc)
+					ch = candidate;
 				break;
 			}
 		}
@@ -2392,23 +2416,13 @@ int is_char_in_game(struct acct_chars *c, P_desc d)
 	loginlog(d->character->player.level, "%s [%s] has reconnected.", GET_NAME(d->character),
 		 d->host);
 
-	if (IS_SET(ch->specials.act, PLR_MORPH))
+	if (!attach_session_to_morph(d))
 	{
-		if (!ch->only.pc->switched || !IS_MORPH(ch->only.pc->switched) ||
-		    (ch != ch->only.pc->switched->only.npc->orig_char))
-		{
-			logit(LOG_EXIT,
-			      "Something fucked while trying to reconnect linkless morph");
-			ch->desc = NULL;
-			d->character = NULL;
-			STATE(d) = CON_ACCT_SELECT_CHAR;
-			display_character_list(d);
-			return 1;
-		}
-		d->original = ch;
-		d->character = ch->only.pc->switched;
-		d->character->desc = d;
 		ch->desc = NULL;
+		d->character = NULL;
+		STATE(d) = CON_ACCT_SELECT_CHAR;
+		display_character_list(d);
+		return 1;
 	}
 	gmcp_send_initial_state(d->character);
 	return 1;

@@ -1041,15 +1041,15 @@ void ws_send_reconnect_success(struct descriptor_data *d, const char *account_na
 
 	cJSON_AddStringToObject(data, "account", account_name);
 
-	/* add reconnected character info */
+	/* add reconnected character info: the player, not a morph it plays */
 	if (d->character)
 	{
-		cJSON_AddStringToObject(character, "name", GET_NAME(d->character));
-		cJSON_AddNumberToObject(character, "level", GET_LEVEL(d->character));
-		cJSON_AddStringToObject(character, "race",
-					ws_get_race_name(GET_RACE(d->character)));
+		P_char player = GET_PLYR(d->character);
+		cJSON_AddStringToObject(character, "name", GET_NAME(player));
+		cJSON_AddNumberToObject(character, "level", GET_LEVEL(player));
+		cJSON_AddStringToObject(character, "race", ws_get_race_name(GET_RACE(player)));
 		cJSON_AddStringToObject(character, "class",
-					ws_get_class_name(d->character->player.m_class));
+					ws_get_class_name(player->player.m_class));
 	}
 	else
 	{
@@ -1254,6 +1254,19 @@ void ws_cmd_login(struct descriptor_data *d, cJSON *data)
 		     });
 }
 
+// The session a login for ch takes over: ch's own, or the one playing its morph or silent
+// staff switch. A staff switch ends first; staff who wore ch keep their session.
+static P_desc session_to_replace(P_char ch)
+{
+	P_desc session = ch->desc;
+	P_char worn = IS_PC(ch) ? ch->only.pc->switched : NULL;
+	if (!session && worn && worn->desc && worn->desc->original == ch)
+		session = worn->desc;
+	if (session && return_from_staff_switch(session) && session->character != ch)
+		return NULL;
+	return session;
+}
+
 void ws_finish_login(struct descriptor_data *d, int password_valid)
 {
 	if (!password_valid)
@@ -1343,20 +1356,17 @@ void ws_finish_login(struct descriptor_data *d, int password_valid)
 		/* if we found an in-game character, reconnect to it */
 		if (online_char)
 		{
-			struct descriptor_data *old_desc = online_char->desc;
-
-			// A staff switch ends first, or the worn body keeps the closed descriptor.
-			// Staff who wore this body stay online in their own.
-			if (old_desc && return_from_staff_switch(old_desc) &&
-			    old_desc->character != online_char)
-				old_desc = NULL;
+			struct descriptor_data *old_desc = session_to_replace(online_char);
 
 			/* close old descriptor if exists */
 			if (old_desc && old_desc != d)
 			{
 				// close_socket() cannot end a snoop for a session with no body.
 				stop_snooping(old_desc);
+				// The body it played, the character or its morph, is the new session's now.
+				old_desc->character->desc = NULL;
 				old_desc->character = NULL;
+				old_desc->original = NULL;
 
 				if (old_desc->websocket)
 				{
@@ -1370,13 +1380,20 @@ void ws_finish_login(struct descriptor_data *d, int password_valid)
 			/* attach character to new descriptor */
 			d->character = online_char;
 			online_char->desc = d;
+			if (!attach_session_to_morph(d))
+			{
+				online_char->desc = NULL;
+				d->character = NULL;
+				ws_send_auth_failed(d, "Your character could not be reconnected.");
+				return;
+			}
 			d->connected = CON_PLAYING;
 			(void)telemetry_runtime_game_connection_transition(
 				online_char, d, telemetry_connection_transition_kind::attached);
 			(void)telemetry_runtime_game_context(online_char, d);
 
 			statuslog(56, "WebSocket: Reconnected %s to character %s from %s", tmp_name,
-				  GET_NAME(d->character), d->host);
+				  GET_NAME(online_char), d->host);
 
 			ws_send_reconnect_success(d, tmp_name, GET_NAME(d->character));
 			ws_send_full_game_state(d);
