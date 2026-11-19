@@ -48,7 +48,10 @@ started=$SECONDS
 # One leg per line: its name, then its command; SERVER_BINARY is the server under test.
 # Listed longest first by a measured run, the order a run without $TIMES keeps.
 legs=$(cat <<EOF
-newbie_regrant $DB python3 tests/async/test_mariadb_newbie_regrant_journey.py --server SERVER_BINARY
+newbie_regrant_warrior $DB python3 tests/async/test_mariadb_newbie_regrant_journey.py --server SERVER_BINARY Warrior
+newbie_regrant_sorcerer $DB python3 tests/async/test_mariadb_newbie_regrant_journey.py --server SERVER_BINARY Sorcerer
+newbie_regrant_ranger $DB python3 tests/async/test_mariadb_newbie_regrant_journey.py --server SERVER_BINARY Ranger
+newbie_regrant_rogue $DB python3 tests/async/test_mariadb_newbie_regrant_journey.py --server SERVER_BINARY Rogue
 castle_key_reset $DB python3 tests/async/test_castle_key_reset_journey.py --server SERVER_BINARY
 flight_network $DB python3 tests/async/test_flight_network_journey.py --backend mariadb --server SERVER_BINARY
 norent_key_rent $DB python3 tests/async/test_norent_key_rent_journey.py --backend mariadb --server SERVER_BINARY
