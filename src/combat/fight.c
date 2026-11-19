@@ -2819,9 +2819,13 @@ void die(P_char ch, P_char killer)
 		if (number(1, 250) < dchance)
 		{
 			P_obj teobj = read_object(400230, VIRTUAL);
-			obj_to_char(teobj, ch);
-			act("&+LAs &+R$n &+Lfalls to the ground, a small shard of their &+rlifeforce&n manifests&+L.&N",
-			    FALSE, ch, 0, 0, TO_ROOM);
+			// The minimal test world has no soul shard.
+			if (teobj)
+			{
+				obj_to_char(teobj, ch);
+				act("&+LAs &+R$n &+Lfalls to the ground, a small shard of their &+rlifeforce&n manifests&+L.&N",
+				    FALSE, ch, 0, 0, TO_ROOM);
+			}
 		}
 	}
 
