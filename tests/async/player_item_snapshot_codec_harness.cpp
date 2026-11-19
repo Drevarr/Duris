@@ -1,5 +1,6 @@
 #include "net/output_preference_state.h"
 #include "player/player_snapshot_codec.h"
+#include "player/first_find_tips.h"
 
 #include <algorithm>
 #include <cstdlib>
@@ -578,6 +579,32 @@ int main()
 					       row.signed_value == 0 && !row.is_unsigned;
 				}) == 1,
 		"version 13 did not default the absent reward count exactly once");
+	changed.status_integers.push_back({ player_status_field::first_find_tips, 0, 5, true });
+	require(player_snapshot_encode(changed, &other) == player_snapshot_codec_result::ok &&
+			player_snapshot_decode(other.data(), other.size(), &read_back) ==
+				player_snapshot_codec_result::ok &&
+			read_back.status_integers[4].field ==
+				player_status_field::first_find_tips &&
+			read_back.status_integers[4].unsigned_value == 5,
+		"first-find tips lost in round trip");
+	put32(other, 0, 15);
+	require(player_snapshot_decode(other.data(), other.size(), &read_back) ==
+			player_snapshot_codec_result::invalid_value,
+		"version 15 accepted first-find tips introduced in version 16");
+	// Snapshots from before the tips belong to characters that have seen them all.
+	const auto version15 = wire(15);
+	require(player_snapshot_decode(version15.data(), version15.size(), &read_back) ==
+				player_snapshot_codec_result::ok &&
+			std::count_if(read_back.status_integers.begin(),
+				      read_back.status_integers.end(),
+				      [](const auto &row)
+				      {
+					      return row.field ==
+							     player_status_field::first_find_tips &&
+						     row.is_unsigned &&
+						     row.unsigned_value == FIRST_FIND_TIPS_ALL_SEEN;
+				      }) == 1,
+		"version 15 did not mark every first-find tip seen exactly once");
 	const auto version8 = wire(8);
 	require(player_snapshot_decode(version8.data(), version8.size(), &read_back) ==
 				player_snapshot_codec_result::ok &&

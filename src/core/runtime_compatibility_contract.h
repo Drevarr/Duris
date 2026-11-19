@@ -73,9 +73,9 @@ constexpr const char *RUNTIME_TABLE_SQL_LIST =
 	"'zone_touch_outcome',"
 	"'zone_touch_outcome_participant','zone_touches','zone_trophy','zones'";
 constexpr const char *RUNTIME_MYSQL8_METADATA_FINGERPRINT =
-	"3a77fbbee7824d90c85c089fa93077c5fc2a221a8dae082c6536e222d6bc5639";
+	"8597ec508a7c7d83a844dc9966921bf67ffb05a11b1b88570c2e8d9177eb2519";
 constexpr const char *RUNTIME_MARIADB10_11_METADATA_FINGERPRINT =
-	"3ac51db6e54135436b37e7e4485b8e003fca204035186535f23ff825630ad9a0";
+	"6898f79b05fb6f45d41c0af58315525a0e03c94155279be6ec113d8ebf2d4205";
 /* Includes the six telemetry stores introduced by migration 0014, the two
  * rollup stores introduced by migration 0017, the five Collector authority
  * stores introduced by migration 0018, corpse catalog authority introduced by
@@ -114,15 +114,16 @@ constexpr const char *RUNTIME_MARIADB10_11_METADATA_FINGERPRINT =
  * Migration 0060 adds permanent per-instance item fields.
  * Migration 0061 stores the zone-story quest state across rows.
  * Migration 0062 remembers why a character last left the game.
+ * Migration 0063 remembers which first-find tips each character has seen.
  * Fingerprints are measured on MySQL 8 and MariaDB 10.11. */
-constexpr const char *RUNTIME_MIGRATION_HEAD_ID = "0062_player_save_intent";
-constexpr unsigned RUNTIME_MIGRATION_HEAD_SEQUENCE = 63;
+constexpr const char *RUNTIME_MIGRATION_HEAD_ID = "0063_first_find_tips";
+constexpr unsigned RUNTIME_MIGRATION_HEAD_SEQUENCE = 64;
 constexpr const char *RUNTIME_MIGRATION_APPLY_CHECKSUM =
-	"fb3320f91cf4da01aca8cee53f0e74e04aad7a623f7af1e50c1abbd4bc77d008";
+	"9f0608935c7719f1976be51d31c2debbccb1400465d9f222c909515a9f73fad4";
 constexpr const char *RUNTIME_MIGRATION_VERIFY_CHECKSUM =
-	"b9680f834549eb7bd7e21dda7e83f8606d9af867eee2317216b5d23c3a1b6c71";
+	"593899b70ff8451e2fbd884a4e27bd75f5ea443816451defcb5410c957adf767";
 constexpr const char *RUNTIME_MIGRATION_HISTORY_CHECKSUM =
-	"48ddb8cedceeb6f205eb4745eafc52cd0074b7f4944877435d4a3403fabe8e67";
+	"a1072657b0c1eb342624acf0975afca1ab27b4ec809e44ea4530036a18b4b22f";
 constexpr const char *LOOKUP_DATASET_NAME = "race_class";
 constexpr unsigned LOOKUP_DATASET_VERSION = 1;
 constexpr const char *RUNTIME_DB_CHARACTER_SET = "utf8mb4";

@@ -121,6 +121,7 @@ constexpr std::array<status_column, PLAYER_STATUS_INTEGER_COUNT> STATUS_COLUMNS 
 	{ player_status_field::quest_origin_room, "quest_origin_room", false, false },
 	{ player_status_field::quest_replacement_due, "quest_replacement_due", false, false },
 	{ player_status_field::quest_reward_item_count, "quest_reward_item_count", false, false },
+	{ player_status_field::first_find_tips, "first_find_tips", false, true },
 } };
 
 constexpr std::array<const char *, 8> STATUS_STRINGS = {

@@ -48,6 +48,7 @@
 #include "combat/justice.h"
 #include "world/map.h"
 #include "core/mm.h"
+#include "player/first_find_tips.h"
 #include "classes/necromancy.h"
 #include "persistence/persistence_checkpoint.h"
 #include "world/world_recovery_pipeline.h"
@@ -2138,6 +2139,7 @@ bool obj_to_char(P_obj object, P_char ch)
 	gmcp_items_changed(ch);
 	mark_char_or_owner_dirty(ch);
 	SET_BIT(ch->runtime_flags, CHAR_RFLAG_DIRTY_INVENTORY);
+	first_find_tip(ch, object);
 	return true;
 }
 

@@ -46,6 +46,13 @@ done
 "${MYSQL[@]}" "$DB_NAME" < "$ROOT/migrations/immutable/0058_world_quest_reward_count.sql"
 "$ROOT/migrations/immutable/0058_world_quest_reward_count.sh"
 [[ $("${MYSQL[@]}" "$DB_NAME" -e "SELECT quest_reward_item_count FROM player_data WHERE pid=99") == 4 ]]
+# Characters from before the first-find tips have seen them all; replay keeps a saved value.
+"$ROOT/migrations/immutable/0063_first_find_tips.sh"
+[[ $("${MYSQL[@]}" "$DB_NAME" -e "SELECT first_find_tips FROM player_data WHERE pid=99") == 18446744073709551615 ]]
+"${MYSQL[@]}" "$DB_NAME" -e "UPDATE player_data SET first_find_tips=5 WHERE pid=99;"
+"${MYSQL[@]}" "$DB_NAME" < "$ROOT/migrations/immutable/0063_first_find_tips.sql"
+"$ROOT/migrations/immutable/0063_first_find_tips.sh"
+[[ $("${MYSQL[@]}" "$DB_NAME" -e "SELECT first_find_tips FROM player_data WHERE pid=99") == 5 ]]
 "${MYSQL[@]}" "$DB_NAME" -e "DELETE FROM player_data WHERE pid=99;"
 # The audit migration is additive and rerunnable, and its verifier checks it.
 "${MYSQL[@]}" "$DB_NAME" < "$ROOT/migrations/immutable/0033_item_owner_audit.sql"

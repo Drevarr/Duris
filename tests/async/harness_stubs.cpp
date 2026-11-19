@@ -27,6 +27,7 @@
 #include "economy/divine_trade_runtime.h"
 #include "economy/currency_transaction.h"
 #include "player/player_snapshot_capture.h"
+#include "player/first_find_tips.h"
 
 #include <cstdlib>
 #include <cerrno>
@@ -255,6 +256,7 @@ HARNESS_STUB player_save_worker_health player_save_worker_health_copy()
 }
 HARNESS_STUB void gmcp_char_vitals(P_char) {}
 HARNESS_STUB void gmcp_items_changed(P_char) {}
+HARNESS_STUB void first_find_tip(P_char, const obj_data *) {}
 HARNESS_STUB void gmcp_item_changed(P_obj) {}
 HARNESS_STUB void gmcp_item_edit_begin(P_desc, P_obj) {}
 HARNESS_STUB void gmcp_item_edit_done(P_desc) {}

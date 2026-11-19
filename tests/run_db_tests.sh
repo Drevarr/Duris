@@ -136,6 +136,7 @@ world_restart_taken $DB python3 tests/async/run_world_restart_journey.py SERVER_
 idle_timeout $DB python3 tests/async/run_mysql_idle_timeout_journey.py SERVER_BINARY
 runtime_compatibility tests/async/run_runtime_compatibility_mysql.sh
 auction_list $DB python3 tests/async/run_auction_list_journey.py --server SERVER_BINARY
+first_find_tips $DB python3 tests/async/run_first_find_tips_journey.py --server SERVER_BINARY
 artifact_guild $DB tests/async/run_artifact_guild_schema_mysql.sh
 world_restart_clean $DB python3 tests/async/run_world_restart_journey.py SERVER_BINARY restart
 combat_outcome $DB tests/async/run_combat_outcome_schema_mysql.sh
