@@ -443,6 +443,11 @@ HARNESS_STUB void set_obj_extra2_flags(P_obj object, unsigned flags)
 	object->extra2_flags = flags;
 	gmcp_item_changed(object);
 }
+HARNESS_STUB void set_obj_base_extra2_flag(P_obj object, unsigned flag, bool on)
+{
+	set_obj_extra2_flags(object,
+			     on ? object->extra2_flags | flag : object->extra2_flags & ~flag);
+}
 
 HARNESS_STUB bool obj_name_matches(P_char, P_obj object, const char *name)
 {

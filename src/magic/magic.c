@@ -9623,7 +9623,7 @@ void spell_enchant_weapon(int level, P_char ch, char * /*arg*/, int /*type*/, P_
 
 	if ((GET_ITEM_TYPE(obj) == ITEM_WEAPON) && !IS_SET(obj->extra2_flags, ITEM2_MAGIC))
 	{
-		set_obj_extra2_flags(obj, obj->extra2_flags | (ITEM2_MAGIC));
+		set_obj_base_extra2_flag(obj, ITEM2_MAGIC, true);
 
 		for (i = 0, affected = FALSE; i < MAX_OBJ_AFFECT; i++)
 		{
@@ -21105,7 +21105,7 @@ void spell_dispel_magic(int level, P_char ch, char * /*arg*/, [[maybe_unused]] i
 		else if ((dispel_magic_fade_roll(live_rolls) < level) || IS_TRUSTED(ch))
 		{
 			act("&+bThe magic aura around&n $p&+b fades.", TRUE, ch, obj, 0, TO_CHAR);
-			set_obj_extra2_flags(obj, obj->extra2_flags & ~(ITEM2_MAGIC));
+			set_obj_base_extra2_flag(obj, ITEM2_MAGIC, false);
 			obj->affected[0].location = APPLY_NONE;
 			obj->affected[0].modifier = 0;
 			obj->affected[1].location = APPLY_NONE;

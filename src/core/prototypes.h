@@ -1437,6 +1437,7 @@ P_char in_command_aura(P_char);
 struct obj_affect *get_obj_affect(P_obj, int);
 int obj_affect_time(P_obj, struct obj_affect *);
 void set_obj_affected(P_obj, int, sh_int, sh_int);
+void set_obj_base_extra2_flag(P_obj, unsigned, bool);
 int affect_from_obj(P_obj, sh_int);
 void recover_from_room_ch_loop(P_char);
 

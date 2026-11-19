@@ -314,7 +314,7 @@ int enchant_arrows(P_char ch, P_char vict, P_obj arrow, int cmd)
 
 	if (!IS_SET(arrow->extra2_flags, ITEM2_MAGIC) && arrow->condition > 70)
 	{
-		set_obj_extra2_flags(arrow, arrow->extra2_flags | (ITEM2_MAGIC));
+		set_obj_base_extra2_flag(arrow, ITEM2_MAGIC, true);
 	}
 
 	switch (cmd)
