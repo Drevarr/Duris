@@ -121,7 +121,15 @@ Skill skills[MAX_AFFECT_TYPES + 1];
 static void fixture_spell(int,P_char,char*,int,P_char,P_obj) { assert(false); }
 static const bool prepared_spells = [] { for (int id : {32,33,37}) skills[id].spell_pointer=fixture_spell; return true; }();
 item_value_proc_entry item_value_proc(obj_proc_type proc) { assert(!proc); return {nullptr, "none", 0, item_value_proc_policy::none}; }
-int number(int low, int high) { ++rolls; return lucky ? low : high; }
+static uint32_t shuffle_state; // Nonzero: shuffle draws (low 0) come from a fixed LCG.
+int number(int low, int high) {
+    ++rolls;
+    if (low == 0 && shuffle_state) {
+        shuffle_state = shuffle_state * 1664525u + 1013904223u;
+        return static_cast<int>((shuffle_state >> 8) % static_cast<uint32_t>(high + 1));
+    }
+    return lucky ? low : high;
+}
 void logit(const char *, const char *format, ...) {
     char buffer[2048]; va_list args; va_start(args, format);
     std::vsnprintf(buffer, sizeof(buffer), format, args); va_end(args);
@@ -533,6 +541,68 @@ static obj_data &valued(int slot, int vnum, int target)
         }
     assert(!"no fixture reaches the requested item value");
     return obj;
+}
+
+// Equal-value templates are drawn at random, never the first-indexed one every time,
+// while failed loads, ineligible peers and the value cascade keep working.
+static void test_random_equal_value_replacements()
+{
+    for (auto &bucket : enhance_ival_table) bucket = nullptr;
+    auto &source = valued(0, 92000, 88);
+    auto &donor = valued(1, 92001, 83);
+    const int target = 88 + enhance_ival_gain_normal;
+    const std::vector<int> peers{92002, 92003, 92004};
+    std::vector<obj_data *> peer_objects;
+    for (int slot = 2; slot <= 4; ++slot)
+        peer_objects.push_back(&valued(slot, peers[slot - 2], target));
+    // A crumbling template would be destroyed on delivery and abort the attempt.
+    auto &crumbling = valued(5, 92005, target);
+    crumbling.extra2_flags = ITEM2_CRUMBLELOOT;
+    assert(!is_enhance_pool_candidate(&crumbling));
+    valued(6, 92006, target + 1);
+    enhance_index_entry entries[5]{};
+    for (int i = 0; i < 4; ++i)
+        index_entry(entries[i], 92002 + i, target);
+    index_entry(entries[4], 92006, target + 1);
+
+    char_data ch{};
+    ch.player.level = 60;
+    ch.curr_stats.Luk = 10;
+    ch.in_room = NOWHERE;
+    shuffle_state = 1;
+    const auto attempt = [&] {
+        GET_PLATINUM(&ch) = 20;
+        source.loc_p = donor.loc_p = LOC_CARRIED;
+        enhance(&ch, &source, &donor);
+        assert(result && charges == 1);
+        const int vnum = OBJ_VNUM(result);
+        assert(std::find(loads.begin(), loads.end(), 92005) == loads.end());
+        clear_attempt();
+        return vnum;
+    };
+
+    std::map<int, int> picks;
+    for (int trial = 0; trial < 300; ++trial)
+        ++picks[attempt()];
+    assert(picks.size() == peers.size()); // Only exact-value peers, never the fallback.
+    for (int vnum : peers)
+        assert(picks[vnum] >= 70 && picks[vnum] <= 130); // About 100 each.
+
+    // A peer that fails to load is retried with another peer of the same value.
+    unavailable_vnum = 92002;
+    picks.clear();
+    for (int trial = 0; trial < 60; ++trial)
+        ++picks[attempt()];
+    assert(picks.size() == 2 && picks[92003] && picks[92004]);
+    unavailable_vnum = 0;
+
+    // With no eligible peer left at the rolled value, the cascade moves to the next value.
+    for (auto *peer : peer_objects)
+        peer->wear_flags = ITEM_TAKE | ITEM_WEAR_LEGS;
+    for (int trial = 0; trial < 20; ++trial)
+        assert(attempt() == 92006);
+    shuffle_state = 0;
+    for (auto &bucket : enhance_ival_table) bucket = nullptr;
 }
 
 // The level gate is the only ceiling: a source at 99 upgrades, by at most the largest luck gain.
@@ -1167,6 +1237,7 @@ int main()
     enhancement_system_ready=true;
     test_donor_floor();
     test_replacement();
+    test_random_equal_value_replacements();
     test_level_gate_is_the_ceiling();
     test_essence();
     test_superior();
