@@ -32,6 +32,7 @@ commit = function_body(account, "bool account_commit_character_admission(")
 can_connect = function_body(account, "int can_connect(")
 select_character = function_body(account, "void account_select_char(")
 confirm_character = function_body(account, "void account_confirm_char(")
+character_list = function_body(account, "void display_character_list(P_desc")
 reconnect = function_body(account, "int is_char_in_game(")
 native_side_check = function_body(nanny, "static bool account_creation_side_allowed(")
 ws_login = function_body(websocket, "void ws_finish_login(")
@@ -41,12 +42,16 @@ ws_finish_create = function_body(websocket, "void ws_finish_kept_character(")
 
 assert 'get_property("account.timer.racewarSwitch", 3600)' in account
 assert "account_racewar_evaluate" in check_at
-assert "account.timer.racewarSwitch" in check_at
+assert "account_racewar_switch_cooldown()" in check_at
 assert "account_check_racewar_admission_at" in check
 assert "account_check_racewar_admission" in can_connect
 assert "account_check_racewar_admission" in select_character
 assert "account_format_racewar_denial" in select_character
 assert "account_check_racewar_admission" in confirm_character
+# The selection list shows the policy's pending side-switch wait above the back option.
+assert "account_racewar_pending_switch(" in character_list
+assert "account_racewar_switch_cooldown()" in character_list
+assert character_list.index("Last played:") < character_list.index("Back to Account Menu")
 assert "+ 3600" not in select_character and "+ 3600" not in confirm_character
 
 assert "account_check_racewar_admission_at" in commit

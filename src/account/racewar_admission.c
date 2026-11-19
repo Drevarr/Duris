@@ -62,3 +62,14 @@ account_racewar_admission account_racewar_evaluate(enum account_racewar_side sid
 	}
 	return result;
 }
+
+account_racewar_admission account_racewar_pending_switch(long last_good, long last_evil, long now,
+							 long cooldown_seconds)
+{
+	const account_racewar_admission good = account_racewar_evaluate(
+		ACCOUNT_RACEWAR_GOOD, false, last_good, last_evil, now, cooldown_seconds);
+	const account_racewar_admission evil = account_racewar_evaluate(
+		ACCOUNT_RACEWAR_EVIL, false, last_good, last_evil, now, cooldown_seconds);
+	// The later side timestamp gives the switch away from it the longer wait.
+	return good.remaining_seconds > evil.remaining_seconds ? good : evil;
+}

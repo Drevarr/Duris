@@ -44,4 +44,8 @@ account_racewar_admission account_racewar_evaluate(enum account_racewar_side sid
 						   long last_good, long last_evil, long now,
 						   long cooldown_seconds);
 
+// The side-switch wait set by the most recently played side; remaining_seconds is 0 when none.
+account_racewar_admission account_racewar_pending_switch(long last_good, long last_evil, long now,
+							 long cooldown_seconds);
+
 #endif // DURIS_RACEWAR_ADMISSION_H
