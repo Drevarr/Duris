@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""Execute Blur casting, affect removal/countdown and intrinsic bit rebuilding."""
+"""Execute Blur casting, affect removal/countdown and intrinsic bit rebuilding, and
+Phantasmal Form ending on reuse."""
 import subprocess
 from _paths import ROOT, HARNESS_STUBS, extract_function
 
@@ -43,7 +44,11 @@ nevent_handle nevent_handle_from_event(P_nevent) { return {}; }
 nevent_cancel_result nevent_cancel(nevent_handle) { return nevent_cancel_result::canceled; }
 void send_to_char(const char *,P_char) {}
 void act(const char *,int,P_char,P_obj,void *,int) {}
-void wear_off_message(P_char,affected_type *) {}
+// Reads the affect like the real message does, so a released affect fails under ASan.
+static int worn_off;
+void wear_off_message(P_char,affected_type *af) { worn_off = af->type; }
+bool check_innate_time(P_char,int,int) { return true; }
+void CharWait(P_char,int) {}
 int IS_MORPH(P_char) { return false; }
 P_char un_morph(P_char) { assert(false); return nullptr; }
 bool isname(const char *,const char *) { return true; }
@@ -63,14 +68,19 @@ rebuild = "void apply_bits(P_char ch,int mode) {\n" + apply[a:b] + "}\n"
 rebuild += r'''
 void all_affects(P_char ch,int mode) {
     TmpAffs = {};
-    for (auto *af = ch->affected; af; af = af->next) TmpAffs.BV_3 |= af->bitvector3;
+    for (auto *af = ch->affected; af; af = af->next) {
+        TmpAffs.BV_3 |= af->bitvector3;
+        TmpAffs.BV_4 |= af->bitvector4;
+    }
     apply_bits(ch,mode);
 }
 '''
 functions = [("affects.c",s) for s in (
     "struct affected_type *get_spell_from_char(", "bool affected_by_spell(", "struct affected_type *affect_to_char(",
     "void affect_remove(", "void affect_from_char(",
-)] + [("magic.c", "int CheckMobRemoveableSpellBits("), ("magic.c", "static int blur_duration("), ("magic.c", "void spell_blur(int /*level*/,")]
+)] + [("magic.c", "int CheckMobRemoveableSpellBits("), ("magic.c", "static int blur_duration("), ("magic.c", "void spell_blur(int /*level*/,")] \
+  + [("innates.c", s) for s in ("static int phantasmal_form_duration(", "static int phantasmal_form_lag(",
+                                "void do_phantasmal_form(P_char ch,")]
 updates = extract_function("affects.c", "void affect_update(")
 a = updates.index("\t\t\tfor (af = i->affected;")
 b = updates.index("\n\t\t\tif (morphed)",a)
@@ -110,6 +120,20 @@ int main() {
         assert(!ch.affected && bool(IS_AFFECTED3(&ch,AFF3_BLUR)) == innate);
     }
     puts("Innate Blur: initial recalculation, normal expiry, dispel, repeated recalculation and proc removal passed.");
+
+    // Using Phantasmal Form again ends it, with its wear-off message.
+    char_data ph{}; ph.player.race = RACE_HUMAN; ph.player.level = 50;
+    SET_POS(&ph,POS_STANDING + STAT_NORMAL);
+    do_phantasmal_form(&ph,nullptr,0);
+    assert(ph.affected && IS_AFFECTED4(&ph,AFF4_PHANTASMAL_FORM));
+    do_phantasmal_form(&ph,nullptr,0);
+    assert(!ph.affected && !IS_AFFECTED4(&ph,AFF4_PHANTASMAL_FORM) && worn_off == TAG_PHANTASMAL_FORM);
+    // The bit without its tag affect (an authored or item bit) has no message to send.
+    worn_off = 0;
+    SET_BIT(ph.specials.affected_by4,AFF4_PHANTASMAL_FORM);
+    do_phantasmal_form(&ph,nullptr,0);
+    assert(worn_off == 0);
+    puts("Phantasmal Form: reuse ends the form and reads its message before releasing it.");
 }
 '''
 build = ROOT/"bin/tests/innate-blur-lifecycle"
