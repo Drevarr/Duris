@@ -1102,8 +1102,6 @@ maintenance_result maintenance_repository_execute(const maintenance_request &req
 		return failure(request, maintenance_outcome::complete, 0);
 	if (request.job_id == maintenance_job_id::web_status)
 		return execute_web_status(request);
-	if (request.job_id == maintenance_job_id::address_retention)
-		expire_log_files();
 	MYSQL *connection = sql_pool_acquire();
 	if (!connection)
 		return failure(request, maintenance_outcome::retryable_failure, EAGAIN);
@@ -1129,7 +1127,13 @@ maintenance_result maintenance_repository_execute(const maintenance_request &req
 	case maintenance_job_id::operational_statistics:
 		return execute_statistics(connection, request);
 	case maintenance_job_id::address_retention:
-		return execute_address_retention(connection, request);
+	{
+		// The statements get the whole time budget. A first run after a boot can spend
+		// most of it walking a cold log archive, which made every first run time out.
+		const maintenance_result result = execute_address_retention(connection, request);
+		expire_log_files();
+		return result;
+	}
 	default:
 		return failure(request, maintenance_outcome::permanent_failure, ENOTSUP);
 	}

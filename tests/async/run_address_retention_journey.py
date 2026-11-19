@@ -159,13 +159,19 @@ def run(server):
              *shlex.split(subprocess.check_output(['mysql_config', '--libs'], text=True)),
                  str(HARNESS_STUBS), '-lcrypto', '-o', str(harness)], cwd=ROOT, check=True)
 
-        def prune(budget):
+        def prune(budget, time_budget=None, archived_logs=0):
             # The job also expires log files under its working directory.
             with tempfile.TemporaryDirectory(dir=ROOT / 'bin/tests') as cwd:
-                return subprocess.run(
-                    [str(harness), host, environment['DB_PORT'], environment['DB_USER'],
-                     environment['DB_PASSWD'], database, str(budget)],
-                    cwd=cwd, capture_output=True, text=True, check=True).stdout.split('\n')[:-1]
+                archive = Path(cwd) / 'logs/old-logs/2026.09.01-00.00.00'
+                archive.mkdir(parents=True)
+                for index in range(archived_logs):
+                    (archive / str(index)).touch()
+                command = [str(harness), host, environment['DB_PORT'], environment['DB_USER'],
+                           environment['DB_PASSWD'], database, str(budget)]
+                if time_budget:
+                    command.append(str(time_budget))
+                result = subprocess.run(command, cwd=cwd, capture_output=True, text=True)
+                return result.stdout.split('\n')[:-1]
 
         # The database the migrations build has no account_login_history.
         assert prune(256) == ['complete 0'], 'the prune failed without the website table'
@@ -213,6 +219,12 @@ INSERT INTO account_characters (account_name, pid, char_name, last_ip, last_logi
         assert before == {'log_entries': sql('SELECT COUNT(*) FROM log_entries'),
                           'player_data': sql('SELECT COUNT(*) FROM player_data')}
         print('[PASS] the prune clears exactly the addresses past 30 days', flush=True)
+
+        # Production gives the job 25 ms. Walking a large or cold log archive can take
+        # longer than that, and it used to run first, so the first run after every boot
+        # timed out before its first statement.
+        assert prune(256, 25000, 30000) == ['complete 0'], 'the file walk spent the budget'
+        print('[PASS] the log archive walk does not spend the database budget', flush=True)
     finally:
         sql('DROP DATABASE ' + database, False)
 
