@@ -157,7 +157,7 @@ def run(binary: Path) -> None:
             # Off: the first capture would start 30 seconds after the boot.
             server, port = boot(REDIS_WORLD_STATE="FALSE")
             client = journey.MudClient(port)
-            journey.create_character(client)
+            journey.create_character(client, newbie_equipment=False)
             client.send("drop all")
             client.expect("You drop", timeout=20)
             time.sleep(max(0, 40 - (time.monotonic() - booted)))
@@ -183,7 +183,7 @@ def run(binary: Path) -> None:
             # payload. Its matching claim must not discard the Redis snapshot.
             client = journey.MudClient(port)
             journey.create_character(client, account="Roomclaimac", character="Roomclaimer",
-                                     email="roomclaim@example.invalid")
+                                     email="roomclaim@example.invalid", newbie_equipment=False)
             client.send("save"); client.expect("Saving Roomclaimer.", timeout=60)
             claimant = sql("SELECT pid FROM player_data WHERE name='Roomclaimer'")
             floor_root = sql("SELECT own.item_uid FROM item_current_owner own "
