@@ -444,7 +444,8 @@ def create_character(client: MudClient, expected_room: str | None = "The Regress
                      character: str = CHARACTER, email: str = EMAIL,
                      hometown: str | None = None, race_name: str = "h",
                      existing_account: bool = False, alignment: str = "g",
-                     hardcore: bool = False, expected_hometown: str | None = None) -> None:
+                     hardcore: bool = False, expected_hometown: str | None = None,
+                     newbie_equipment: bool = True) -> None:
     entry, _ = client.expect_any(("term type", "account name"))
     if entry == "term type":
         client.send("9")
@@ -533,6 +534,11 @@ def create_character(client: MudClient, expected_room: str | None = "The Regress
         client.expect(expected_room, timeout=30)
     client.expect_any(("Your starter kit is ready", "Your Chaos Equipment has been prepared"),
                       timeout=30)
+    if not newbie_equipment:
+        # On, a character who enters empty-handed (after a death, say) gets a whole new kit,
+        # which fills the inventory it would loot a corpse into.
+        client.send("toggle newbie off")
+        client.expect("You will not load with newbie EQ when you die.")
 
 
 def complete_npc_combat_journey(client: MudClient, reset_coins: bool = False) -> None:
@@ -760,7 +766,7 @@ def run_journey(binary: pathlib.Path, reset_coins: bool = False,
                             "INSERT INTO account_banks(account_name,racewar,bank_copper,bank_silver,"
                             f"bank_gold,bank_platinum,bank_revision) VALUES('{ACCOUNT}',1,19,23,31,47,2)")
                     client = MudClient(plain_port)
-                    create_character(client)
+                    create_character(client, newbie_equipment=False)
                     if first_session_only:
                         from test_mariadb_first_session_currency import verify_first_session
                         verify_first_session(client, plain_port, sql, populated_bank)

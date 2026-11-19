@@ -210,6 +210,7 @@ def run(binary, backend):
                     account=BUILDER_ACCOUNT,
                     character=BUILDER,
                     email="trapbuilder@example.invalid",
+                    newbie_equipment=False,
                 )
                 builder.send("save")
                 builder.expect(f"Saving {BUILDER}.", timeout=30)
@@ -222,7 +223,7 @@ def run(binary, backend):
 
                 actor = journey.MudClient(game_port)
                 clients.append(actor)
-                journey.create_character(actor, expected_room=None)
+                journey.create_character(actor, expected_room=None, newbie_equipment=False)
                 actor.send("toggle boon")
                 actor.expect("Divine Boons apply automatically. Your stored legacy setting is preserved.")
                 source = journey.MudClient(game_port)
@@ -233,6 +234,7 @@ def run(binary, backend):
                     account=SOURCE_ACCOUNT,
                     character=SOURCE,
                     email="source@example.invalid",
+                    newbie_equipment=False,
                 )
                 source.send("toggle boon")
                 source.expect("Divine Boons apply automatically. Your stored legacy setting is preserved.")
@@ -253,6 +255,7 @@ def run(binary, backend):
                     account=OBSERVER_ACCOUNT,
                     character=OBSERVER,
                     email="observer@example.invalid",
+                    newbie_equipment=False,
                 )
                 builder.send(f"goto {TRAP_ROOM}")
                 builder.expect("Guard Post", timeout=30)

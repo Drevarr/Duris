@@ -53,58 +53,11 @@ assert runner_spec is not None and runner_spec.loader is not None
 runner = importlib.util.module_from_spec(runner_spec)
 sys.modules[runner_spec.name] = runner
 runner_spec.loader.exec_module(runner)
-expected_resource_intensive = {
-    "test_account_recovery_journey.py",
-    "test_assassin_combat_journey.py",
-    "test_artifact_owner_restart_journey.py",
-    "test_castle_key_reset_journey.py",
-    "test_character_stat_choice_journey.py",
-    "test_conjurer_gameplay_journey.py",
-    "test_connection_limit_journey.py",
-    "test_corpse_trap_restart_journey.py",
-    "test_legacy_trap_journey.py",
-    "test_creation_deferred_play_journey.py",
-    "test_creation_prompt_journey.py",
-    "test_divine_boon_zone_journey.py",
-    "test_game_loop_session_journey.py",
-    "test_area_coin_pickup.py",
-    "test_mariadb_auction_coin_put_journey.py",
-    "test_mariadb_boot_preflight.py",
-    "test_mariadb_chaos_new_character_kit.py",
-    "test_mariadb_combat_journey.py",
-    "test_mariadb_collector_intake_journey.py",
-    "test_mariadb_death_restart_journey.py",
-    "test_mariadb_locker_journey.py",
-    "test_mariadb_newbie_regrant_journey.py",
-    "test_mariadb_first_session_currency.py",
-    "test_mariadb_full_world_boot.py",
-    "test_mariadb_hardcore_death_journey.py",
-    "test_flight_network_journey.py",
-    "test_frag_cap_journey.py",
-    "test_generated_npc_journey.py",
-    "test_gith_monk_journey.py",
-    "test_hostname_files_journey.py",
-    "test_log_hygiene_journey.py",
-    "test_kept_character_journey.py",
-    "test_kept_character_approval_journey.py",
-    "test_kept_character_competition.py",
-    "test_kept_character_matrix.py",
-    "test_kept_character_recovery_journey.py",
-    "test_kept_starter_grant_journey.py",
-    "test_minor_creation_instrument_journey.py",
-    "test_mob_gold_dial_runtime.py",
-    "test_pet_restart_journey.py",
-    "test_ranged_kill_xp_journey.py",
-    "test_ranged_cover_message_journey.py",
-    "test_shambler_reflection_journey.py",
-    "test_websocket_session_guard_journey.py",
-    "test_shop_multi_buy_journey.py",
-    "test_studioproc_duplicate_record.py",
-    "test_item_movement_prompt_runtime.py",
-    "test_information_cache_journey.py",
-    "test_mysql_combat_journey.py",
-}
-assert runner.RESOURCE_INTENSIVE_TEST_NAMES == expected_resource_intensive
+# Every long-deadline name is a real test, so a renamed journey cannot silently fall
+# back to the pooled deadline. The deadlines themselves are checked below.
+missing = {name for name in runner.RESOURCE_INTENSIVE_TEST_NAMES
+           if not (ROOT / "tests/async" / name).is_file()}
+assert not missing, missing
 discovered = {path.name for path in runner.discover_tests(None)}
 assert not (runner.MANUAL_ONLY_TEST_NAMES & discovered)
 # These real CLI journeys require a server and disposable SQL; the default

@@ -142,7 +142,7 @@ def play_journey(binary, environment):
         try:
             server.start()
             actor = journey.MudClient(server.port)
-            journey.create_character(actor)
+            journey.create_character(actor, newbie_equipment=False)
             actor.expect(PROMPT)
             command(actor, "drop all", "You drop ")
             command(actor, "get testbag", "You get a small leather bag.")
@@ -201,7 +201,7 @@ def play_journey(binary, environment):
 
             target = journey.MudClient(server.port, source_host="127.0.0.2")
             journey.create_character(target, account=TARGET_ACCOUNT, character=TARGET,
-                                     email="target@example.invalid")
+                                     email="target@example.invalid", newbie_equipment=False)
             target.expect(PROMPT)
             command(target, "drop all", "You drop ")
             command(actor, f"give 10 gold {TARGET}", "Ok.")

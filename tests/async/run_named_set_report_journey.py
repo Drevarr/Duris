@@ -21,7 +21,7 @@ ROOT = journey.ROOT
 PLAYER, ACCOUNT = "Reportwarden", "Reportstaff"
 expected_ids = set(map(int, re.findall(
     r"^\s*\{\s*(\d+),\s*\{\s*\{", (ROOT / "src/item/named_sets.c").read_text(), re.M)))
-assert len(expected_ids) == 306
+assert len(expected_ids) == 307
 
 
 def semantic(text):
@@ -32,11 +32,11 @@ def semantic(text):
     text = re.sub(r"&[+-][A-Za-z]|&[nN]", "", text)
     rows = [" ".join(row.split()) for row in re.findall(r"(?m)^\s*#\d+[^\r\n]*", text)]
     ids = [int(re.match(r"#(\d+)", row)[1]) for row in rows]
-    assert len(ids) == 306 and set(ids) == expected_ids, (len(ids), expected_ids - set(ids))
+    assert len(ids) == 307 and set(ids) == expected_ids, (len(ids), expected_ids - set(ids))
     normalized = " ".join(text.split())
     for note in (
         "Listed effects may begin at one piece; one/two pieces give no set HP.",
-        "Earth/Fire/Water Form require the matching Magus specialization.",
+        "Elemental auras work anywhere; an elemental form blocks them.",
         "Weapon enchantments require their native weapon types.",
         "Globe of Darkness excludes Holy Light and Mage Flame.",
     ):
@@ -176,7 +176,7 @@ def run():
             before = generations()
             assert report(actor, "warm") == boot_rows
             assert report(actor, "warm-repeat") == boot_rows and generations() == before
-            check("boot warms all 306 native rows with one-day TTL; repeated warm reads do not regenerate")
+            check("boot warms all 307 native rows with one-day TTL; repeated warm reads do not regenerate")
 
             actor.send("redis clear named")
             actor.expect("Queued: named", timeout=30)
@@ -211,7 +211,7 @@ def run():
             score(actor)
             assert report(actor, "redis-disabled-paged") == boot_rows
             assert evidence["redis-disabled-paged_pages"] > 1
-            check("Redis-disabled native fallback paginates all 306 rows in the same order with conditional notes")
+            check("Redis-disabled native fallback paginates all 307 rows in the same order with conditional notes")
             save(actor, PLAYER)
         finally:
             stop()

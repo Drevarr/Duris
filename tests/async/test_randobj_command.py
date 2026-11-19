@@ -46,7 +46,7 @@ static std::vector<P_obj> inventory;
 static std::vector<std::pair<int, int>> rolls;
 static std::string output;
 static int stats, recipes, samples, extracted, maps, removals, zones, fail_at;
-static bool reject_recipe;
+static bool reject_recipe, missing_scroll;
 static std::vector<int> recipe_rejections;
 
 void send_to_char(const char *text, P_char ch) { assert(ch == &staff); output += text; }
@@ -112,6 +112,7 @@ void do_stat(P_char ch, char *argument, int command, P_obj obj) {
 void extract_obj(P_obj obj, int) { assert(obj); extracted++; release(obj); }
 P_obj read_object(int vnum, int mode) {
     assert(vnum == 400210 && mode == VIRTUAL);
+    if (missing_scroll) return nullptr;
     auto *obj = new obj_data{};
     obj->type = ITEM_SCROLL; obj->name = strdup("recipe");
     obj->short_description = strdup("a recipe for"); obj->str_mask = STRUNG_DESC2;
@@ -146,7 +147,7 @@ static void reset() {
     for (P_obj obj : inventory) release(obj);
     inventory.clear(); requests.clear(); rolls.clear(); output.clear();
     stats = recipes = samples = extracted = maps = removals = zones = fail_at = 0;
-    reject_recipe = false; recipe_rejections.clear();
+    reject_recipe = missing_scroll = false; recipe_rejections.clear();
     staff = {}; staff.only.pc = &player; staff.player.level = 62; staff.in_room = 123;
 }
 static void run(const std::string &arguments) {
@@ -237,6 +238,9 @@ int main() {
         reset(); recipe_rejections = {rejection}; run("recipe");
         assert(recipes == 0 && inventory.empty() && extracted == 1 && output.empty());
     }
+    // A world without the recipe scroll (the minimal test world) delivers no recipe.
+    reset(); missing_scroll = true; run("recipe");
+    assert(recipes == 0 && inventory.empty() && extracted == 1 && output.empty());
     reset(); run("mob"); assert(requests.size() == 1 && requests[0].finder_level == 0);
     reset(); run("mob 20"); assert(requests.size() == 1 && requests[0].finder_level == 20);
     reset(); run("mob 0 10"); assert(requests.size() == 10 && requests[0].finder_level == 0);

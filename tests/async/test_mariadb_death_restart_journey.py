@@ -70,7 +70,7 @@ def run(binary: pathlib.Path) -> None:
         process = boot(binary, run_root, environment, port, "first.out")
         try:
             client = journey.MudClient(port)
-            journey.create_character(client, expected_room=None)
+            journey.create_character(client, expected_room=None, newbie_equipment=False)
             client.send("inventory")
             client.expect("a small wooden mace", timeout=10)
             client.send("suicide")

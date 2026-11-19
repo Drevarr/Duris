@@ -153,6 +153,7 @@ MANUAL_ONLY_TEST_NAMES = frozenset(
         "test_mariadb_boot_preflight.py",
         "test_headbutt_feedback_journey.py",
         "test_assassin_combat_journey.py",
+        "test_weapon_immunity_journey.py",
         "test_conjurer_gameplay_journey.py",
         "test_shambler_reflection_journey.py",
         "test_minor_creation_instrument_journey.py",

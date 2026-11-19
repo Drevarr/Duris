@@ -93,11 +93,11 @@ SHIP_SHOP = source("ship_shop.c").read_text(encoding="utf-8", errors="replace")
 assert "const int tattoo_reward_hull = chaos_frigate_reward ? SH_FRIGATE : SH_SLOOP;" in SHIP_SHOP
 assert "const int tattoo_discount = chaos_frigate_reward ? SHIPTYPE_COST(tattoo_reward_hull) :" in SHIP_SHOP
 CRAFTING = source("crafting.c").read_text(encoding="utf-8", errors="replace")
-assert "!chaos_pouch && (invLowMats < numLowest || invHighMats < numHighest)" in CRAFTING
-assert "!chaos_pouch && (numLowest > 0)" in CRAFTING
-assert "!chaos_pouch && (invVnum == lowQualityMaterialVnum)" in CRAFTING
+assert "!chaos_pouch && (low < plan.low_material_count || high < plan.high_material_count)" in CRAFTING
+assert "int low = chaos_pouch ? 0 : plan.low_material_count;" in CRAFTING
+assert "int high = chaos_pouch ? 0 : plan.high_material_count;" in CRAFTING
 assert CRAFTING.count("chaos_material_pouch_report_generated_failure") >= 2
-assert "if (!chaos_material_pouch_record_generated" in CRAFTING
+assert "!chaos_material_pouch_record_generated(ch, generated, ARRAY_SIZE(generated))" in CRAFTING
 ENHANCE = source("enhance.c").read_text(encoding="utf-8", errors="replace")
 assert "if (!pouch)" in ENHANCE
 assert "chaos_material_pouch_is(source)" in ENHANCE and "chaos_material_pouch_is(material)" in ENHANCE

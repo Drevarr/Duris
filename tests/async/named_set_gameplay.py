@@ -20,7 +20,8 @@ for match in re.finditer(r'^\s*\{\s*(\d+),\s*(\{.*?\})\s*\},', (journey.ROOT/"sr
     SET_TIERS[int(match[1])] = [(int(n), EFFECT_NAMES[token], int(_definitions[token])) for n,token in re.findall(r'\{\s*(\d+),\s*(\w+)\s*\}',match[2])]
 _rooms = {1325:132500,740:74000,827:82701,13:1300,44:4401,204:20400,808:80800,
     811:81100,814:81400,990:99001,300:30000,1350:135001,87:8700,370:37000,
-    676:67600,824:82400,159:15900,455:45500,883:88300,1424:142400}
+    676:67600,824:82400,159:15900,455:45500,883:88300,1424:142400,
+    257:25700,435:43500}
 WEAR_CASES = {zone:(room,max(n for n,_,_ in SET_TIERS[zone]),SET_TIERS[zone][0][1],SET_TIERS[zone][0][2]) for zone,room in _rooms.items()}
 WEAR_CASES[112]=(11200,4,"",0) # A removed definition must still retain matching HP.
 
@@ -286,11 +287,13 @@ class NamedSetGame:
     def items(self, pid=1):
         inventory = {row[0]: row for row in self.inventory(pid)}
         # SQL intentionally restores permanent item state, not transient item
-        # affects. Reject durable HP/Constitution and built-in spell modifiers.
+        # affects. Reject durable HP/Constitution and built-in spell modifiers,
+        # including Fireshield/Coldshield bits that would block a set shield.
         rows = self.sql(
             "SELECT i.obj_uid,e.description,i.equip_slot,COALESCE(i.wear_flags,0),"
             "(NOT EXISTS(SELECT 1 FROM player_item_affects a WHERE a.item_id=i.id "
             "AND a.location IN (13,5,35,45)) AND (COALESCE(i.bitvector1,0) & 528)=0 "
+            "AND (COALESCE(i.bitvector2,0) & 1)=0 AND (COALESCE(i.bitvector3,0) & 2097152)=0 "
             "AND (COALESCE(i.bitvector4,0) & 393216)=0),COALESCE(i.short_descr,'') "
             "FROM player_items i JOIN player_item_extra_descr e ON e.item_id=i.id "
             "AND e.keyword='DURIS_NAMED_SET_ORIGIN_V1' WHERE i.pid=" + str(pid) + " ORDER BY i.id")

@@ -831,6 +831,9 @@ bool create_recipe(P_char ch, P_obj temp)
 		return false;
 
 	objrecipe = read_object(400210, VIRTUAL);
+	// The minimal test world has no recipe scroll.
+	if (!objrecipe)
+		return false;
 	SET_BIT(objrecipe->value[6], recipenumber);
 	strcpy(old_name, objrecipe->short_description);
 	checked_snprintf(buffer, 256, "%s %s&n", old_name, temp->short_description);

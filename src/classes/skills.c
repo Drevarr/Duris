@@ -276,6 +276,12 @@ void initialize_skills()
 
 	SPELL_CREATE_MSG("ultravision", SPELL_ULTRAVISION, PULSE_SPELLCAST, TAR_SELF_ONLY,
 			 spell_ultravision, "Your ultravision fades.");
+	SPELL_CREATE_MSG("air aura", SPELL_AIR_AURA, PULSE_SPELLCAST, TAR_SELF_ONLY, spell_air_aura,
+			 "&+cYour aura of air dissipates.&N");
+	SPELL_CREATE_MSG("earth aura", SPELL_EARTH_AURA, PULSE_SPELLCAST, TAR_SELF_ONLY,
+			 spell_earth_aura, "&+yYour aura of earth crumbles away.&N");
+	SPELL_CREATE_MSG("water aura", SPELL_WATER_AURA, PULSE_SPELLCAST, TAR_SELF_ONLY,
+			 spell_water_aura, "&+bYour aura of water drains away.&N");
 	SPELL_CREATE_MSG("air form", SPELL_AIR_FORM, PULSE_SPELLCAST * 4, TAR_SELF_ONLY,
 			 spell_air_form, "Your molecules return to normal.");
 	SPEC_SPELL_ADD(CLASS_CONJURER, 10, SPEC_AIR);

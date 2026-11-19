@@ -2674,7 +2674,8 @@ int storage_locker(int room, P_char ch, int cmd, char *arg)
 	}
 
 	if (cmd == CMD_ASSIMILATE || cmd == CMD_COMMUNE || cmd == CMD_DEFOREST ||
-	    cmd == CMD_TUPOR || cmd == CMD_FOCUS || cmd == CMD_PRAY || cmd == CMD_MEMORIZE)
+	    cmd == CMD_TUPOR || cmd == CMD_FOCUS || cmd == CMD_PRAY || cmd == CMD_MEMORIZE ||
+	    cmd == CMD_PRIORITIZE)
 	{
 		display_no_mem(ch);
 		return TRUE;

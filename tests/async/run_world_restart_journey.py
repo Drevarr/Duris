@@ -266,7 +266,7 @@ def screen(client: journey.MudClient, command: str, wait: float = 1.5) -> str:
 def enter(rig: Rig) -> journey.MudClient:
     """A new character in the arena, carrying nothing."""
     client = journey.MudClient(rig.port)
-    journey.create_character(client)
+    journey.create_character(client, newbie_equipment=False)
     client.send("drop all")
     client.expect("You drop a steel long sword.", timeout=20)
     return client
@@ -409,7 +409,7 @@ def taken(rig: Rig) -> None:
     assert "small mace, lies here" in floor, "the mace a character dropped is gone"
     other = journey.MudClient(rig.port)
     journey.create_character(other, account="Otheracct", character="Brannoc",
-                             email="other@example.invalid")
+                             email="other@example.invalid", newbie_equipment=False)
     assert "You get a banana" not in screen(other, "get banana")
     other.close()
     assert rig.sql("SELECT COUNT(*), COUNT(DISTINCT pid) FROM player_items WHERE vnum=15") \
@@ -423,7 +423,7 @@ def handover(rig: Rig) -> None:
     taverek = enter(rig)
     brannoc = journey.MudClient(rig.port)
     journey.create_character(brannoc, account="Otheracct", character="Brannoc",
-                             email="other@example.invalid")
+                             email="other@example.invalid", newbie_equipment=False)
     brannoc.send("drop all")
     brannoc.expect("You drop a steel long sword.", timeout=20)
     first = rig.generation()

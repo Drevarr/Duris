@@ -2715,6 +2715,15 @@ void recalculate_obj_extra(P_obj obj)
 	set_obj_extra2_flags(obj, extra2);
 }
 
+// Sets or clears an extra2 flag for good. While a flag affect such as bless is on the
+// object, the flag goes into its saved baseline too, so the affect ending keeps it.
+void set_obj_base_extra2_flag(P_obj obj, unsigned flag, bool on)
+{
+	if (struct obj_affect *base = get_obj_affect(obj, TAG_ALTERED_EXTRA2))
+		base->extra2 = on ? base->extra2 | flag : base->extra2 & ~flag;
+	set_obj_extra2_flags(obj, on ? obj->extra2_flags | flag : obj->extra2_flags & ~flag);
+}
+
 void obj_affect_remove(P_obj obj, struct obj_affect *af)
 {
 	struct obj_affect *t_af;

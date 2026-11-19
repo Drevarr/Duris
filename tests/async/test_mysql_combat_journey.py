@@ -106,7 +106,7 @@ def run(server, reset_coins=False, boons=False):
                 try:
                     process = boot()
                     client = journey.MudClient(plain)
-                    journey.create_character(client)
+                    journey.create_character(client, newbie_equipment=False)
                     if not boons:
                         client.send('toggle boon'); client.expect('Divine Boons apply automatically. Your stored legacy setting is preserved.')
                     journey.complete_npc_combat_journey(client, reset_coins)

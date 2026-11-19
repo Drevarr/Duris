@@ -79,11 +79,11 @@ def run(binary):
                 while 'Entering game loop.' not in (runtime/'server.out').read_text(errors='replace'):
                     assert process.poll() is None and time.monotonic()<deadline,'boot failed'
                     time.sleep(.1)
-                actor=journey.MudClient(port); clients.append(actor); journey.create_character(actor)
+                actor=journey.MudClient(port); clients.append(actor); journey.create_character(actor, newbie_equipment=False)
                 source=journey.MudClient(port); clients.append(source)
-                journey.create_character(source,account='Sourceacct',character='Sourcemortal',email='source@example.invalid')
+                journey.create_character(source,account='Sourceacct',character='Sourcemortal',email='source@example.invalid', newbie_equipment=False)
                 dest=journey.MudClient(port); clients.append(dest)
-                journey.create_character(dest,account='Destacct',character='Destmortal',email='dest@example.invalid')
+                journey.create_character(dest,account='Destacct',character='Destmortal',email='dest@example.invalid', newbie_equipment=False)
                 dest.send('north'); dest.expect('The Observer Landing')
                 actor.send('toggle boon'); actor.expect('Divine Boons apply automatically.')
                 actor.send('wield mace'); actor.expect('You wield')

@@ -107,6 +107,7 @@ functions = [
     ('files.c', 'int writeAffects('), ('files.c', 'int restoreAffects('),
     ('magic.c', 'const char *elemental_form_failure_message('),
     ('magic.c', 'const char *elemental_summon_failure_message('),
+    ('magic.c', 'static const char *elemental_aura_conflict('),
     ('magic.c', 'const char *elemental_aura_failure_message('),
     ('magic.c', 'static int elemental_aura_duration('),
     ('magic.c', 'static int elemental_aura_max_stat('),
@@ -225,7 +226,7 @@ static std::map<int, int> modifiers(P_char ch, int type) {
 }
 int main() {
     REGISTER_FORMS
-    assert(SPELL_BLOOD_TITHE == 683 && SPELL_EARTH_FORM == 684 && SPELL_WATER_FORM == 686 && SPELL_ULTRAVISION == 687 && LAST_SPELL == SPELL_ULTRAVISION);
+    assert(SPELL_BLOOD_TITHE == 683 && SPELL_EARTH_FORM == 684 && SPELL_WATER_FORM == 686 && SPELL_ULTRAVISION == 687 && SPELL_AIR_AURA == 688 && SPELL_EARTH_AURA == 689 && SPELL_WATER_AURA == 690 && LAST_SPELL == SPELL_WATER_AURA);
     static_assert(LAST_SPELL < FIRST_SKILL && LAST_SPELL < MAX_SKILLS);
     char_data caster{}, other{};
     caster.player.m_class = CLASS_CONJURER;

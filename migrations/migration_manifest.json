@@ -808,6 +808,16 @@
       "compatibility": "mysql8-mariadb10",
       "apply_checksum": "fb3320f91cf4da01aca8cee53f0e74e04aad7a623f7af1e50c1abbd4bc77d008",
       "verify_checksum": "b9680f834549eb7bd7e21dda7e83f8606d9af867eee2317216b5d23c3a1b6c71"
+    },
+    {
+      "id": "0063_first_find_tips",
+      "sequence": 64,
+      "description": "Remember which first-find tips each character has seen",
+      "apply": "immutable/0063_first_find_tips.sql",
+      "verify": "immutable/0063_first_find_tips.sh",
+      "compatibility": "mysql8-mariadb10",
+      "apply_checksum": "9f0608935c7719f1976be51d31c2debbccb1400465d9f222c909515a9f73fad4",
+      "verify_checksum": "593899b70ff8451e2fbd884a4e27bd75f5ea443816451defcb5410c957adf767"
     }
   ],
   "engine_verifiers": [

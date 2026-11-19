@@ -7,6 +7,7 @@ are controlled. No .env, shared server or existing player state is accessed.
 """
 import argparse
 from collections import deque
+from concurrent.futures import ThreadPoolExecutor
 import hashlib
 import json
 from pathlib import Path
@@ -14,6 +15,7 @@ import re
 import signal
 import subprocess
 import tempfile
+import threading
 import time
 
 import test_mariadb_combat_journey as base
@@ -134,8 +136,20 @@ def run(binary):
                 command(client, "toggle paging no")
                 return client
 
+            # Each character has its own connection, so characters act at once; the
+            # staff connection serves them all, one command at a time.
+            staff = threading.Lock()
+
             def cmd(name, text):
-                return command(clients[name], text)
+                if name != STAFF:
+                    return command(clients[name], text)
+                with staff:
+                    return command(clients[name], text)
+
+            def each(action, names):
+                # A character's failure is raised here, after the others finish.
+                with ThreadPoolExecutor(len(names)) as pool:
+                    return list(pool.map(action, names))
 
             def save_player():
                 clients[PLAYERS[0]].send("save")
@@ -209,13 +223,18 @@ def run(binary):
                         opened = cmd(name, "open " + DIRECTIONS[d])
                         assert "seems to be locked" not in opened.lower(), opened
                     moved = cmd(name, DIRECTIONS[d])
+                    # Every route leaves a room the same way, so an escapee ahead in a
+                    # single-file room moves on and frees the way.
+                    deadline = time.monotonic() + 60
+                    while "is in your way" in moved and time.monotonic() < deadline:
+                        moved = cmd(name, DIRECTIONS[d])
                     assert location(name) == target, moved
                 assert location(name) == 5760
                 return [start] + [target for _, target, _ in route]
 
             try:
                 boot()
-                for name in PLAYERS + (STAFF,):
+                def create(name):
                     client = base.MudClient(plain, source_host=source(name))
                     clients[name] = client
                     base.create_character(client, account=account(name), character=name,
@@ -223,11 +242,12 @@ def run(binary):
                     client.send("save")
                     client.expect(f"Saving {name}.", timeout=30)
                     print(f"castle journey: created {name}", flush=True)
+
+                each(create, PLAYERS + (STAFF,))
                 stop()
                 base.make_overlord(sql, STAFF)
                 boot()
-                for name in PLAYERS + (STAFF,):
-                    login(name)
+                each(login, PLAYERS + (STAFF,))
                 for name in PLAYERS:
                     cmd(STAFF, f"setbit char {name} mxvit 30000")
                     cmd(STAFF, f"setbit char {name} vit 30000")
@@ -298,11 +318,14 @@ def run(binary):
                     disconnect(name)
                 wait_timer(True, "descriptorless player bodies permit reset and retain escape")
                 assert_pairs(False, entrance=True)
-                for name, gate in zip(PLAYERS, GATES):
+                def escape(name):
+                    gate = GATES[PLAYERS.index(name)]
                     login(name)
                     route = walk_out(name, gate[5])
-                    report["routes"].append({"character": name, "key": gate[0], "rooms": route})
                     print(f"castle journey: {name} escaped {gate[5]} -> 5760 ({len(route)-1} steps)", flush=True)
+                    return {"character": name, "key": gate[0], "rooms": route}
+
+                report["routes"] += each(escape, PLAYERS)
                 # Staff resets cannot close the escape route around a connected mortal.
                 for mode, start in (("ok", 2415), ("full", 2479)):
                     place(PLAYERS[0], start)

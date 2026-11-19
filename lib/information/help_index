@@ -3504,36 +3504,46 @@ See also: ETHERMANCER, "COSMIC VACUUM", "ETHEREAL DISCHARGE", COMET,
 	  "PLANETARY ALIGNMENT", SUPERNOVA
 
 #
-CRAFTING
+CRAFTING (Tradeskill)
 ===========================================================================
-Crafting is one of the primary skills of the Alchemist Class. By collecting
-material pieces	from the corpses of dead mobs an alchemist can craft a wide 
-range of equipment that can be used or sold at shops. 
+Syntax: craft
+        craft info <number>
+        craft stat <number>
+        craft make <number> [<stone>]
 
-Crafting explained:
+Craft is a tradeskill for making accessories from recipes: items worn
+about the body, on the waist, ears, neck, wrists, fingers, eyes, face,
+nose, horns or tail, and quivers. Weapons and armor belong to Forge.
 
-With 1 material piece you can create small things like rings, earrings, etc.
-With 2 material pieces you can create medium sized things like leggings,
-       arm-plates, etc
-With 3 material pieces you can create large items like cloaks and body
-       armor.
+Learn Craft with 'practice craft' from Jodnan the blacksmith in
+Tharnadia or Gixnif the goblin miner in Khildarak. You can know only one
+of Craft, Forge and Mine. Either teacher will 'practice reset' your
+tradeskill for 200 epic points, which also erases every recipe you know.
 
-Now you have your materials now what do you do? Select the materials you
-want to use place them into your inventory and type:
+Recipes are scrolls found by salvaging magical items. Use 'recite
+<recipe>' to add one to your list. Type 'craft' to list your recipes;
+the other commands take a number from that list. 'craft info' shows the
+salvaged materials needed, 'craft stat' shows the finished item, and
+'craft make' builds it.
 
-     craft material object-type.
-     
-For example, if you have "a cracked magical gold piece" in your inventory
-and type "craft gold ring" you may end up with a ring called "a crude
-unique gold ring". 
+Making an item uses up its materials and one box of gnomish crafting
+tools, sold in Tharnadia and Khildarak. An item with magical properties
+also needs one magical essence, which salvage can yield. Carry them all
+in your inventory. You can make a recipe whose item value is at most
+three times your level. Crafting always succeeds: the item is marked as
+made by you and cannot be repaired. You gain experience based on its
+item value, and your Craft skill can rise each time you craft.
 
-Identifying the item after it is created will show you the stats. The
-quality of the material used, your skill in crafting and your current level
-all play a part in how powerful your newly crafted equipment becomes. We
-are not giving out material formulas as it is a closely guarded alchemist
-secret and nobody wants a guild of alchemists on their back. 
+Name a strange stone you carry after the number, as in 'craft make 3
+green', to work its magic into the item: the item gains the stone's
+affects, and the stone is used up with the other inputs. A stone that
+would add nothing is refused, and a stone you only carry is never used.
+Forge takes no stones.
+
+Each Encrust lesson needs Craft at least as high as the Encrust level it
+teaches.
 ===========================================================================
-See also: MIX, FORGE, SKILL_ALCHEMIST
+See also: RECIPES, SALVAGE, FORGE, ENCRUST, CHAOS CRAFT POUCH
 
 #
 "CREATE DRACOLICH" (Spell)
@@ -6734,32 +6744,38 @@ will need spellbooks for BOTH your druid and your ranger spells.
 See Also: RANGER, DRUID, MULTI-CLASS, COMMUNE, MEMORIZE
 
 #
-FORGE FORGING
+FORGE FORGING (Tradeskill)
 ===========================================================================
-Forging is one of the primary skills of the Alchemist Class. By collecting
-material pieces	from the corpses of dead mobs an alchemist can forge a wide 
-range of weapons that can be used or sold at shops. 
+Syntax: forge
+        forge info <number>
+        forge stat <number>
+        forge make <number>
 
-Forging is much like Crafting in that the more items you have the bigger
-weapons you can make, and works in much the same way, except that you do
-not specify the "material".
+Forge is a tradeskill for making weapons, shields and armor worn on the
+head, body, arms, hands, legs or feet from recipes. Accessories belong to
+Craft.
 
-Select only the materials you want to use, place them into your inventory
-and type:
+Learn Forge with 'practice forge' from Jodnan the blacksmith in
+Tharnadia or Gixnif the goblin miner in Khildarak. You can know only one
+of Craft, Forge and Mine. Either teacher will 'practice reset' your
+tradeskill for 200 epic points, which also erases every recipe you know.
 
-     forge weapon-type
-     
-For example, if you have two of "a cracked magical steel piece" in your
-inventory and type "forge dagger" you may end up with a dagger called "a
-crude steel dagger". 
+Recipes are scrolls found by salvaging magical items. Use 'recite
+<recipe>' to add one to your list. Type 'forge' to list your recipes;
+the other commands take a number from that list. 'forge info' shows the
+salvaged materials needed, 'forge stat' shows the finished item, and
+'forge make' builds it. Beside a smith who works ore, a bare 'forge'
+shows the smith's wares instead; use 'forge list' there.
 
-Identifying the item after it is created will show you the stats. The
-quality of the material used, your skill in forging and your current level
-all play a part in how powerful your newly forged weapons become. We are
-not giving out material formulas as it is a closely guarded alchemist
-secret and nobody wants a guild of alchemists on their back. 
+Making an item uses up its materials and one blacksmithing flux, sold in
+Tharnadia and Khildarak. An item with magical properties also needs one
+magical essence, which salvage can yield. Carry them all in your
+inventory. You can make a recipe whose item value is at most three
+times your level. Forging always succeeds: the item is marked as made by
+you and cannot be repaired. You gain experience based on its item value,
+and your Forge skill can rise each time you forge.
 ===========================================================================
-See also: MIX, FORGE, SKILL_ALCHEMIST
+See also: RECIPES, SALVAGE, CRAFT, CHAOS CRAFT POUCH
 
 #
 "FORKED LIGHTNING" (Spell)
@@ -10938,8 +10954,26 @@ resume your studies/prayers and lists the time remaining to complete
 each spell.
 
 "Forget" lets you purge a spell from your active repertoire.
+Use [[Prioritize]] to prepare a pending spell first.
 ===========================================================================
 See also: CAST, PRACTICE, MEDITATE, "SPELL SLOT"
+
+#
+"Prioritize"
+==================================================
+Move every pending copy of a spell to the front of your memorization or
+prayer queue. For example, if you have bless, full heal, and another full
+heal queued, type:
+
+  prio full heal
+
+You will prepare both copies of full heal before bless. Ready spells stay
+ready. If you are preparing a different spell, switching starts the new
+spell's timer from the beginning. If you are already preparing full heal,
+you keep your progress. A paused queue stays paused until you resume with
+[[Memorize]] or [[Pray]]. Book users need access to the selected spell.
+
+See also: [[Memorize]], [[Pray]], [[Forget]]
 
 #
 "MEMORY BLOCK" (Spell)
@@ -27273,9 +27307,10 @@ including Ceothia, Underworld, Braddistock and Misty Vale, retain their
 same-title HP bonus but grant no guessed zone spell. Those unresolved
 pieces do not combine with pieces whose zone identity is known.
 
-Earth, Fire and Water Form require the matching Magus specialization.
-Forms exclude other elemental forms and auras. Weapon enchantments need
-their native weapon types. Sneak refreshes outside combat while unmounted.
+Elemental auras from sets work anywhere and always reach full form.
+An elemental form or another elemental aura blocks them. Weapon
+enchantments need their native weapon types. Sneak refreshes outside
+combat while unmounted.
 Globe of Darkness excludes Holy Light and Mage Flame. Armor bonuses do not
 add a second armor-class modifier; skin effects retain their native benefits.
 Ironwood needs Barkskin or Thornskin and shares the generic one-minute
@@ -29326,6 +29361,7 @@ Type spells to see your personal list and applicable interface.
   pray                          view or resume a praying class's preparation
   pray <spell name>             example: pray cure light
   forget <spell name>           remove a spell from your repertoire
+  prioritize <spell name>       move pending copies first (see [[Prioritize]])
 
 Rest while sitting or kneeling to start or resume preparation. Book classes
 normally need the spell in an available spellbook (inventory, hands, belt or

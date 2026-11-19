@@ -13,6 +13,7 @@
 #include "net/gmcp.h"
 #include "world/events.h"
 #include "cmd/interp.h"
+#include "cmd/wikihelp.h"
 #include "core/utility.h"
 #include "core/utils.h"
 #include "combat/chaos_config.h"
@@ -1210,6 +1211,14 @@ int memorized_in_circle(P_char ch, int circle)
 	return memorized;
 }
 
+static bool has_preparation_book(P_char ch, int spell)
+{
+	return chaos_mud_enabled() || !book_class(ch) || has_innate(ch, INNATE_ARCANE_RUDIMENTS) ||
+	       SpellInSpellBook(ch, spell,
+				SBOOK_MODE_IN_INV | SBOOK_MODE_AT_HAND | SBOOK_MODE_ON_BELT |
+					SBOOK_MODE_ON_GROUND);
+}
+
 void handle_memorize(P_char ch)
 {
 	struct affected_type *af;
@@ -1231,47 +1240,23 @@ void handle_memorize(P_char ch)
 	{
 		if (af->type == TAG_MEMORIZE && (af->flags & MEMTYPE_FULL) == 0)
 		{
+			if (!has_preparation_book(ch, af->modifier))
+			{
+				no_book = true;
+				continue;
+			}
 			if (memorized)
 			{
-				if (!chaos_mud_enabled() && book_class(ch) &&
-				    !has_innate(ch, INNATE_ARCANE_RUDIMENTS) &&
-				    !(SpellInSpellBook(ch, af->modifier,
-						       SBOOK_MODE_IN_INV | SBOOK_MODE_AT_HAND |
-							       SBOOK_MODE_ON_BELT |
-							       SBOOK_MODE_ON_GROUND)))
-				{
-					no_book = true;
-					continue;
-				}
 				time = get_circle_memtime(ch, get_spell_circle(ch, af->modifier));
 				schedule_memorize(ch, time / 2, &time);
 				return;
 			}
-			else if (!chaos_mud_enabled() && book_class(ch) &&
-				 !has_innate(ch, INNATE_ARCANE_RUDIMENTS) &&
-				 !(SpellInSpellBook(ch, af->modifier,
-						    SBOOK_MODE_IN_INV | SBOOK_MODE_AT_HAND |
-							    SBOOK_MODE_ON_BELT |
-							    SBOOK_MODE_ON_GROUND)))
-				no_book = TRUE;
-			else
-			{
-				if (meming_class(ch))
-				{
-					snprintf(Gbuf1, MAX_STRING_LENGTH,
-						 "You have finished memorizing %s.\n",
-						 skills[af->modifier].name);
-				}
-				else
-				{
-					snprintf(Gbuf1, MAX_STRING_LENGTH,
-						 "You have finished praying for %s.\n",
-						 skills[af->modifier].name);
-				}
-				send_to_char(Gbuf1, ch);
-				af->flags |= MEMTYPE_FULL;
-				memorized = TRUE;
-			}
+			send_to_char_f(ch,
+				       meming_class(ch) ? "You have finished memorizing %s.\n" :
+							  "You have finished praying for %s.\n",
+				       skills[af->modifier].name);
+			af->flags |= MEMTYPE_FULL;
+			memorized = true;
 		}
 	}
 
@@ -2099,6 +2084,110 @@ int forget_spells(P_char ch, int spell)
 		stop_memorizing(ch);
 
 	return 0;
+}
+
+void do_prioritize(P_char ch, char *argument, int /*cmd*/)
+{
+	if (!ch || IS_NPC(ch))
+		return;
+	if (USES_MANA(ch) || uses_slot_recovery(ch) || !(meming_class(ch) || praying_class(ch)))
+	{
+		send_to_char("You do not prepare spells by name.\n", ch);
+		return;
+	}
+	std::string name = trim(argument, " \t\r\n");
+	if (name.empty())
+	{
+		send_to_char("Usage: prioritize <spell name>\n", ch);
+		return;
+	}
+	for (char &letter : name)
+		letter = LOWER(letter);
+	const int spell = lookup_spell(name.c_str(), name.size());
+	if (!IS_SPELL(spell) || !skills[spell].spell_pointer)
+	{
+		send_to_char("Which spell do you want to prioritize?\n", ch);
+		return;
+	}
+
+	affected_type **insert = nullptr;
+	int copies = 0;
+	bool move_needed = false;
+	// handle_memorize skips a spell without a book, so the first one with a book is the
+	// one in progress.
+	bool in_progress_found = false;
+	bool switch_spell = false;
+	for (auto **link = &ch->affected; *link; link = &(*link)->next)
+	{
+		const auto *af = *link;
+		if (af->type != TAG_MEMORIZE || (af->flags & MEMTYPE_FULL))
+			continue;
+		if (!in_progress_found && has_preparation_book(ch, af->modifier))
+		{
+			in_progress_found = true;
+			switch_spell = af->modifier != spell;
+		}
+		if (af->modifier == spell)
+		{
+			++copies;
+			if (insert)
+				move_needed = true;
+		}
+		else if (!insert)
+			insert = link;
+	}
+	if (!copies)
+	{
+		send_to_char("You have no pending copy of that spell.\n", ch);
+		return;
+	}
+	const int circle = get_spell_circle(ch, spell);
+	if (circle < 1 || circle > get_max_circle(ch))
+	{
+		send_to_char("You cannot prepare that spell at your current circle.\n", ch);
+		return;
+	}
+	if (!has_preparation_book(ch, spell))
+	{
+		send_to_char("You haven't got that spell in any available spellbooks!\n", ch);
+		return;
+	}
+	if (!move_needed)
+	{
+		send_to_char_f(ch, "%s is already first in your preparation queue.\n",
+			       skills[spell].name);
+		return;
+	}
+
+	// Pull later matches in front of the first other pending spell, in their original order.
+	auto **link = &(*insert)->next;
+	while (*link)
+	{
+		auto *af = *link;
+		if (af->type == TAG_MEMORIZE && !(af->flags & MEMTYPE_FULL) &&
+		    af->modifier == spell)
+		{
+			*link = af->next;
+			af->next = *insert;
+			*insert = af;
+			insert = &af->next;
+		}
+		else
+			link = &af->next;
+	}
+	mark_player_dirty_components(GET_PID(ch), PLAYER_COMPONENT_AFFECTS);
+	send_to_char_f(ch, "You prioritize %d pending %s of %s.\n", copies,
+		       copies == 1 ? "copy" : "copies", skills[spell].name);
+	if (switch_spell && IS_AFFECTED2(ch, AFF2_MEMORIZING) && get_scheduled(ch, event_memorize))
+	{
+		disarm_char_nevents(ch, event_memorize);
+		const int time = get_circle_memtime(ch, circle);
+		if (!schedule_memorize(ch, time / 2, &time))
+			return;
+		send_to_char("Switching spells restarts your preparation time.\n", ch);
+	}
+	else
+		gmcp_spell_preparation_changed(ch);
 }
 
 void do_forget(P_char ch, char *argument, int /*cmd*/)

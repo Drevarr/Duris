@@ -6615,20 +6615,30 @@ const char *elemental_form_failure_message(P_char ch, P_char victim, int spell)
 	return NULL;
 }
 
-const char *elemental_aura_failure_message(P_char ch)
+// An elemental form or another elemental aura blocks a new aura.
+static const char *elemental_aura_conflict(P_char ch)
 {
-	if (!ch || ch->in_room < 0 || ch->in_room > top_of_world)
-		return "There is no elemental planar essence here to draw upon.\n";
-
 	if (const char *failure = elemental_form_failure_message(ch, ch, SPELL_ELEMENTAL_AURA))
 		return failure;
 
-	if (affected_by_spell(ch, SPELL_ELEMENTAL_AURA) || IS_AFFECTED2(ch, AFF2_EARTH_AURA) ||
+	if (affected_by_spell(ch, SPELL_ELEMENTAL_AURA) || affected_by_spell(ch, SPELL_FIRE_AURA) ||
+	    affected_by_spell(ch, SPELL_AIR_AURA) || affected_by_spell(ch, SPELL_EARTH_AURA) ||
+	    affected_by_spell(ch, SPELL_WATER_AURA) || IS_AFFECTED2(ch, AFF2_EARTH_AURA) ||
 	    IS_AFFECTED2(ch, AFF2_WATER_AURA) || IS_AFFECTED2(ch, AFF2_FIRE_AURA) ||
 	    IS_AFFECTED2(ch, AFF2_AIR_AURA) || IS_AFFECTED4(ch, AFF4_ICE_AURA))
 	{
 		return "An elemental aura already surrounds you.\n";
 	}
+	return NULL;
+}
+
+const char *elemental_aura_failure_message(P_char ch)
+{
+	if (!ch || ch->in_room < 0 || ch->in_room > top_of_world)
+		return "There is no elemental planar essence here to draw upon.\n";
+
+	if (const char *failure = elemental_aura_conflict(ch))
+		return failure;
 
 	switch (world[ch->in_room].sector_type)
 	{
@@ -6676,24 +6686,101 @@ static int elemental_aura_max_stat(int sector, int location)
 	}
 }
 
+// One plane's stat maximum changes, as a fact named `name`.
+static std::string elemental_aura_plane_fact(const char *name, int sector)
+{
+	auto stat = [&](const char *stat_name, int location)
+	{
+		const int change = elemental_aura_max_stat(sector, location);
+		return std::string(stat_name) + (change > 0 ? " +" : " ") + std::to_string(change);
+	};
+	return fact(name, stat("Str", APPLY_STR_MAX) + ", " + stat("Dex", APPLY_DEX_MAX) + ", " +
+				  stat("Agi", APPLY_AGI_MAX) + ", " + stat("Con", APPLY_CON_MAX));
+}
+
 std::string elemental_aura_facts(P_char /*ch*/)
 {
-	auto plane = [](const char *name, int sector)
-	{
-		auto stat = [&](const char *stat_name, int location)
-		{
-			const int change = elemental_aura_max_stat(sector, location);
-			return std::string(stat_name) + (change > 0 ? " +" : " ") +
-			       std::to_string(change);
-		};
-		return fact(name, stat("Str", APPLY_STR_MAX) + ", " + stat("Dex", APPLY_DEX_MAX) +
-					  ", " + stat("Agi", APPLY_AGI_MAX) + ", " +
-					  stat("Con", APPLY_CON_MAX));
-	};
-	return "  Stat maximums by the plane you cast it on:\n" + plane("Fire", SECT_FIREPLANE) +
-	       plane("Water", SECT_WATER_PLANE) + plane("Air", SECT_AIR_PLANE) +
-	       plane("Earth", SECT_EARTH_PLANE) +
+	return "  Stat maximums by the plane you cast it on:\n" +
+	       elemental_aura_plane_fact("Fire", SECT_FIREPLANE) +
+	       elemental_aura_plane_fact("Water", SECT_WATER_PLANE) +
+	       elemental_aura_plane_fact("Air", SECT_AIR_PLANE) +
+	       elemental_aura_plane_fact("Earth", SECT_EARTH_PLANE) +
 	       fact("Duration", game_hours(elemental_aura_duration()));
+}
+
+static std::string set_elemental_aura_facts(int sector)
+{
+	return elemental_aura_plane_fact("Stat maximums", sector) +
+	       fact("Duration", game_hours(elemental_aura_duration())) +
+	       "  It has no effect while you have an elemental form or aura.\n";
+}
+
+std::string air_aura_facts(P_char /*ch*/)
+{
+	return set_elemental_aura_facts(SECT_AIR_PLANE);
+}
+
+std::string earth_aura_facts(P_char /*ch*/)
+{
+	return set_elemental_aura_facts(SECT_EARTH_PLANE);
+}
+
+std::string water_aura_facts(P_char /*ch*/)
+{
+	return set_elemental_aura_facts(SECT_WATER_PLANE);
+}
+
+// Air, earth and water aura are elemental aura's full form from one plane,
+// granted anywhere and without its save. Named sets are their only source.
+static void grant_elemental_aura(P_char ch, P_char victim, int spell, int sector,
+				 unsigned long aura, const char *to_char, const char *to_room)
+{
+	named_set_ordinary_cast ordinary_cast(victim, spell);
+	if (const char *failure = elemental_aura_conflict(victim))
+	{
+		send_to_char(failure, ch);
+		return;
+	}
+
+	act(to_char, FALSE, victim, 0, 0, TO_CHAR);
+	act(to_room, FALSE, victim, 0, 0, TO_ROOM);
+	affected_type af{};
+	af.type = spell;
+	af.duration = elemental_aura_duration();
+	for (int location : { APPLY_STR_MAX, APPLY_DEX_MAX, APPLY_AGI_MAX, APPLY_CON_MAX })
+	{
+		af.location = location;
+		af.modifier = elemental_aura_max_stat(sector, location);
+		affect_to_char(victim, &af);
+	}
+	af.location = 0;
+	af.modifier = 0;
+	af.bitvector2 = aura;
+	affect_to_char(victim, &af);
+}
+
+void spell_air_aura(int /*level*/, P_char ch, char * /*arg*/, int /*type*/, P_char victim,
+		    P_obj /*obj*/)
+{
+	grant_elemental_aura(ch, victim, SPELL_AIR_AURA, SECT_AIR_PLANE, AFF2_AIR_AURA,
+			     "&+cYour body fumes with an aura of air!",
+			     "&+c$n's&+c body fumes with an aura of air!");
+}
+
+void spell_earth_aura(int /*level*/, P_char ch, char * /*arg*/, int /*type*/, P_char victim,
+		      P_obj /*obj*/)
+{
+	grant_elemental_aura(ch, victim, SPELL_EARTH_AURA, SECT_EARTH_PLANE, AFF2_EARTH_AURA,
+			     "&+yYour body hardens with an aura of earth!",
+			     "&+y$n's&+y body hardens with an aura of earth!");
+}
+
+void spell_water_aura(int /*level*/, P_char ch, char * /*arg*/, int /*type*/, P_char victim,
+		      P_obj /*obj*/)
+{
+	grant_elemental_aura(ch, victim, SPELL_WATER_AURA, SECT_WATER_PLANE, AFF2_WATER_AURA,
+			     "&+bYour body flows with an aura of water!",
+			     "&+b$n's&+b body flows with an aura of water!");
 }
 
 void spell_elemental_aura(int /*level*/, P_char ch, char * /*arg*/, [[maybe_unused]] int type,
@@ -9536,7 +9623,7 @@ void spell_enchant_weapon(int level, P_char ch, char * /*arg*/, int /*type*/, P_
 
 	if ((GET_ITEM_TYPE(obj) == ITEM_WEAPON) && !IS_SET(obj->extra2_flags, ITEM2_MAGIC))
 	{
-		set_obj_extra2_flags(obj, obj->extra2_flags | (ITEM2_MAGIC));
+		set_obj_base_extra2_flag(obj, ITEM2_MAGIC, true);
 
 		for (i = 0, affected = FALSE; i < MAX_OBJ_AFFECT; i++)
 		{
@@ -21018,7 +21105,7 @@ void spell_dispel_magic(int level, P_char ch, char * /*arg*/, [[maybe_unused]] i
 		else if ((dispel_magic_fade_roll(live_rolls) < level) || IS_TRUSTED(ch))
 		{
 			act("&+bThe magic aura around&n $p&+b fades.", TRUE, ch, obj, 0, TO_CHAR);
-			set_obj_extra2_flags(obj, obj->extra2_flags & ~(ITEM2_MAGIC));
+			set_obj_base_extra2_flag(obj, ITEM2_MAGIC, false);
 			obj->affected[0].location = APPLY_NONE;
 			obj->affected[0].modifier = 0;
 			obj->affected[1].location = APPLY_NONE;

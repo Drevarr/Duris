@@ -257,7 +257,10 @@ void enhance(P_char ch, P_obj source, P_obj material)
 				    std::abs(static_cast<int64_t>(candidate->ival) - newval) <=
 					    radius)
 					candidates.push_back(candidate);
-		// Hash chains already carry the legacy same-score tie order.
+		// Shuffle first so the stable sort leaves templates of equal value in random order.
+		for (size_t i = candidates.size(); i > 1; --i)
+			std::swap(candidates[i - 1],
+				  candidates[number(0, static_cast<int>(i - 1))]);
 		std::stable_sort(
 			candidates.begin(), candidates.end(),
 			[&](const auto *left, const auto *right)
@@ -2149,7 +2152,7 @@ bool is_enhance_pool_candidate(P_obj obj)
 	if (!IS_SET(obj->wear_flags, ITEM_TAKE) ||
 	    IS_SET(obj->extra_flags,
 		   ITEM_ARTIFACT | ITEM_NOSELL | ITEM_NORENT | ITEM_NOSHOW | ITEM_TRANSIENT) ||
-	    IS_OBJ_STAT2(obj, ITEM2_QUESTITEM))
+	    IS_OBJ_STAT2(obj, ITEM2_QUESTITEM | ITEM2_CRUMBLELOOT))
 		return false;
 	if (obj->type == ITEM_STAFF && obj->value[3] > 0)
 		return false;

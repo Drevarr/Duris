@@ -21,8 +21,9 @@ generation_room, pieces, effect, spell = CASES[zone]
 game = NamedSetGame()
 runtime = game.runtime
 client = None
-form_case = {883: (3, 25, "fire form"), 1424: (2, -10, "water form")}.get(zone)
-form_max_hp = {}
+# Full-form auras change constitution along with its maximum.
+aura_con = {257: -20, 435: 75, 883: 25, 1424: -10}.get(zone)
+aura_max_hp = {}
 
 
 def constitution():
@@ -37,15 +38,15 @@ def expect_set(count):
               if spell_id not in (78,)} # Conjure Elemental has a pet, not a timed wearer buff.
     deadline=time.monotonic()+20
     while True:
-        active_form = form_case and count >= pieces
-        text=score(client)[1] if active_form else expect_max_hp(client,baseline+max(0,count-2)*5)
-        if all((name+" (" in text)==present for name,present in expected.items()):
-            if form_case:
-                assert constitution()==baseline_con+(form_case[1] if active_form else 0)
-                if active_form:
-                    maximum=score(client)[0]
-                    if count in form_max_hp:assert form_max_hp[count]==maximum
-                    form_max_hp[count]=maximum
+        active_aura = aura_con is not None and count >= pieces
+        text=score(client)[1] if active_aura else expect_max_hp(client,baseline+max(0,count-2)*5)
+        # A grant's stat changes apply on the next scheduled recompute, so poll them too.
+        if all((name+" (" in text)==present for name,present in expected.items()) and (
+                aura_con is None or constitution()==baseline_con+(aura_con if active_aura else 0)):
+            if active_aura:
+                maximum=score(client)[0]
+                if count in aura_max_hp:assert aura_max_hp[count]==maximum
+                aura_max_hp[count]=maximum
             return text
         assert time.monotonic()<deadline,(zone,count,expected,text)
         time.sleep(.5)
@@ -71,8 +72,6 @@ try:
     # including gear packed into nested containers by preceding cases.
     prior_origins = {row[0]: row[1] for row in game.items()}
     game.make_overlord()
-    if form_case:
-        game.sql("UPDATE player_data SET m_class=2048,secondary_class=0,spec="+str(form_case[0])+" WHERE pid=1")
     client = game.boot("named-generation")
     client.send("toggle aggimmune on")
     score(client)
@@ -156,7 +155,7 @@ try:
     )
     time.sleep(6)
     baseline, text = score(client)
-    baseline_con = constitution() if form_case else None
+    baseline_con = constitution() if aura_con is not None else None
     assert "Level: 56" in text, text
     check_report()
     client.send("inventory")
@@ -209,7 +208,7 @@ try:
                     "uids": chosen,
                     "threshold": pieces,
                     "effect": effect,
-                    "form_max_hp": form_max_hp,
+                    "aura_max_hp": aura_max_hp,
                     "baseline_constitution": baseline_con,
                 }
             )

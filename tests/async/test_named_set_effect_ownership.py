@@ -79,6 +79,8 @@ static std::optional<float> generous_refresh;
 float get_property(const char *key,double value) {
     return generous_refresh && !strcmp(key,"spell.generousRefresh.enabled") ? *generous_refresh : value;
 }
+static bool saves;
+bool NewSaves(P_char,int,int) {return saves;}
 int get_property(const char *,int value) {return value;}
 bool grouped(P_char,P_char) {return true;}
 char *str_dup(const char *text) {return strdup(text);}
@@ -362,8 +364,9 @@ harness += extract_function("specs.object.c", "int vigor_mask(").replace(
 new_native = {
     'magic/magic.c': ['spell_regeneration', 'spell_accel_healing', 'spell_air_form', 'spell_earth_form',
         'spell_fire_form', 'spell_water_form', 'spell_ironwood', 'spell_lightning_shield',
-        'spell_sanctuary', 'spell_ultravision'],
-    'classes/psionics.c': ['spell_inertial_barrier', 'spell_tower_iron_will'],
+        'spell_sanctuary', 'spell_ultravision', 'spell_air_aura', 'spell_earth_aura',
+        'spell_water_aura'],
+    'classes/psionics.c': ['spell_inertial_barrier', 'spell_tower_iron_will', 'spell_fire_aura'],
     'classes/reavers.c': ['spell_ilienzes_flame_sword', 'spell_girilals_granite_hammer',
         'spell_lliendils_stormshock'],
     'classes/new_skills.c': ['apply_awareness'],
@@ -374,6 +377,8 @@ for file,names in new_native.items():
     helpers={m[2]:m[0] for m in re.finditer(r'^static (int|bool|float|double) (\w+)\(',text,re.M)}
     if file=='magic/magic.c':
         helpers['elemental_form_failure_message']='const char *elemental_form_failure_message('
+        helpers['elemental_aura_conflict']='static const char *elemental_aura_conflict('
+        helpers['grant_elemental_aura']='static void grant_elemental_aura('
     def include(name,signature):
         global harness
         if name in included:return
@@ -1155,7 +1160,11 @@ int main() {
         native_case{SPELL_LIGHTNINGSHIELD,spell_lightning_shield,0,0},
         native_case{SPELL_SANCTUARY,spell_sanctuary,0,0},
         native_case{SPELL_TOWER_IRON_WILL,spell_tower_iron_will,0,0},
-        native_case{SPELL_ULTRAVISION,spell_ultravision,0,0}}) {
+        native_case{SPELL_ULTRAVISION,spell_ultravision,0,0},
+        native_case{SPELL_AIR_AURA,spell_air_aura,0,0},
+        native_case{SPELL_EARTH_AURA,spell_earth_aura,0,0},
+        native_case{SPELL_FIRE_AURA,spell_fire_aura,0,0},
+        native_case{SPELL_WATER_AURA,spell_water_aura,0,0}}) {
         reset();
         skills[entry.spell].name="new worksheet effect";skills[entry.spell].spell_pointer=entry.cast;
         if(entry.spec || entry.weapon) {
@@ -1172,15 +1181,43 @@ int main() {
         if(entry.spell==SPELL_FIRE_FORM) assert(nodes==5);
         if(entry.spell==SPELL_WATER_FORM) assert(nodes==4);
         if(entry.spell==SPELL_IRONWOOD) assert(owned_new->modifier==9);
+        // Set auras reach full form anywhere and without the native save.
+        if(entry.spell==SPELL_FIRE_AURA)
+            assert(nodes==7 && IS_AFFECTED2(&wearer,AFF2_FIRE_AURA) && IS_AFFECTED2(&wearer,AFF2_FIRESHIELD));
+        if(entry.spell==SPELL_AIR_AURA) assert(nodes==5 && IS_AFFECTED2(&wearer,AFF2_AIR_AURA));
+        if(entry.spell==SPELL_EARTH_AURA) assert(nodes==5 && IS_AFFECTED2(&wearer,AFF2_EARTH_AURA));
+        if(entry.spell==SPELL_WATER_AURA) assert(nodes==5 && IS_AFFECTED2(&wearer,AFF2_WATER_AURA));
         apply_zone_spell(&wearer,4,"Eligible",20000+entry.spell,&gear[0],entry.spell);
         assert(count(&wearer,entry.spell,true)==nodes && owned_new->duration==duration);
+        // An ordinary Fire Aura still needs fire terrain.
+        rooms[0].sector_type=entry.spell==SPELL_FIRE_AURA ? SECT_FIREPLANE : SECT_INSIDE;
         entry.cast(50,&wearer,nullptr,0,&wearer,nullptr);
+        rooms[0].sector_type=SECT_INSIDE;
         auto *ordinary_new=get_spell_from_char(&wearer,entry.spell);
         assert(ordinary_new && !(ordinary_new->flags&AFFTYPE_SET_AFFECT));
         const int ordinary_duration=ordinary_new->duration;
         assert(reconcile_named_set_spell(&wearer,entry.spell));
         assert(get_spell_from_char(&wearer,entry.spell)==ordinary_new && ordinary_new->duration==ordinary_duration);
         assert(!count(&wearer,entry.spell,true));
+    }
+    // An elemental form or another elemental aura silently blocks every set aura, in
+    // either grant order, even a Fire Aura that missed its full form and has no aura bit.
+    for(int blocker : {SPELL_EARTH_FORM,SPELL_ELEMENTAL_AURA,SPELL_AIR_AURA,SPELL_FIRE_AURA})
+        for(int spell : {SPELL_AIR_AURA,SPELL_EARTH_AURA,SPELL_FIRE_AURA,SPELL_WATER_AURA}) {
+            if(blocker==spell) continue;
+            reset(); output_messages=0;
+            affected_type existing{}; existing.type=blocker; existing.duration=8;
+            affect_to_char(&wearer,&existing);
+            apply_zone_spell(&wearer,7,"Blocked",20000+spell,&gear[0],spell);
+            assert(!count(&wearer,spell,true) && !output_messages);
+        }
+    // So does an aura bit from another source, such as equipment.
+    for(int spell : {SPELL_AIR_AURA,SPELL_EARTH_AURA,SPELL_FIRE_AURA,SPELL_WATER_AURA}) {
+        reset(); output_messages=0;
+        affected_type worn{}; worn.type=SPELL_ARMOR; worn.duration=8; worn.bitvector2=AFF2_WATER_AURA;
+        affect_to_char(&wearer,&worn);
+        apply_zone_spell(&wearer,7,"Blocked",20000+spell,&gear[0],spell);
+        assert(!count(&wearer,spell,true) && !output_messages);
     }
     // Monastery's native healing pair is reachable at 2/3 pieces, in either
     // grant order, and loses only the tier whose support was removed.

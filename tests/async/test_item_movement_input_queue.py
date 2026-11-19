@@ -41,7 +41,7 @@ for command in (
     "CMD_EAT", "CMD_FILL", "CMD_POUR", "CMD_QUAFF", "CMD_RECITE",
     "CMD_RELOAD", "CMD_SALVAGE", "CMD_SIP", "CMD_SMOKE", "CMD_TASTE",
     "CMD_THROW", "CMD_THROWPOTION", "CMD_USE", "CMD_CAST", "CMD_INSTACAST",
-    "CMD_SPELLWEAVE", "CMD_WILL", "CMD_AFIRE",
+    "CMD_SPELLWEAVE", "CMD_WILL", "CMD_AFIRE", "CMD_PRIORITIZE",
     "CMD_ASK", "CMD_VALUE", "CMD_REPAIR", "CMD_APPRAISE", "CMD_LORE",
     "CMD_WRITE", "CMD_ITEMMANA", "CMD_AUCTION", "CMD_FORGE", "CMD_REFINE",
     "CMD_ENHANCE", "CMD_CRAFT", "CMD_ENCRUST", "CMD_SPELLBIND", "CMD_FIX",
@@ -173,6 +173,7 @@ int ordered_command_number(const char *);
 #define CMD_SPELLWEAVE 72
 #define CMD_WILL 73
 #define CMD_AFIRE 74
+#define CMD_PRIORITIZE 75
 
 static const char *command[] = {
 	"get", "take", "drop", "put", "give", "wear", "wield", "grab", "hold",
@@ -183,7 +184,7 @@ static const char *command[] = {
 	"repair", "appraise", "lore", "write", "itemmana", "auction", "forge", "refine",
 	"enhance", "craft", "encrust", "spellbind", "fix", "mix", "mixpoison", "smelt",
 	"enchant", "make", "scribe", "disguise", "lock", "unlock", "pick", "rent", "quit",
-	"camp", "backstab", "cast", "instacast", "spellweave", "will", "afire", "\n"
+	"camp", "backstab", "cast", "instacast", "spellweave", "will", "afire", "prioritize", "\n"
 };
 
 P_obj object_list = NULL;
@@ -627,6 +628,7 @@ int main()
 	assert(!input_allowed_while_item_moving("inventory"));
 	assert(!input_allowed_while_item_moving("fire target"));
 	assert(!input_allowed_while_item_moving("afire tank"));
+	assert(!input_allowed_while_item_moving("prio full heal"));
 	assert(!input_allowed_while_item_moving("eat roast"));
 	assert(!input_allowed_while_item_moving("quaff potion"));
 	assert(!input_allowed_while_item_moving("recite scroll"));

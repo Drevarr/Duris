@@ -34,6 +34,7 @@ harness = r'''
 #include "persistence/persistence_checkpoint.h"
 #include "world/vnum.obj.h"
 #include "cmd/interp.h"
+#include "player/first_find_tips.h"
 #include <cassert>
 #include <cstring>
 #include <set>

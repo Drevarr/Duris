@@ -1,5 +1,17 @@
 # Immutable Migration Ledger
 
+## First-find tips (0063)
+
+`0063_first_find_tips` adds `player_data.first_find_tips BIGINT UNSIGNED NOT NULL
+DEFAULT 18446744073709551615`, one bit per one-time tip a character has seen on
+first receiving a random drop or crafting item. The all-seen default marks every
+existing character, so only characters created afterwards see the tips; the server
+saves zero for each new character. The guarded addition re-runs safely and keeps
+saved values. Apply it before starting the new server. Snapshot version 16 reads
+older snapshots as all-seen; an older binary cannot read version 16 snapshots.
+The previously sealed online modes below do not authorize this new migration or a
+64-step head.
+
 ## Why a character last left (0062)
 
 `0062_player_save_intent` adds `player_data.save_intent TINYINT UNSIGNED NOT NULL

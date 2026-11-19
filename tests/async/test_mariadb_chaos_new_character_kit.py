@@ -565,6 +565,12 @@ def run_chaos_kit_journey(binary: pathlib.Path, class_name: str = "Warrior") -> 
                         "denied Chaos level command changed the character level:\n" + score,
                     )
 
+                    # The grant's save reaches the rows through the asynchronous writer.
+                    deadline = time.monotonic() + 30
+                    while not read_item_ownership(sql).get(STARTER_BAG_VNUM):
+                        require(time.monotonic() < deadline,
+                                "the starter grant's save did not reach the saved rows")
+                        time.sleep(0.05)
                     initial_authority = assert_kit_ownership(sql, class_name)
                     wearable_before_wear = one_owned_item(sql, wearable_vnum)
                     client.send(f"wear {wearable_keyword}")

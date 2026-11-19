@@ -1294,7 +1294,8 @@ const char *command[MAX_CMD] = {
 	"keptchar",
 	"copyover",
 	"afire",
-	"\n" /* MAX_CMD = 879, MAX_CMD_LIST = 1000 */
+	"prioritize",
+	"\n" /* MAX_CMD = 880, MAX_CMD_LIST = 1000 */
 };
 
 const char *fill_words[] = { "in", "from", "with", "the", "on", "at", "to", "\n" };
@@ -1502,6 +1503,7 @@ bool cmd_depends_on_item_movement(int cmd)
 	case CMD_ENCHANT:
 	case CMD_MAKE:
 	case CMD_SCRIBE:
+	case CMD_PRIORITIZE:
 	case CMD_DISGUISE:
 	case CMD_LOCK:
 	case CMD_UNLOCK:
@@ -2269,8 +2271,9 @@ void command_interpreter(P_char ch, char *argument)
 			{
 				// Kill minor invis if applicable.
 				if ((cmd != CMD_LOOK) && (cmd != CMD_MEMORIZE) &&
-				    (cmd != CMD_GCC) && (cmd != CMD_HELP) && (cmd != CMD_PRAY) &&
-				    (cmd != CMD_REST) && (cmd != CMD_SLEEP) && (cmd != CMD_SIT) &&
+				    (cmd != CMD_PRIORITIZE) && (cmd != CMD_GCC) &&
+				    (cmd != CMD_HELP) && (cmd != CMD_PRAY) && (cmd != CMD_REST) &&
+				    (cmd != CMD_SLEEP) && (cmd != CMD_SIT) &&
 				    (cmd != CMD_RECLINE) && (cmd != CMD_EAT) &&
 				    (cmd != CMD_DRINK) && (cmd != CMD_MEDITATE) &&
 				    (cmd != CMD_RWC) && (cmd != CMD_ASSIMILATE) &&
@@ -2424,12 +2427,12 @@ void command_interpreter(P_char ch, char *argument)
 							     exec_char);
 					}
 					else if (cmd != CMD_PRAY && cmd != CMD_MEMORIZE &&
-						 cmd != CMD_ASSIMILATE && cmd != CMD_FOCUS &&
-						 cmd != CMD_GCC && cmd != CMD_HELP &&
-						 cmd != CMD_RWC && cmd != CMD_OUTPOST &&
-						 cmd != CMD_NEXUS && cmd != CMD_FRAGLIST &&
-						 cmd != CMD_DEFOREST && cmd != CMD_ARTIFACTS &&
-						 cmd != CMD_TUPOR &&
+						 cmd != CMD_PRIORITIZE && cmd != CMD_ASSIMILATE &&
+						 cmd != CMD_FOCUS && cmd != CMD_GCC &&
+						 cmd != CMD_HELP && cmd != CMD_RWC &&
+						 cmd != CMD_OUTPOST && cmd != CMD_NEXUS &&
+						 cmd != CMD_FRAGLIST && cmd != CMD_DEFOREST &&
+						 cmd != CMD_ARTIFACTS && cmd != CMD_TUPOR &&
 						 !command_preserves_meditation(
 							 cmd, argument + begin + look_at))
 					{
@@ -3445,6 +3448,7 @@ void assign_command_pointers(void)
 	CMD_Y(CMD_LAYHAND, STAT_NORMAL + POS_STANDING, do_layhand, 0, TRUE);
 	CMD_Y(CMD_LOOK, STAT_RESTING + POS_PRONE, do_look, 0, FALSE);
 	CMD_Y(CMD_MEMORIZE, STAT_RESTING + POS_SITTING, do_memorize, 0, FALSE);
+	CMD_Y(CMD_PRIORITIZE, STAT_RESTING + POS_SITTING, do_prioritize, 0, FALSE);
 	CMD_Y(CMD_ASSIMILATE, STAT_RESTING + POS_SITTING, do_assimilate, 0, FALSE);
 	CMD_Y(CMD_COMMUNE, STAT_RESTING + POS_SITTING, do_assimilate, 0, FALSE);
 	CMD_Y(CMD_DEFOREST, STAT_RESTING + POS_SITTING, do_assimilate, 0, FALSE);

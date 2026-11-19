@@ -37,10 +37,10 @@ for signature in ('void do_will(', 'void do_cast('):
     body = extract(CAST, signature)
     assert re.search(r'if \(!schedule_spellcast\([^;]+\)\)\s*return;', body)
 assert 'schedule_spellcast(' in extract(CAST, 'void event_spellcast(')
-assert len(re.findall(r'if \(!schedule_memorize\([^;]+\)\)\s*return;', MEM)) == 3
+assert len(re.findall(r'if \(!schedule_memorize\([^;]+\)\)\s*return;', MEM)) == 4
 for signature in ('void handle_undead_mem(', 'void handle_memorize(',
                   'void event_memorize(', 'void do_assimilate(',
-                  'void do_npc_commune(', 'void do_memorize(', 'void use_spell('):
+                  'void do_npc_commune(', 'void do_memorize(', 'void do_prioritize(', 'void use_spell('):
     assert 'schedule_memorize(' in extract(MEM, signature)
 
 PRELUDE = r'''

@@ -5961,39 +5961,52 @@ Please see help rules.
 #0
 
 Craft
-Craft - Last Edited: 2015-08-18 04:51:06 by ashyel
+Craft - Last Edited: 2026-11-19
 ==================================================
-Craft is one of the tradeskills available to players.
-Craft allows characters to create equipment for following slots:
-about, waist, earring, neck, wrist, finger, eyes, quiver, tail, nose, horn, face.
-Once learned, a player can invoke the forge command for a list of options.
-Crafting uses components obtained through the salvage skill to allow players
-to create the items themselves!
-Your Craft skill also limits how far you can learn Encrust; see help Encrust.
-craft - with no arguments will bring up your list of known recipes and the help
-menu:
-(example:)
-craft Syntax:
-(craft info - list required materials to forge the item.)
-(craft stat - display properties of the item.)
-(craft make - create the item.)
-You know the following recipes:
-----------------------------------------------------------------------------
-Recipe Number Item
-135212 a wickedly barbed two-handed greatsword
-----------------------------------------------------------------------------
-91058 a massive blood-stained holy avenger
-----------------------------------------------------------------------------
-Typing 'craft info 91058' would display the items needed to create this particular
-item.
-Typing 'craft stat 91058' would display the attributes tied to this item.
-Typing 'craft make 91058' would attempt to create the item if you had the necessary
-salvaged materials on your being.
-Please note: Crafting is only possible on items with an ivalue of less than 100.
+Syntax: craft
+        craft info <number>
+        craft stat <number>
+        craft make <number> [<stone>]
+
+Craft is a tradeskill for making accessories from recipes: items worn
+about the body, on the waist, ears, neck, wrists, fingers, eyes, face,
+nose, horns or tail, and quivers. Weapons and armor belong to Forge.
+
+Learn Craft with 'practice craft' from Jodnan the blacksmith in
+Tharnadia or Gixnif the goblin miner in Khildarak. You can know only one
+of Craft, Forge and Mine. Either teacher will 'practice reset' your
+tradeskill for 200 epic points, which also erases every recipe you know.
+
+Recipes are scrolls found by salvaging magical items. Use 'recite
+<recipe>' to add one to your list. Type 'craft' to list your recipes;
+the other commands take a number from that list. 'craft info' shows the
+salvaged materials needed, 'craft stat' shows the finished item, and
+'craft make' builds it.
+
+Making an item uses up its materials and one box of gnomish crafting
+tools, sold in Tharnadia and Khildarak. An item with magical properties
+also needs one magical essence, which salvage can yield. Carry them all
+in your inventory. You can make a recipe whose item value is at most
+three times your level. Crafting always succeeds: the item is marked as
+made by you and cannot be repaired. You gain experience based on its
+item value, and your Craft skill can rise each time you craft.
+
+Name a strange stone you carry after the number, as in 'craft make 3
+green', to work its magic into the item: the item gains the stone's
+affects, and the stone is used up with the other inputs. A stone that
+would add nothing is refused, and a stone you only carry is never used.
+Forge takes no stones.
+
+Each Encrust lesson needs Craft at least as high as the Encrust level it
+teaches.
 
 ==See also==
 
-tradeskills, forge, material_list, salvage
+* Recipes
+* Salvage
+* Forge
+* Encrust
+* Chaos craft pouch
 
 #0
 
@@ -10733,35 +10746,43 @@ Requirements are registration values, not automatic learning or preparation. Bas
 #0
 
 Forge
-Forge - Last Edited: 2013-05-07 15:25:44 by targ
+Forge - Last Edited: 2026-11-19
 ================================================
-Forge is one of the tradeskills available to players.
-Forge allows characters to create equipment for the following slots:
-head, body, arms, feet, shield, weapons, legs, hands.
-Once learned, a player can invoke the forge command for a list of options:
-forge - with no arguments will bring up your list of known recipes and the help
-menu:
-(example:)
-Forge Syntax:
-(forge info <number> - list required materials to forge the item.)
-(forge stat <number> - display properties of the item.)
-(forge make <number> - create the item.)
-You know the following recipes:
-----------------------------------------------------------------------------
-Recipe Number                         Item
-   135212                a wickedly barbed two-handed greatsword
-----------------------------------------------------------------------------
-   91058                 a massive blood-stained holy avenger
-----------------------------------------------------------------------------
-Typing 'forge info 91058' would display the items needed to create this particular
-item.
-Typing 'forge stat 91058' would display the attributes tied to this item.
-Typing 'forge make 91058' would attempt to create the item if you had the necessary
-salvaged materials on your being.
+Syntax: forge
+        forge info <number>
+        forge stat <number>
+        forge make <number>
+
+Forge is a tradeskill for making weapons, shields and armor worn on the
+head, body, arms, hands, legs or feet from recipes. Accessories belong to
+Craft.
+
+Learn Forge with 'practice forge' from Jodnan the blacksmith in
+Tharnadia or Gixnif the goblin miner in Khildarak. You can know only one
+of Craft, Forge and Mine. Either teacher will 'practice reset' your
+tradeskill for 200 epic points, which also erases every recipe you know.
+
+Recipes are scrolls found by salvaging magical items. Use 'recite
+<recipe>' to add one to your list. Type 'forge' to list your recipes;
+the other commands take a number from that list. 'forge info' shows the
+salvaged materials needed, 'forge stat' shows the finished item, and
+'forge make' builds it. Beside a smith who works ore, a bare 'forge'
+shows the smith's wares instead; use 'forge list' there.
+
+Making an item uses up its materials and one blacksmithing flux, sold in
+Tharnadia and Khildarak. An item with magical properties also needs one
+magical essence, which salvage can yield. Carry them all in your
+inventory. You can make a recipe whose item value is at most three
+times your level. Forging always succeeds: the item is marked as made by
+you and cannot be repaired. You gain experience based on its item value,
+and your Forge skill can rise each time you forge.
 
 ==See also==
 
-tradeskills, craft, salvage, material_list
+* Recipes
+* Salvage
+* Craft
+* Chaos craft pouch
 
 #0
 
@@ -10777,7 +10798,7 @@ already committed to memory.
 
 ==See also==
 
-pray, memorize, spells, Spell Circle, Spell Slot, cast
+[[Prioritize]], pray, memorize, spells, Spell Circle, Spell Slot, cast
 
 #0
 
@@ -16833,6 +16854,7 @@ Type spells to see your personal list and applicable interface.
   pray                          view or resume a praying class's preparation
   pray <spell name>             example: pray cure light
   forget <spell name>           remove a spell from your repertoire
+  prioritize <spell name>       move pending copies first (see [[Prioritize]])
 
 Rest while sitting or kneeling to start or resume preparation. Book classes
 normally need the spell in an available spellbook (inventory, hands, belt or
@@ -20268,7 +20290,26 @@ To accelerate praying for spells, use meditate if the skill is available to your
 
 ==See also==
 
-rest, meditate, cleric, paladin, wisdom, scribe, forget, commands
+[[Prioritize]], rest, meditate, cleric, paladin, wisdom, scribe, forget, commands
+
+#0
+
+Prioritize
+Prioritize - Last Edited: 2026-11-19
+==================================================
+Move every pending copy of a spell to the front of your memorization or
+prayer queue. For example, if you have bless, full heal, and another full
+heal queued, type:
+
+  prio full heal
+
+You will prepare both copies of full heal before bless. Ready spells stay
+ready. If you are preparing a different spell, switching starts the new
+spell's timer from the beginning. If you are already preparing full heal,
+you keep your progress. A paused queue stays paused until you resume with
+[[Memorize]] or [[Pray]]. Book users need access to the selected spell.
+
+See also: [[Memorize]], [[Pray]], [[Forget]]
 
 #0
 

@@ -17,6 +17,8 @@ from test_flight_network_journey import command
 ROOT=journey.ROOT
 BARD,MAGE="Dishsinger","Spellward"
 REPORT=ROOT/"bin/qualification/issue707/disharmonist-gameplay.json"
+ACHIEVEMENT_FLAGS=2 | 4 | 512 # AFFTYPE_NOSHOW | AFFTYPE_NODISPEL | AFFTYPE_PERM
+MEMORIZED_FLAGS=ACHIEVEMENT_FLAGS | 256 | 16 # + AFFTYPE_NOAPPLY, AFFTYPE_CUSTOM1 (memorized)
 
 
 def cast_result(client,spell,target=""):
@@ -88,8 +90,10 @@ def run(binary,phase):
                         f"base_cha=100,screen_length=100,last_room=22800 WHERE name='{name}'")
                     pid=sql(f"SELECT pid FROM player_data WHERE name='{name}'")
                     sql(f"DELETE FROM player_affects WHERE pid={pid}; DELETE FROM player_skills WHERE pid={pid}")
+                    # Use the flags the game gives these rows, NODISPEL included, so Chaos can only
+                    # pick the four test spells below.
                     sql(f"INSERT INTO player_affects(pid,type,duration,modifier,flags,level) "
-                        f"VALUES({pid},{spell_id('AIP_LEVELACHIEVEMENT')},-1,56,0,56)")
+                        f"VALUES({pid},{spell_id('AIP_LEVELACHIEVEMENT')},-1,56,{ACHIEVEMENT_FLAGS},56)")
                     keys=("SKILL_CONCENTRATION", "SKILL_QUICK_CHANT")
                     keys+=(("SONG_STORMS","SONG_CHAOS","SONG_DISSONANCE","INSTRUMENT_DRUMS","INSTRUMENT_HORN","SPELL_MAGIC_MISSILE")
                            if name==BARD else ("SPELL_GROUP_GLOBE",))
@@ -98,7 +102,7 @@ def run(binary,phase):
                         sql(f"INSERT INTO player_skills(pid,skill_id,learned,taught) VALUES({pid},{spell_id(key)},{rating},100)")
                     spell=spell_id("SPELL_MAGIC_MISSILE" if name==BARD else "SPELL_GROUP_GLOBE")
                     sql(f"INSERT INTO player_affects(pid,type,duration,modifier,flags,level) "
-                        f"VALUES({pid},{spell_id('TAG_MEMORIZE')},-1,{spell},16,56);"*30)
+                        f"VALUES({pid},{spell_id('TAG_MEMORIZE')},-1,{spell},{MEMORIZED_FLAGS},56);"*30)
                     if name==BARD:
                         # Human Adaptive's +5 plus this +406 produces the engine's 511-stat ceiling.
                         sql(f"INSERT INTO player_affects(pid,type,duration,location,modifier,flags,level) "

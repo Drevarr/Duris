@@ -1437,6 +1437,7 @@ P_char in_command_aura(P_char);
 struct obj_affect *get_obj_affect(P_obj, int);
 int obj_affect_time(P_obj, struct obj_affect *);
 void set_obj_affected(P_obj, int, sh_int, sh_int);
+void set_obj_base_extra2_flag(P_obj, unsigned, bool);
 int affect_from_obj(P_obj, sh_int);
 void recover_from_room_ch_loop(P_char);
 
@@ -1937,6 +1938,7 @@ void add_scribing(P_char, int, P_obj, int, P_obj, P_char);
 void change_spells_in_circle(P_char, int, int);
 void check_for_scribe_nukage_object(P_obj);
 void do_forget(P_char, char *, int);
+void do_prioritize(P_char, char *, int);
 void do_memorize(P_char, char *, int);
 // Returns estimated pulses left, including queued work after the scheduled event.
 int64_t spell_preparation_estimate(P_char ch, bool &active);
@@ -2574,6 +2576,9 @@ void spell_siren_song(int, P_char, char *, int, P_char, P_obj);
 void spell_harmonic_resonance(int, P_char, char *, int, P_char, P_obj);
 const char *elemental_aura_failure_message(P_char);
 void spell_elemental_aura(int, P_char, char *, int, P_char, P_obj);
+void spell_air_aura(int, P_char, char *, int, P_char, P_obj);
+void spell_earth_aura(int, P_char, char *, int, P_char, P_obj);
+void spell_water_aura(int, P_char, char *, int, P_char, P_obj);
 void spell_summon_insects(int, P_char, char *, int, P_char, P_obj);
 void spell_consecrate_land(int, P_char, char *, int, P_char, P_obj);
 void spell_binding_wind(int, P_char, char *, int, P_char, P_obj);

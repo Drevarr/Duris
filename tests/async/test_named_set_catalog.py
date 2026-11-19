@@ -59,9 +59,9 @@ for line in assignments.split("## Appendix: complete worksheet choices")[1].spli
         assert zone not in expected
         expected[zone]=tiers
 actual={int(row[1:row.index(',')]):[(int(n),s) for n,s in re.findall(r"\{(\d+),(\w+)\}",row)] for row in set_rows}
-assert actual==expected and len(actual)==len(set_rows)==306
-assert sum(map(len,actual.values()))==608
-assert collections.Counter(map(len,actual.values()))=={1:5,2:300,3:1}
+assert actual==expected and len(actual)==len(set_rows)==307
+assert sum(map(len,actual.values()))==609
+assert collections.Counter(map(len,actual.values()))=={1:6,2:300,3:1}
 assert not {112,480,250,353,670}&actual.keys()
 assert actual[455]==[(3,"SPELL_WARRING_ZEAL"),(5,"SPELL_DIVINE_FURY"),(7,"SPELL_BATTLETIDE")]
 loaded=set()
@@ -152,14 +152,17 @@ int main() {
         for (const auto &tier : named_sets[i].proc_spells)
             if (tier[0]) { ++tiers; effects.insert(tier[1]); }
     }
-    assert(named_set_count == 306 && tiers == 608 && effects.size() == 74);
+    assert(named_set_count == 307 && tiers == 609 && effects.size() == 74);
     assert(validate_named_sets());
     assert(named_set_bonuses(112).empty());
     assert(named_set_bonuses(230).find("&+Gironwood &+W(&+Y3&+W)&n") != std::string::npos);
     assert(named_set_bonuses(455).find("battletide &+W(&+Y7&+W)&n") != std::string::npos);
+    assert(named_set_bonuses(883).find("fire aura &+W(&+Y4&+W)&n") != std::string::npos);
+    assert(named_set_bonuses(5000).find("levitate &+W(&+Y2&+W)&n") != std::string::npos);
     char *notes = generate_named_report();
     assert(strstr(notes,"one piece"));
-    assert(strstr(notes,"matching Magus"));
+    assert(strstr(notes,"Elemental auras work anywhere; an elemental form blocks them."));
+    assert(!strstr(notes,"Magus"));
     assert(strstr(notes,"Globe of Darkness excludes Holy Light and Mage Flame"));
     free(notes);
     assert(real_zone(30) == -1 && real_zone(250) == -1);

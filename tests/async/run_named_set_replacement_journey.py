@@ -60,16 +60,12 @@ with journey.mariadb_authority() as (environment, sql):
             game.stop()
             game.make_overlord()
         cases = [("wear-" + str(zone), "run_named_set_wear_journey.py", [str(zone)])
-                 for zone in (1325, 159, 455, 112, 883, 1424)]
+                 for zone in (1325, 159, 455, 112, 257, 435, 883, 1424)]
         cases += [("transfer", "run_named_set_transfer_journey.py", [str(runtime)]),
                   ("report", "run_named_set_report_journey.py", [])]
         for label, script, args in cases:
             if label in evidence["completed"]:
                 continue
-            if label == "transfer":
-                # Form cases temporarily use a matching Magus; the transfer
-                # fixture's donor starts as the original Warrior again.
-                game.sql("UPDATE player_data SET m_class=1,secondary_class=0,spec=0 WHERE pid=1")
             print("Named replacement case: " + label, flush=True)
             subprocess.run([sys.executable, str(journey.ROOT / "tests/async" / script), *args],
                            cwd=journey.ROOT, env=environment, check=True)

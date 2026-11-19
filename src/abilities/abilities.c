@@ -941,6 +941,12 @@ AbilityFacts ability_facts(int skill)
 		return relocate_facts;
 	case SPELL_ELEMENTAL_AURA:
 		return elemental_aura_facts;
+	case SPELL_AIR_AURA:
+		return air_aura_facts;
+	case SPELL_EARTH_AURA:
+		return earth_aura_facts;
+	case SPELL_WATER_AURA:
+		return water_aura_facts;
 	case SPELL_WIND_TUNNEL:
 		return wind_tunnel_facts;
 	case SPELL_BINDING_WIND:

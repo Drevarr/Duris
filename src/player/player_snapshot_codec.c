@@ -13,6 +13,7 @@
  ****************************************************************************/
 
 #include "player/player_snapshot_codec.h"
+#include "player/first_find_tips.h"
 #include "economy/currency_value.h"
 #include "net/output_preference_state.h"
 #include "core/files.h"
@@ -714,7 +715,7 @@ player_snapshot_codec_result player_snapshot_decode(const uint8_t *encoded, size
 		if (wire_version == 1 || wire_version == 3 || wire_version == 5 ||
 		    wire_version == 7 || wire_version == 8 || wire_version == 9 ||
 		    wire_version == 10 || wire_version == 11 || wire_version == 12 ||
-		    wire_version == 13 || wire_version == 14)
+		    wire_version == 13 || wire_version == 14 || wire_version == 15)
 			snapshot.schema_version = PLAYER_SNAPSHOT_SCHEMA_VERSION;
 		if (snapshot.schema_version != PLAYER_SNAPSHOT_SCHEMA_VERSION)
 			return player_snapshot_codec_result::unsupported_version;
@@ -730,7 +731,8 @@ player_snapshot_codec_result player_snapshot_decode(const uint8_t *encoded, size
 			wire_version < 10 ? player_status_field::learned_flight_stops :
 			wire_version < 13 ? player_status_field::divine_boon_delivery_seq :
 			wire_version < 14 ? player_status_field::quest_replacement_due :
-					    player_status_field::quest_reward_item_count;
+			wire_version < 16 ? player_status_field::quest_reward_item_count :
+					    player_status_field::first_find_tips;
 		const auto last_string_field =
 			wire_version < 9 ? player_status_string_field::poof_out :
 					   player_status_string_field::last_read_news_hash;
@@ -901,6 +903,14 @@ player_snapshot_codec_result player_snapshot_decode(const uint8_t *encoded, size
 				return player_snapshot_codec_result::limit_exceeded;
 			snapshot.status_integers.push_back(
 				{ player_status_field::quest_reward_item_count, 0, 0, false });
+		}
+		// Snapshots older than the tips belong to characters that never see them.
+		if (wire_version < 16 && (snapshot.components & PLAYER_COMPONENT_STATUS))
+		{
+			if (snapshot.status_integers.size() == PLAYER_SNAPSHOT_MAX_ROWS)
+				return player_snapshot_codec_result::limit_exceeded;
+			snapshot.status_integers.push_back({ player_status_field::first_find_tips,
+							     0, FIRST_FIND_TIPS_ALL_SEEN, true });
 		}
 		*snapshot_out = std::move(snapshot);
 	}
