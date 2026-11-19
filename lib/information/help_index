@@ -10948,8 +10948,26 @@ resume your studies/prayers and lists the time remaining to complete
 each spell.
 
 "Forget" lets you purge a spell from your active repertoire.
+Use [[Prioritize]] to prepare a pending spell first.
 ===========================================================================
 See also: CAST, PRACTICE, MEDITATE, "SPELL SLOT"
+
+#
+"Prioritize"
+==================================================
+Move every pending copy of a spell to the front of your memorization or
+prayer queue. For example, if you have bless, full heal, and another full
+heal queued, type:
+
+  prio full heal
+
+You will prepare both copies of full heal before bless. Ready spells stay
+ready. If you are preparing a different spell, switching starts the new
+spell's timer from the beginning. If you are already preparing full heal,
+you keep your progress. A paused queue stays paused until you resume with
+[[Memorize]] or [[Pray]]. Book users need access to the selected spell.
+
+See also: [[Memorize]], [[Pray]], [[Forget]]
 
 #
 "MEMORY BLOCK" (Spell)
@@ -29337,6 +29355,7 @@ Type spells to see your personal list and applicable interface.
   pray                          view or resume a praying class's preparation
   pray <spell name>             example: pray cure light
   forget <spell name>           remove a spell from your repertoire
+  prioritize <spell name>       move pending copies first (see [[Prioritize]])
 
 Rest while sitting or kneeling to start or resume preparation. Book classes
 normally need the spell in an available spellbook (inventory, hands, belt or

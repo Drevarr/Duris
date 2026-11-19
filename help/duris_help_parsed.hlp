@@ -10792,7 +10792,7 @@ already committed to memory.
 
 ==See also==
 
-pray, memorize, spells, Spell Circle, Spell Slot, cast
+[[Prioritize]], pray, memorize, spells, Spell Circle, Spell Slot, cast
 
 #0
 
@@ -16848,6 +16848,7 @@ Type spells to see your personal list and applicable interface.
   pray                          view or resume a praying class's preparation
   pray <spell name>             example: pray cure light
   forget <spell name>           remove a spell from your repertoire
+  prioritize <spell name>       move pending copies first (see [[Prioritize]])
 
 Rest while sitting or kneeling to start or resume preparation. Book classes
 normally need the spell in an available spellbook (inventory, hands, belt or
@@ -20283,7 +20284,26 @@ To accelerate praying for spells, use meditate if the skill is available to your
 
 ==See also==
 
-rest, meditate, cleric, paladin, wisdom, scribe, forget, commands
+[[Prioritize]], rest, meditate, cleric, paladin, wisdom, scribe, forget, commands
+
+#0
+
+Prioritize
+Prioritize - Last Edited: 2026-11-19
+==================================================
+Move every pending copy of a spell to the front of your memorization or
+prayer queue. For example, if you have bless, full heal, and another full
+heal queued, type:
+
+  prio full heal
+
+You will prepare both copies of full heal before bless. Ready spells stay
+ready. If you are preparing a different spell, switching starts the new
+spell's timer from the beginning. If you are already preparing full heal,
+you keep your progress. A paused queue stays paused until you resume with
+[[Memorize]] or [[Pray]]. Book users need access to the selected spell.
+
+See also: [[Memorize]], [[Pray]], [[Forget]]
 
 #0
 

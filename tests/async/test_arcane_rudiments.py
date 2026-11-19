@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Source-contract checks for INNATE_ARCANE_RUDIMENTS mechanic."""
-from _paths import SRC
+from _paths import SRC, extract_function
 from pathlib import Path
 import sys, re
 from contract_text import contains
@@ -33,11 +33,20 @@ add_class_count = len(re.findall(r'ADD_CLASS_INNATE\(INNATE_ARCANE_RUDIMENTS,', 
 all_ok &= check("no class assignments (user wants 0 for now)",
 	add_class_count == 0)
 
-# 4. Memorize.c references
-mem = (SRC / "memorize.c").read_text()
-has_innate_refs = [(m.start(), m.group()) for m in re.finditer(r'has_innate\(ch,\s*INNATE_ARCANE_RUDIMENTS\)', mem)]
-all_ok &= check("has_innate used in memorize.c (expected 4 sites)",
-	len(has_innate_refs) == 4)
+# 4. Check the book rules that use this innate. The runtime prioritize test
+# also exercises the shared check with an unavailable book and the innate.
+mem = extract_function("memorize.c", "void do_memorize(P_char ch,")
+all_ok &= check("list omits missing-book warning for Arcane Rudiments",
+	contains(mem, "!has_innate(ch, INNATE_ARCANE_RUDIMENTS) && !(SpellInSpellBook("))
+all_ok &= check("Arcane Rudiments permits queuing without a book",
+	contains(mem, "!sbook && book_class(ch) && !has_innate(ch, INNATE_ARCANE_RUDIMENTS)"))
+book = extract_function("memorize.c", "static bool has_preparation_book(")
+all_ok &= check("Arcane Rudiments satisfies book availability",
+	contains(book, "has_innate(ch, INNATE_ARCANE_RUDIMENTS) || SpellInSpellBook("))
+for handler, spell in (("void handle_memorize(P_char ch)", "af->modifier"),
+                       ("void do_prioritize(", "spell")):
+	all_ok &= check(f"{handler} uses the preparation book check",
+		contains(extract_function("memorize.c", handler), f"!has_preparation_book(ch, {spell})"))
 
 # 5. No class has this innate inherited accidentally - check class_innates size
 # class_innates[LAST_INNATE+2][CLASS_COUNT][5] uses LAST_INNATE
