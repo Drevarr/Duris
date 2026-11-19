@@ -6738,32 +6738,38 @@ will need spellbooks for BOTH your druid and your ranger spells.
 See Also: RANGER, DRUID, MULTI-CLASS, COMMUNE, MEMORIZE
 
 #
-FORGE FORGING
+FORGE FORGING (Tradeskill)
 ===========================================================================
-Forging is one of the primary skills of the Alchemist Class. By collecting
-material pieces	from the corpses of dead mobs an alchemist can forge a wide 
-range of weapons that can be used or sold at shops. 
+Syntax: forge
+        forge info <number>
+        forge stat <number>
+        forge make <number>
 
-Forging is much like Crafting in that the more items you have the bigger
-weapons you can make, and works in much the same way, except that you do
-not specify the "material".
+Forge is a tradeskill for making weapons, shields and armor worn on the
+head, body, arms, hands, legs or feet from recipes. Accessories belong to
+Craft.
 
-Select only the materials you want to use, place them into your inventory
-and type:
+Learn Forge with 'practice forge' from Jodnan the blacksmith in
+Tharnadia or Gixnif the goblin miner in Khildarak. You can know only one
+of Craft, Forge and Mine. Either teacher will 'practice reset' your
+tradeskill for 200 epic points, which also erases every recipe you know.
 
-     forge weapon-type
-     
-For example, if you have two of "a cracked magical steel piece" in your
-inventory and type "forge dagger" you may end up with a dagger called "a
-crude steel dagger". 
+Recipes are scrolls found by salvaging magical items. Use 'recite
+<recipe>' to add one to your list. Type 'forge' to list your recipes;
+the other commands take a number from that list. 'forge info' shows the
+salvaged materials needed, 'forge stat' shows the finished item, and
+'forge make' builds it. Beside a smith who works ore, a bare 'forge'
+shows the smith's wares instead; use 'forge list' there.
 
-Identifying the item after it is created will show you the stats. The
-quality of the material used, your skill in forging and your current level
-all play a part in how powerful your newly forged weapons become. We are
-not giving out material formulas as it is a closely guarded alchemist
-secret and nobody wants a guild of alchemists on their back. 
+Making an item uses up its materials and one blacksmithing flux, sold in
+Tharnadia and Khildarak. An item with magical properties also needs one
+magical essence, which salvage can yield. Carry them all in your
+inventory. You can make a recipe whose item value is at most three
+times your level. Forging always succeeds: the item is marked as made by
+you and cannot be repaired. You gain experience based on its item value,
+and your Forge skill can rise each time you forge.
 ===========================================================================
-See also: MIX, FORGE, SKILL_ALCHEMIST
+See also: RECIPES, SALVAGE, CRAFT, CHAOS CRAFT POUCH
 
 #
 "FORKED LIGHTNING" (Spell)

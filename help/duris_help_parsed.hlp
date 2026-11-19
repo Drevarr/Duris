@@ -10740,35 +10740,43 @@ Requirements are registration values, not automatic learning or preparation. Bas
 #0
 
 Forge
-Forge - Last Edited: 2013-05-07 15:25:44 by targ
+Forge - Last Edited: 2026-11-19
 ================================================
-Forge is one of the tradeskills available to players.
-Forge allows characters to create equipment for the following slots:
-head, body, arms, feet, shield, weapons, legs, hands.
-Once learned, a player can invoke the forge command for a list of options:
-forge - with no arguments will bring up your list of known recipes and the help
-menu:
-(example:)
-Forge Syntax:
-(forge info <number> - list required materials to forge the item.)
-(forge stat <number> - display properties of the item.)
-(forge make <number> - create the item.)
-You know the following recipes:
-----------------------------------------------------------------------------
-Recipe Number                         Item
-   135212                a wickedly barbed two-handed greatsword
-----------------------------------------------------------------------------
-   91058                 a massive blood-stained holy avenger
-----------------------------------------------------------------------------
-Typing 'forge info 91058' would display the items needed to create this particular
-item.
-Typing 'forge stat 91058' would display the attributes tied to this item.
-Typing 'forge make 91058' would attempt to create the item if you had the necessary
-salvaged materials on your being.
+Syntax: forge
+        forge info <number>
+        forge stat <number>
+        forge make <number>
+
+Forge is a tradeskill for making weapons, shields and armor worn on the
+head, body, arms, hands, legs or feet from recipes. Accessories belong to
+Craft.
+
+Learn Forge with 'practice forge' from Jodnan the blacksmith in
+Tharnadia or Gixnif the goblin miner in Khildarak. You can know only one
+of Craft, Forge and Mine. Either teacher will 'practice reset' your
+tradeskill for 200 epic points, which also erases every recipe you know.
+
+Recipes are scrolls found by salvaging magical items. Use 'recite
+<recipe>' to add one to your list. Type 'forge' to list your recipes;
+the other commands take a number from that list. 'forge info' shows the
+salvaged materials needed, 'forge stat' shows the finished item, and
+'forge make' builds it. Beside a smith who works ore, a bare 'forge'
+shows the smith's wares instead; use 'forge list' there.
+
+Making an item uses up its materials and one blacksmithing flux, sold in
+Tharnadia and Khildarak. An item with magical properties also needs one
+magical essence, which salvage can yield. Carry them all in your
+inventory. You can make a recipe whose item value is at most three
+times your level. Forging always succeeds: the item is marked as made by
+you and cannot be repaired. You gain experience based on its item value,
+and your Forge skill can rise each time you forge.
 
 ==See also==
 
-tradeskills, craft, salvage, material_list
+* Recipes
+* Salvage
+* Craft
+* Chaos craft pouch
 
 #0
 
