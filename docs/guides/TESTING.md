@@ -124,7 +124,8 @@ runs the isolated database legs and the MariaDB journeys listed in
 `tests/run_db_tests.sh`, 12 at a time (`TEST_DB_JOBS=N` changes that). Every test creates and destroys its own MySQL or MariaDB
 container, prints `PASS` or `FAIL` with its seconds, and writes its log under
 `bin/tests/db/`. A new leg or journey is one more line in that list;
-`tests/async/with_disposable_mariadb.sh CMD...` gives a journey its own MariaDB.
+`tests/async/with_disposable_mariadb.sh CMD...` gives a journey its own MariaDB, a
+throwaway server that keeps its data in memory.
 The three scripts at the root of `tests/` require explicitly named disposable
 or read-only databases and are manual migration-verification tools. Never point
 them at production.
