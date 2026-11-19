@@ -1175,13 +1175,18 @@ std::string fire_aura_facts(P_char /*ch*/)
 		    "+" + std::to_string(fire_aura_full_form_save()) + ", worse") +
 	       "  The full form adds a fire aura and a fireshield.\n"
 	       "  You must stand on the fire plane or on lava.\n"
-	       "  It has no effect while you have it or an elemental form.\n";
+	       "  A named set grants the full form anywhere.\n"
+	       "  It has no effect while you have it or an elemental form,\n"
+	       "  or while another elemental aura surrounds you.\n";
 }
 
 void spell_fire_aura(int /*level*/, P_char ch, char * /*arg*/, [[maybe_unused]] int type,
 		     P_char victim, P_obj /*obj*/)
 {
+	named_set_ordinary_cast ordinary_cast(victim, SPELL_FIRE_AURA);
 	struct affected_type af;
+	// A named set grants the full form anywhere.
+	const bool set_grant = named_set_grant::active();
 
 	if (const char *failure = elemental_form_failure_message(ch, victim, SPELL_FIRE_AURA))
 	{
@@ -1198,7 +1203,19 @@ void spell_fire_aura(int /*level*/, P_char ch, char * /*arg*/, [[maybe_unused]] 
 		return;
 	}
 
-	if (world[ch->in_room].sector_type == SECT_FIREPLANE ||
+	// Another elemental aura blocks it, whether a spell or an aura bit from equipment.
+	if (affected_by_spell(victim, SPELL_ELEMENTAL_AURA) ||
+	    affected_by_spell(victim, SPELL_AIR_AURA) ||
+	    affected_by_spell(victim, SPELL_EARTH_AURA) ||
+	    affected_by_spell(victim, SPELL_WATER_AURA) ||
+	    IS_AFFECTED2(victim, AFF2_EARTH_AURA | AFF2_WATER_AURA | AFF2_AIR_AURA) ||
+	    IS_AFFECTED4(victim, AFF4_ICE_AURA))
+	{
+		send_to_char("An elemental aura already surrounds you.\n", ch);
+		return;
+	}
+
+	if (set_grant || world[ch->in_room].sector_type == SECT_FIREPLANE ||
 	    world[ch->in_room].sector_type == SECT_LAVA)
 	{
 		act("&+rYour body glows with an aura of fire!", FALSE, ch, 0, 0, TO_CHAR);
@@ -1227,7 +1244,7 @@ void spell_fire_aura(int /*level*/, P_char ch, char * /*arg*/, [[maybe_unused]] 
 		af.modifier = fire_aura_con_max();
 		affect_to_char(victim, &af);
 
-		if (NewSaves(ch, SAVING_FEAR, fire_aura_full_form_save()))
+		if (set_grant || NewSaves(ch, SAVING_FEAR, fire_aura_full_form_save()))
 		{
 			act("&+RYour body bursts into flames as you achieve full form!", FALSE, ch,
 			    0, 0, TO_CHAR);

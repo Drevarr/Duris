@@ -143,6 +143,7 @@ assert "failure = elemental_aura_failure_message(ch);" in magic
 
 functions = [
     extract_function("magic.c", "const char *elemental_form_failure_message("),
+    extract_function("magic.c", "static const char *elemental_aura_conflict("),
     extract_function("magic.c", "const char *elemental_aura_failure_message("),
     extract_function("magic.c", "static int elemental_aura_duration("),
     extract_function("magic.c", "static int elemental_aura_max_stat("),

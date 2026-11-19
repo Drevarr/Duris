@@ -573,6 +573,20 @@ headers caused parser errors. No diagnostics were disabled. Build output is in
 `bin/named-publication-build-integrated.log`; the repeated focused regression logs
 use the `bin/named-integrated-test_` prefix.
 
+Catalog amendment (2026-11-12): at the user's request, appendix rows 14, 46,
+79, 199, 253, 256 and 299 changed and row 315 was added. #73 and #710 exchange
+their pairs; #490 grants only Stone Skin at 6; #5000 The Surface Realm of Duris
+grants Levitate at 2 and Stone Skin at 8. The four elemental forms became auras:
+Air Aura #257, Earth Aura #435, Fire Aura #883 and Water Aura #1424, so no set
+grants a Magus-only form. Air, Earth and Water Aura are new set-only spells that
+grant elemental aura's full form and stat maximums for their plane. Fire Aura is
+the existing psionicist spell; a set grants its full form without fire terrain
+or the save. The catalog now has 307 definitions and 609 tiers: 300 two-tier,
+six one-tier and one three-tier set. A Warrior passed the full-world MariaDB
+wear journey for #257, #435, #883 and #1424, and the report journey passed with
+all 307 rows. #5000 passed wear thresholds before reboot; its Stone Skin
+cooldown persists across reboot, so it is not a wear-journey case.
+
 ## Appendix: complete worksheet choices
 
 This is a snapshot of the revised workbook, not an executable import.
@@ -598,7 +612,7 @@ The Notes column preserves source column I verbatim.
 | 11 | 53 | Fort Marigot | 53 | 3: LEVITATE | 4: PANTHERSPEED | - | - |
 | 12 | 60 | The Lizardman Swamps of Clavikord | 60 | 2: PROTECTION_FROM_COLD | 3: COLD_WARD | - | - |
 | 13 | 68 | Dragonnia | 68 | 3: GLOBE_OF_INVULNERABILITY | 6: STORNOGS_SPHERES | - | - |
-| 14 | 73 | The Prisons of Carthapia | 73 | 2: AWARENESS | 4: TOWER_OF_IRON_WILL | - | - |
+| 14 | 73 | The Prisons of Carthapia | 73 | 2: BARKSKIN | 6: STONE_SKIN | - | - |
 | 15 | 91 | The Mountain of the Banished | 91 | 2: FARSEE | 4: FLY | - | - |
 | 16 | 93 | Tower of High Sorcery | 93 | 3: AWARENESS | 4: TOWER_OF_IRON_WILL | - | - |
 | 17 | 94 | Sarmiz'Duul | 94 | 2: FARSEE | 3: SENSE_LIFE | - | - |
@@ -630,7 +644,7 @@ The Notes column preserves source column I verbatim.
 | 43 | 238 | Plane of Earth | 238 | 2: BARKSKIN | 4: STONE_SKIN | - | - |
 | 44 | 244 | Plane of Air | 244 | 3: HASTE | 5: STONE_SKIN | - | - |
 | 45 | 250 | Plane of Fire, Brass | 1390 | 2: FIRESHIELD | 3: ILIENZES_FLAMING_SWORD | - | - |
-| 46 | 257 | Bahamut's Palace | 257 | 2: FLY | 4: AIR_FORM | - | - |
+| 46 | 257 | Bahamut's Palace | 257 | 2: FLY | 4: AIR_AURA | - | - |
 | 47 | 260 | Swamp | 260 | 2: PROTECTION_FROM_FIRE | 3: FIRE_WARD | - | - |
 | 48 | 262 | Moonshae Island | 262 | 2: BARKSKIN | 3: FARSEE | - | - |
 | 49 | 266 | Negative Material Plane | 266 | 2: NEGATIVE_ENERGY_BARRIER | 4: NEGATIVE_FEEDBACK_BARRIER | - | - |
@@ -663,7 +677,7 @@ The Notes column preserves source column I verbatim.
 | 76 | 671 | Father Tel's Holy Cloister | 671 | 2: SENSE_LIFE | 3: SOULSHIELD | - | - |
 | 77 | 676 | Taliccicopiid | 676 | 2: ARMOR | 3: BARKSKIN | - | - |
 | 78 | 700 | The Town of Moregeeth | 700 | 3: LEVITATE | 4: PANTHERSPEED | - | - |
-| 79 | 710 | The Fields Between | 710 | 2: BARKSKIN | 6: STONE_SKIN | - | - |
+| 79 | 710 | The Fields Between | 710 | 2: AWARENESS | 4: TOWER_OF_IRON_WILL | - | - |
 | 80 | 756 | The Obsidian Citadel | 756 | 2: FARSEE | 4: FLY | - | - |
 | 81 | 758 | Rogue Plains | 758 | 2: FARSEE | 3: FLY | - | - |
 | 82 | 800 | Rift Valley Jungle | 800 | 2: HAWKVISION | 3: ELEPHANTSTRENGTH | - | - |
@@ -783,7 +797,7 @@ The Notes column preserves source column I verbatim.
 | 196 | - | Zalkapfaan, City of the Headless Horde | 27 | 1: ELEPHANTSTRENGTH | 2: LIONRAGE | - | - |
 | 197 | - | The Sky City of Ultarium | 760 | 2: FARSEE | 3: FLY | - | - |
 | 198 | - | Githzerai Stronghold | 444 | 2: HASTE | 3: FLY | - | - |
-| 199 | - | The Desert City of Venan'Trut | 490 | 2: SENSE_LIFE | 3: FARSEE | - | - |
+| 199 | - | The Desert City of Venan'Trut | 490 | 6: STONE_SKIN | - | - | - |
 | 200 | - | Fort Boyard | 381 | 3: HASTE | 4: FLY | - | - |
 | 201 | - | Menden on the Deep | 888 | 2: ARMOR | 3: BARKSKIN | - | - |
 | 202 | - | Tundra | 137 | 2: PROTECTION_FROM_COLD | 3: COLD_WARD | - | - |
@@ -837,10 +851,10 @@ The Notes column preserves source column I verbatim.
 | 250 | - | Valley of the Snow Ogres | 877 | 3: DAZZLE | 4: GLOBE_OF_INVULNERABILITY | - | - |
 | 251 | - | The Tempest Court | 1316 | 2: LIGHTNING_SHIELD | 3: lliendils stormshock | - | - |
 | 252 | - | The Realm of Barovia | 910 | 3: DETECT_INVISIBLE | 4: GLOBE_OF_INVULNERABILITY | - | - |
-| 253 | - | The Royal Mausoleum of Castle IceCrag | 1424 | 3: CONJURE_ELEMENTAL | 6: WATER_FORM | - | - |
+| 253 | - | The Royal Mausoleum of Castle IceCrag | 1424 | 3: CONJURE_ELEMENTAL | 6: WATER_AURA | - | - |
 | 254 | - | The Ethereal Plane | 124 | 4: DETECT_INVISIBLE | 5: STONE_SKIN | - | - |
 | 255 | - | The Fortress of Dreams | 326 | 2: DETECT_ILLUSION | 3: DETECT_INVISIBLE | - | - |
-| 256 | - | The Charcoal Palace | 883 | 2: FIRESHIELD | 4: FIRE_FORM | - | - |
+| 256 | - | The Charcoal Palace | 883 | 2: FIRESHIELD | 4: FIRE_AURA | - | - |
 | 257 | - | Apocalypse Castle | 345 | 3: DISPLACEMENT | 5: CHAOS_SHIELD | - | - |
 | 258 | - | The Realm of Barovia Continued | 588 | 2: DETECT_INVISIBLE | 3: DETECT_ILLUSION | - | - |
 | 259 | - | The Hall of the Ancients | 777 | 3: FLY | 4: DETECT_INVISIBLE | - | - |
@@ -883,7 +897,7 @@ The Notes column preserves source column I verbatim.
 | 296 | 241 | the Mushroom Caverns | 241 | 2: HAWKVISION | 3: ELEPHANTSTRENGTH | - | - |
 | 297 | 292 | Ailvio, Duris Newbie Outpost | 292 | 2: ARMOR | 3: BLESS | - | - |
 | 298 | 320 | The Plane of Avernus | 320 | 4: STONE_SKIN | 8: INFERNAL_FURY | - | - |
-| 299 | 435 | Temple of the Earth | 435 | 4: CONJURE_ELEMENTAL | 7: EARTH_FORM | - | - |
+| 299 | 435 | Temple of the Earth | 435 | 4: CONJURE_ELEMENTAL | 7: EARTH_AURA | - | - |
 | 300 | 529 | the Lost Temple of the North | 529 | 2: PROTECTION_FROM_COLD | 3: COLD_WARD | - | - |
 | 301 | 532 | The Orcish Slave Camp | 532 | 2: ARMOR | 3: BLESS | - | - |
 | 302 | 590 | The Ravenloft Catacombs | 590 | 3: STONE_SKIN | 6: SANCTUARY | - | - |
@@ -899,3 +913,4 @@ The Notes column preserves source column I verbatim.
 | 312 | 1302 | The Reliquary Nexus of The Dead | 1302 | 4: VAMPIRIC_TOUCH | 5: STONE_SKIN | - | - |
 | 313 | 1303 | The Reliquary Nexus of the Corsairs | 1303 | 4: VAMPIRIC_TOUCH | 5: STONE_SKIN | - | - |
 | 314 | 1304 | The Reliquary Nexus of the Roper Den | 1304 | 4: VAMPIRIC_TOUCH | 5: STONE_SKIN | - | - |
+| 315 | - | The Surface Realm of Duris | 5000 | 2: LEVITATE | 8: STONE_SKIN | - | - |

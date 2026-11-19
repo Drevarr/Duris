@@ -27273,9 +27273,10 @@ including Ceothia, Underworld, Braddistock and Misty Vale, retain their
 same-title HP bonus but grant no guessed zone spell. Those unresolved
 pieces do not combine with pieces whose zone identity is known.
 
-Earth, Fire and Water Form require the matching Magus specialization.
-Forms exclude other elemental forms and auras. Weapon enchantments need
-their native weapon types. Sneak refreshes outside combat while unmounted.
+Elemental auras from sets work anywhere and always reach full form.
+An elemental form or another elemental aura blocks them. Weapon
+enchantments need their native weapon types. Sneak refreshes outside
+combat while unmounted.
 Globe of Darkness excludes Holy Light and Mage Flame. Armor bonuses do not
 add a second armor-class modifier; skin effects retain their native benefits.
 Ironwood needs Barkskin or Thornskin and shares the generic one-minute

@@ -432,6 +432,9 @@ std::string prismatic_spray_facts(char_data *ch);
 std::string color_spray_facts(char_data *ch);
 std::string prismatic_ray_facts(char_data *ch);
 std::string elemental_aura_facts(char_data *ch);
+std::string air_aura_facts(char_data *ch);
+std::string earth_aura_facts(char_data *ch);
+std::string water_aura_facts(char_data *ch);
 std::string wind_tunnel_facts(char_data *ch);
 std::string binding_wind_facts(char_data *ch);
 
