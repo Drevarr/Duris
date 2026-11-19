@@ -72,6 +72,7 @@ epic_task_recovery_journey $DB python3 tests/async/test_epic_task_recovery_journ
 conjurer_gameplay $DB python3 tests/async/test_conjurer_gameplay_journey.py --server SERVER_BINARY
 shambler_reflection $DB python3 tests/async/test_shambler_reflection_journey.py --server SERVER_BINARY
 bard_support $DB python3 tests/async/test_bard_support_journey.py --server SERVER_BINARY
+prioritize $DB python3 tests/async/run_prioritize_journey.py --server SERVER_BINARY
 connection_limit $DB python3 tests/async/test_connection_limit_journey.py --server REAL_SERVER_BINARY
 game_loop_session $DB python3 tests/async/test_game_loop_session_journey.py --server SERVER_BINARY
 chaos_new_character_kit $DB python3 tests/async/test_mariadb_chaos_new_character_kit.py --server SERVER_BINARY
