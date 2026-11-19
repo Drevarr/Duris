@@ -231,6 +231,10 @@ void remove_deleted_account_characters(P_desc deleting_session,
 		for (const auto &identity : identities)
 			if (GET_PID(character) == identity.pid)
 			{
+				// End a switch first, or the other body keeps the closed descriptor.
+				// Staff switched into this body go back to their own, still online.
+				if (character->desc)
+					return_from_staff_switch(character->desc);
 				if (character->desc)
 				{
 					P_desc character_desc = character->desc;
@@ -1943,6 +1947,17 @@ void display_character_list_to_char(P_char ch, P_acct account)
 	display_character_list(ch->desc, account);
 }
 
+static long account_racewar_switch_cooldown()
+{
+	return get_property("account.timer.racewarSwitch", 3600);
+}
+
+// Whole minutes left on a side-switch cooldown, rounded up.
+static long racewar_cooldown_minutes(const account_racewar_admission *result)
+{
+	return result->remaining_seconds / 60 + (result->remaining_seconds % 60 != 0);
+}
+
 void display_character_list(P_desc d, P_acct account)
 {
 	struct acct_chars *c = account ? account->acct_character_list :
@@ -2141,7 +2156,22 @@ void display_character_list(P_desc d, P_acct account)
 		d);
 	if (d->character == NULL)
 	{
-		SEND_TO_Q("\r\n&+W0&n) &+LBack to Account Menu&n\r\n\r\n", d);
+		SEND_TO_Q("\r\n", d);
+		// Show a pending side-switch cooldown before the player picks a character.
+		const account_racewar_admission wait = account_racewar_pending_switch(
+			d->account->acct_good, d->account->acct_evil, time(NULL),
+			account_racewar_switch_cooldown());
+		if (wait.remaining_seconds > 0)
+		{
+			const bool to_good = wait.side == ACCOUNT_RACEWAR_GOOD;
+			const long minutes = racewar_cooldown_minutes(&wait);
+			snprintf(buf, sizeof buf,
+				 "&+LLast played:&n %s &+L|&n &+Y%ld&n minute%s until %s\r\n",
+				 to_good ? "Evil" : "Good", minutes, minutes == 1 ? "" : "s",
+				 to_good ? "Good" : "Evil");
+			SEND_TO_Q(buf, d);
+		}
+		SEND_TO_Q("&+W0&n) &+LBack to Account Menu&n\r\n\r\n", d);
 		SEND_TO_Q("Which character would you like to play? ", d);
 		d->prompt_mode = TRUE;
 	}
@@ -2165,9 +2195,8 @@ account_check_racewar_admission_at(P_desc d, int racewar, bool blocked, bool imm
 	if (!d || !d->account)
 		return { false, ACCOUNT_RACEWAR_DENIAL_UNAVAILABLE, side, 0 };
 
-	const long cooldown_seconds = get_property("account.timer.racewarSwitch", 3600);
 	return account_racewar_evaluate(side, blocked, d->account->acct_good, d->account->acct_evil,
-					now, cooldown_seconds);
+					now, account_racewar_switch_cooldown());
 }
 
 account_racewar_admission account_check_racewar_admission(P_desc d, int racewar, bool blocked,
@@ -2198,8 +2227,7 @@ void account_format_racewar_denial(const account_racewar_admission *result, char
 		break;
 	case ACCOUNT_RACEWAR_DENIAL_COOLDOWN:
 	{
-		const long minutes_remaining =
-			result->remaining_seconds / 60 + (result->remaining_seconds % 60 != 0);
+		const long minutes_remaining = racewar_cooldown_minutes(result);
 		const char *side = result->side == ACCOUNT_RACEWAR_GOOD ? "Good" : "Evil";
 		const char *opposite = result->side == ACCOUNT_RACEWAR_GOOD ? "Evil" : "Good";
 		checked_snprintf(
@@ -2295,6 +2323,24 @@ bool account_character_body_held(int pid, P_desc except)
 	return false;
 }
 
+bool attach_session_to_morph(P_desc d)
+{
+	P_char ch = d->character;
+	if (!IS_SET(ch->specials.act, PLR_MORPH))
+		return true;
+	P_char morph = ch->only.pc->switched;
+	if (!morph || !IS_MORPH(morph) || morph->only.npc->orig_char != ch)
+	{
+		logit(LOG_EXIT, "Something fucked while trying to reconnect linkless morph");
+		return false;
+	}
+	d->original = ch;
+	d->character = morph;
+	morph->desc = d;
+	ch->desc = NULL;
+	return true;
+}
+
 int is_char_in_game(struct acct_chars *c, P_desc d)
 {
 	if (!c || !d)
@@ -2310,12 +2356,13 @@ int is_char_in_game(struct acct_chars *c, P_desc d)
 		    !candidate->account->acct_name || !d->account->acct_name ||
 		    strcasecmp(candidate->account->acct_name, d->account->acct_name))
 			continue;
+		// A session playing c's morph or switch body belongs to c too.
 		P_char owner = GET_PLYR(candidate->character);
-		if (IS_PC(owner) && GET_PID(owner) == c->pid && GET_NAME(candidate->character) &&
-		    !strcasecmp(GET_NAME(candidate->character), c->charname))
+		if (IS_PC(owner) && GET_PID(owner) == c->pid && GET_NAME(owner) &&
+		    !strcasecmp(GET_NAME(owner), c->charname))
 		{
 			previous_descriptor = candidate;
-			ch = candidate->character;
+			ch = owner;
 			break;
 		}
 	}
@@ -2323,10 +2370,15 @@ int is_char_in_game(struct acct_chars *c, P_desc d)
 	{
 		for (P_char candidate = character_list; candidate; candidate = candidate->next)
 		{
-			if (IS_PC(candidate) && GET_PID(candidate) == c->pid && !candidate->desc &&
+			if (IS_PC(candidate) && GET_PID(candidate) == c->pid &&
 			    GET_NAME(candidate) && !strcasecmp(GET_NAME(candidate), c->charname))
 			{
-				ch = candidate;
+				// Account login closed this account's own sessions. Staff wearing
+				// the link-dead body go back to their own, still online.
+				if (candidate->desc)
+					return_from_staff_switch(candidate->desc);
+				if (!candidate->desc)
+					ch = candidate;
 				break;
 			}
 		}
@@ -2388,23 +2440,13 @@ int is_char_in_game(struct acct_chars *c, P_desc d)
 	loginlog(d->character->player.level, "%s [%s] has reconnected.", GET_NAME(d->character),
 		 d->host);
 
-	if (IS_SET(ch->specials.act, PLR_MORPH))
+	if (!attach_session_to_morph(d))
 	{
-		if (!ch->only.pc->switched || !IS_MORPH(ch->only.pc->switched) ||
-		    (ch != ch->only.pc->switched->only.npc->orig_char))
-		{
-			logit(LOG_EXIT,
-			      "Something fucked while trying to reconnect linkless morph");
-			ch->desc = NULL;
-			d->character = NULL;
-			STATE(d) = CON_ACCT_SELECT_CHAR;
-			display_character_list(d);
-			return 1;
-		}
-		d->original = ch;
-		d->character = ch->only.pc->switched;
-		d->character->desc = d;
 		ch->desc = NULL;
+		d->character = NULL;
+		STATE(d) = CON_ACCT_SELECT_CHAR;
+		display_character_list(d);
+		return 1;
 	}
 	gmcp_send_initial_state(d->character);
 	return 1;

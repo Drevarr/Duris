@@ -188,7 +188,7 @@ void check_derived_vitals() {
     mana_bonus = 0;
     // Remote structured observers need level metadata even if visible HP is unchanged.
     a.in_room = 0; da.gmcp_enabled = true; group_updates = 0;
-    advance_level_impl(&b, false, false, 0);
+    advance_level_impl(&b, false, 0);
     assert(GET_LEVEL((&b)) == 6 && da.last_group_update);
     pending_group_update(&a);
     assert(group_updates == 1);
@@ -488,9 +488,7 @@ void do_group(P_char ch, char *, int) {
               extract_function("group.c", "void update_group_vitals("),
               extract_function("gmcp.c", "void gmcp_char_vitals("),
               member_line, group_wrapper, pending, death_menu,
-              extract_function("limits.c", "int death_exp_loss_level_threshold("),
-              extract_function("limits.c", "static void notify_level_advancement("),
-              extract_function("limits.c", "static void advance_level_impl(P_char ch, bool notify_player, bool process_boons,\n\t\t\t       std::uint64_t threshold_xp)\n{"),
+              extract_function("limits.c", "static void advance_level_impl(P_char ch, bool process_boons, std::uint64_t threshold_xp)\n{"),
               extract_function("limits.c", "static void lose_level_impl(P_char ch, std::uint64_t threshold_xp,\n\t\t\t    telemetry_progression_source source,\n\t\t\t    telemetry_progression_reason reason)\n{"),
               extract_function("affects.c", "float player_racial_damage_multiplier("),
               extract_function("affects.c", "char affect_total("),

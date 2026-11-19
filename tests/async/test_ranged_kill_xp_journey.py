@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
-"""Real fire -> NPC death -> damage/kill XP, solo and grouped across rooms (#764)."""
+"""Real fire -> NPC death -> damage/kill XP, solo and grouped across rooms (#764).
+
+Also: afire <tank> shoots the tank's opponent, not the first matching name."""
 
 import argparse
 import json
@@ -30,16 +32,19 @@ def configure(runtime):
     mobile = runtime / "areas_mini/mini.mob"
     text = mobile.read_text()
     targets = ""
-    for vnum, name in enumerate(("Solo", "Remote", "Grouped", "Distant", "Split"), 22801):
+    # Tanked outlasts a level 1 groupmate's melee but not one landed arrow.
+    for vnum, name in enumerate(("Solo", "Remote", "Grouped", "Distant", "Split", "Decoy", "Tanked"),
+                                22801):
+        hit_points = "1d1+40" if name == "Tanked" else "1d1+1"
         targets += (f"#{vnum}\n{name.lower()} quarry~\nthe {name} quarry~\n"
                     f"The {name} quarry waits here.\n~\n~\n"
                     "8 0 0 0 0 0 0 0 S\nPH 0 0 -1\n"
-                    "1 0 100 1d1+1 1d1+1\n0.0.0.0 0\n8 8 0\n")
+                    f"1 0 100 {hit_points} 1d1+1\n0.0.0.0 0\n8 8 0\n")
     mobile.write_text(text.replace("$~", targets + "$~"))
     zone = runtime / "areas_mini/mini.zon"
     resets = "".join(f"M 0 {vnum} 1 {room} 100 0 0 0\n" for vnum, room in
                      ((22801, 22800), (22802, 22801), (22803, 22800),
-                      (22804, 22801), (22805, 22801)))
+                      (22804, 22801), (22805, 22801), (22806, 22800), (22807, 22800)))
     zone.write_text(zone.read_text().replace("\nS\n", "\n" + resets + "S\n"))
     properties = runtime / "lib/duris.properties"
     # Hold level constant while comparing equal NPCs and one-arrow volleys.
@@ -128,6 +133,19 @@ def run(binary):
                 distant = kill("distant", True, mate, True)
                 journey.require(grouped["kill_xp"] == distant["kill_xp"], "distance changed group kill XP")
                 journey.require(grouped["groupmate_xp"] == distant["groupmate_xp"], "distance changed group share")
+                arrows.command(shooter, "afire " + MATE, "is not fighting anyone.")
+                mate.send("kill tanked")
+                mate.expect("Tanked quarry", timeout=20)
+                for _ in range(20):
+                    shot = arrows.command(shooter, "afire " + MATE, ("You fire ", "Your "))
+                    journey.require("Tanked quarry" in shot and "Decoy" not in shot,
+                                    f"afire missed the tank's opponent: {shot}")
+                    if "killing" in shot:
+                        break
+                    arrows.command(shooter, "gather", "You gathered ")
+                else:
+                    raise AssertionError("afire landed no arrow in twenty attempts")
+                print("PASS afire shoots the groupmate's opponent", flush=True)
                 arrows.command(mate, "north", "The Arrow Landing Room")
                 split = kill("split", True, mate, False)
                 journey.require(split["kill_xp"] == solo["kill_xp"], "absent groupmate reduced killer share")

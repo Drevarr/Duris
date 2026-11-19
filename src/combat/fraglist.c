@@ -27,7 +27,6 @@
 #include "magic/spells.h"
 #include "sql/sql.h"
 #include "sql/sql_async.h"
-#define MAX_FRAG_SIZE 10 /* max size of high/low lists */
 
 extern const struct class_names class_names_table[];
 extern const struct race_names race_names_table[];
@@ -135,32 +134,31 @@ static void check_frag_position(P_char ch)
 		return;
 
 	const uint64_t runtime_id = ch->runtime_id;
-	sql_read(
-		sql_format(
-			"(SELECT 'lead', char_name FROM frag_leaderboard "
-			"WHERE deleted_at IS NULL AND level <= %d AND total_frags > 0 "
-			"ORDER BY total_frags DESC, id ASC LIMIT 1) UNION ALL "
-			"(SELECT 'low', char_name FROM frag_leaderboard "
-			"WHERE deleted_at IS NULL AND level <= %d ORDER BY total_frags ASC LIMIT 1)",
-			MAXLVLMORTAL, MAXLVLMORTAL),
-		[runtime_id](bool ok, const sql_rows &rows)
-		{
-			P_char live = find_character_by_runtime_id(runtime_id);
-			if (!ok || !live)
-				return;
-			bool lead = false, low = false;
-			for (const sql_row &row : rows)
-				if (row[0] && row[1] && isname(row[1], GET_NAME(live)))
-					(strcmp(row[0], "lead") ? low : lead) = true;
-			if (lead)
-				SET_BIT(live->specials.act3, PLR3_FRAGLEAD);
-			else
-				REMOVE_BIT(live->specials.act3, PLR3_FRAGLEAD);
-			if (low)
-				SET_BIT(live->specials.act3, PLR3_FRAGLOW);
-			else
-				REMOVE_BIT(live->specials.act3, PLR3_FRAGLOW);
-		});
+	sql_read(sql_format("(SELECT 'lead', char_name FROM frag_leaderboard "
+			    "WHERE deleted_at IS NULL AND level <= %d AND total_frags > 0 "
+			    "ORDER BY total_frags DESC, id ASC LIMIT 1) UNION ALL "
+			    "(SELECT 'low', char_name FROM frag_leaderboard "
+			    "WHERE deleted_at IS NULL AND level <= %d AND total_frags < 0 "
+			    "ORDER BY total_frags ASC LIMIT 1)",
+			    MAXLVLMORTAL, MAXLVLMORTAL),
+		 [runtime_id](bool ok, const sql_rows &rows)
+		 {
+			 P_char live = find_character_by_runtime_id(runtime_id);
+			 if (!ok || !live)
+				 return;
+			 bool lead = false, low = false;
+			 for (const sql_row &row : rows)
+				 if (row[0] && row[1] && isname(row[1], GET_NAME(live)))
+					 (strcmp(row[0], "lead") ? low : lead) = true;
+			 if (lead)
+				 SET_BIT(live->specials.act3, PLR3_FRAGLEAD);
+			 else
+				 REMOVE_BIT(live->specials.act3, PLR3_FRAGLEAD);
+			 if (low)
+				 SET_BIT(live->specials.act3, PLR3_FRAGLOW);
+			 else
+				 REMOVE_BIT(live->specials.act3, PLR3_FRAGLOW);
+		 });
 }
 
 // Shows the frag totals by side and the fraglist matching filter, both read on the writer.
@@ -176,43 +174,8 @@ static void show_fraglist(P_char ch, const std::string &filter)
 		},
 		[](P_char viewer, const sql_rows &rows)
 		{
-			char buf[65536], buf2[2048], name[256], totals[512];
-			int count;
-			fraglist_totals_header(rows, totals, sizeof(totals));
-			snprintf(buf, sizeof(buf), "%s&+WTop Fraggers\n\n", totals);
-
-			for (const char *tag : { "top", "low" })
-			{
-				if (!strcmp(tag, "low"))
-					strcat(buf, "\r\n\r\n&+LLowest Fraggers\r\n\r\n");
-				count = 0;
-				for (const sql_row &row : rows)
-				{
-					if (strcmp(row[0], tag) || !row[1] || !row[2] ||
-					    count >= MAX_FRAG_SIZE)
-						continue;
-					strlcpy(name, row[1], sizeof name);
-					name[0] = toupper(name[0]);
-					snprintf(buf2, sizeof buf2,
-						 "   &+Y%-30s             &+R% 6.2f\r\n", name,
-						 atoi(row[2]) / 100.0);
-					strcat(buf, buf2);
-					count++;
-				}
-				// pad with "nobody" if less than 10 results
-				while (count < MAX_FRAG_SIZE)
-				{
-					snprintf(buf2, sizeof buf2,
-						 "   &+Y%-30s             &+R% 6.2f\r\n", "Nobody",
-						 0.0);
-					strcat(buf, buf2);
-					count++;
-				}
-			}
-
-			strcat(buf, "\r\n");
-
-			page_string(viewer->desc, buf, 1);
+			std::string report = fraglist_report(rows);
+			page_string(viewer->desc, report.data(), 1);
 		});
 }
 

@@ -17,6 +17,7 @@
 
 #include <stddef.h>
 #include <stdint.h>
+#include <string>
 
 #include "sql/sql_work.h"
 
@@ -42,11 +43,12 @@ bool redis_cache_fraglist(struct char_data *ch = nullptr);
 char *redis_get_fraglist(void);
 bool redis_invalidate_fraglist(void);
 // Each side's frag total, as rows tagged 'total' (the tag, racewar and total), then the
-// leaderboard's top and lowest fraggers matching filter (SQL), as rows tagged 'top' and
-// 'low' (the tag, char_name and total_frags). For the writer.
+// leaderboard's positive top and negative lowest fraggers matching filter (SQL), as rows
+// tagged 'top' and 'low' (the tag, char_name and total_frags). For the writer.
 bool fraglist_leaders(MYSQL *connection, const char *filter, sql_rows *rows);
-// Shared leaderboard totals only. Live cap/progress is rendered for each viewer.
-void fraglist_totals_header(const sql_rows &rows, char *output, size_t size);
+// The side totals and both rankings from fraglist_leaders() rows, the same for every
+// viewer. Live cap/progress is rendered for each viewer.
+std::string fraglist_report(const sql_rows &rows);
 
 void redis_cache_epic_zones(void);
 void redis_cache_epic_zones_output(const char *output);

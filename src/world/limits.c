@@ -51,7 +51,9 @@
 #include <algorithm>
 #include <cmath>
 #include <limits>
+#include <string>
 #include <type_traits>
+#include <vector>
 #include "abilities/abilities.h"
 
 /*
@@ -74,6 +76,7 @@ extern P_index obj_index;
 extern int last_update;
 extern int get_innate_regeneration(P_char);
 extern P_index mob_index;
+extern Skill skills[];
 struct mm_ds *dead_trophy_pool = NULL;
 extern struct race_names race_names_table[];
 extern float racial_exp_mods[LAST_RACE + 1];
@@ -701,8 +704,7 @@ static telemetry_progression_reason progression_reason_for_type(int type)
 	return telemetry_progression_reason::unknown;
 }
 
-static void advance_level_impl(P_char ch, bool notify_player, bool process_boons,
-			       std::uint64_t threshold_xp);
+static void advance_level_impl(P_char ch, bool process_boons, std::uint64_t threshold_xp);
 static void lose_level_impl(P_char ch, std::uint64_t threshold_xp,
 			    telemetry_progression_source source,
 			    telemetry_progression_reason reason);
@@ -713,7 +715,21 @@ int death_exp_loss_level_threshold(void)
 	return get_property("exp.goodieDeathExpLossLevelThreshold", 30);
 }
 
-static void notify_level_advancement(P_char ch, int previous_level)
+// Each skill's learned value, so a level-up can name the skills it raised.
+// update_skills raises class skills and bard instruments and songs, which sit
+// past LAST_SKILL, so the snapshot runs through LAST_SONG.
+static std::vector<int> learned_skills(P_char ch)
+{
+	std::vector<int> learned;
+
+	if (IS_PC(ch))
+		for (int skill = FIRST_SKILL; skill <= LAST_SONG; skill++)
+			learned.push_back(ch->only.pc->skills[skill].learned);
+	return learned;
+}
+
+static void notify_level_advancement(P_char ch, int previous_level,
+				     const std::vector<int> &learned_before)
 {
 	P_char recipient = IS_SET(ch->specials.act, PLR_MORPH) ? ch->only.pc->switched : ch;
 	const int levels_gained = GET_LEVEL(ch) - previous_level;
@@ -731,6 +747,18 @@ static void notify_level_advancement(P_char ch, int previous_level)
 			 GET_LEVEL(ch));
 		send_to_char(message, recipient);
 	}
+
+	std::string raised;
+	for (size_t i = 0; i < learned_before.size(); i++)
+	{
+		const int skill = FIRST_SKILL + i;
+		if (ch->only.pc->skills[skill].learned > learned_before[i])
+			raised += (raised.empty() ? "" : ", ") + std::string(skills[skill].name);
+	}
+	if (!raised.empty())
+		send_to_char(
+			("&+cYour new level improves your skill in " + raised + ".&n\r\n").c_str(),
+			recipient);
 
 	const int cutoff = death_exp_loss_level_threshold();
 	if (previous_level < cutoff && GET_LEVEL(ch) >= cutoff)
@@ -750,18 +778,19 @@ void illithid_advance_level(P_char ch)
 	if (GET_LEVEL(ch) >= MAXLVLMORTAL)
 		return;
 
+	const std::vector<int> learned_before = learned_skills(ch);
+
 	// Illithids gain these levels on frags, but must remain mortals.
 	for (int i = GET_LEVEL(ch) + 1;
 	     i > minlvl && i <= MAXLVLMORTAL && new_exp_table[i] <= GET_EXP(ch); ++i)
 	{
 		GET_EXP(ch) -= new_exp_table[i];
-		advance_level_impl(ch, false, true, static_cast<std::uint64_t>(new_exp_table[i]));
+		advance_level_impl(ch, true, static_cast<std::uint64_t>(new_exp_table[i]));
 	}
-	notify_level_advancement(ch, previous_level);
+	notify_level_advancement(ch, previous_level, learned_before);
 }
 
-static void advance_level_impl(P_char ch, bool notify_player, bool process_boons,
-			       std::uint64_t threshold_xp)
+static void advance_level_impl(P_char ch, bool process_boons, std::uint64_t threshold_xp)
 {
 	/*  struct time_info_data playing_time;*/
 	int i;
@@ -797,8 +826,6 @@ static void advance_level_impl(P_char ch, bool notify_player, bool process_boons
 	}
 	gmcp_spell_preparation_changed(ch);
 
-	if (notify_player)
-		notify_level_advancement(ch, GET_LEVEL(ch) - 1);
 	logit(LOG_LEVEL, "Level %2d: %s", GET_LEVEL(ch), GET_NAME(ch));
 	ch->only.pc->prestige++;
 
@@ -892,16 +919,21 @@ static void advance_level_impl(P_char ch, bool notify_player, bool process_boons
 
 void advance_level(P_char ch)
 {
-	advance_level_impl(ch, true, true, 0U);
+	const int previous_level = GET_LEVEL(ch);
+	const std::vector<int> learned_before = learned_skills(ch);
+
+	advance_level_impl(ch, true, 0U);
+	notify_level_advancement(ch, previous_level, learned_before);
 }
 
 void advance_to_level(P_char ch, int target_level)
 {
 	const int previous_level = GET_LEVEL(ch);
+	const std::vector<int> learned_before = learned_skills(ch);
 
 	while (GET_LEVEL(ch) < target_level)
-		advance_level_impl(ch, false, false, 0U);
-	notify_level_advancement(ch, previous_level);
+		advance_level_impl(ch, false, 0U);
+	notify_level_advancement(ch, previous_level, learned_before);
 }
 
 /*
@@ -1852,6 +1884,7 @@ template <typename Amount> static int gain_exp_amount(P_char ch, P_char victim, 
 	if (XP_final > 0)
 	{
 		const int previous_level = GET_LEVEL(ch);
+		const std::vector<int> learned_before = learned_skills(ch);
 
 		// Hardcores should level via exp only. - Drannak 11/30/12
 		// Liches can lvl exp only too since they are solo on 3rd racewar side (again). 7/7/2015
@@ -1865,7 +1898,7 @@ template <typename Amount> static int gain_exp_amount(P_char ch, P_char victim, 
 				logexp("player %s advancing level, p.exp = %d, newlevelexp = %ld, levelcap = %d (a)",
 				       GET_NAME(ch), GET_EXP(ch), new_exp_table[i], levelcap);
 				GET_EXP(ch) -= new_exp_table[i];
-				advance_level_impl(ch, false, true,
+				advance_level_impl(ch, true,
 						   static_cast<std::uint64_t>(new_exp_table[i]));
 			}
 		}
@@ -1879,11 +1912,11 @@ template <typename Amount> static int gain_exp_amount(P_char ch, P_char victim, 
 				logexp("player %s advancing level, p.exp = %d, newlevelexp = %ld, levelcap = %d (b)",
 				       GET_NAME(ch), GET_EXP(ch), new_exp_table[i], levelcap);
 				GET_EXP(ch) -= new_exp_table[i];
-				advance_level_impl(ch, false, true,
+				advance_level_impl(ch, true,
 						   static_cast<std::uint64_t>(new_exp_table[i]));
 			}
 		}
-		notify_level_advancement(ch, previous_level);
+		notify_level_advancement(ch, previous_level, learned_before);
 	}
 	else
 	{

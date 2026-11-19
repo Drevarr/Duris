@@ -110,7 +110,8 @@ def run(binary):
                 assert "trade_receipt_unresolved" not in collect_logs(runtime)
                 print("PASS accepted claim survives disconnect and restart; repeated pickup/save cannot duplicate credit", flush=True)
 
-                # SQL pickups are unsigned; collect a large balance in bounded claims.
+                # SQL pickups are unsigned; one pickup collects a large balance in bounded
+                # claims, each committed before the next is read (#1062 N14b).
                 stop()
                 sql(f"UPDATE player_data SET copper=0,silver=0,gold=0,platinum=0 WHERE pid={pid}")
                 sql(f"UPDATE auction_money_pickups SET money={INT_MAX + 17} WHERE pid={pid}")
@@ -118,18 +119,17 @@ def run(binary):
                 login()
                 client.send("auction pickup")
                 client.expect("being committed", timeout=20)
-                await_state((INT_MAX, 17, 0))
+                await_state((INT_MAX + 17, 0, 0))
+                command(client, "save")
                 stop(crash=True)
                 server.start(full_world=True)
                 login()
-                assert state() == (INT_MAX, 17, 0)
+                assert state() == (INT_MAX + 17, 0, 0)
                 client.send("auction pickup")
-                client.expect("being committed", timeout=20)
-                await_state((INT_MAX + 17, 0, 0))
-                command(client, "auction pickup")
+                client.expect("no items or money", timeout=20)
                 command(client, "save")
                 await_state((INT_MAX + 17, 0, 0))
-                print("PASS unsigned staged balance collects in two exact claims across SIGKILL/restart", flush=True)
+                print("PASS one pickup collects an unsigned staged balance in exact claims; SIGKILL/restart keeps it", flush=True)
             except Exception:
                 target = ROOT / "bin/tests/auction-money-failure.log"
                 target.write_text(collect_logs(runtime) + "\n" +

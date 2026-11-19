@@ -387,7 +387,7 @@ void do_smoke(P_char ch, char *argument, int /*cmd*/)
 	case SECT_UNDRWLD_SLIME:
 		if (GET_RACE(ch) != RACE_TROLL)
 		{
-			herb_level *= 2 / 3;
+			herb_level = herb_level * 2 / 3;
 			act("&nThe &+cmo&+Ci&+cs&+Ctu&+cr&+Ce&n is affecting the &+Cdank&+cness&n of $p&n.",
 			    FALSE, ch, herb, NULL, TO_CHAR);
 		}
@@ -395,7 +395,7 @@ void do_smoke(P_char ch, char *argument, int /*cmd*/)
 	// If on Fireplane or Lava sectors, the herb's effectiveness is decreased by the heat.
 	case SECT_FIREPLANE:
 	case SECT_LAVA:
-		herb_level *= 3 / 5;
+		herb_level = herb_level * 3 / 5;
 		act("&nThe &+rheat&n has ruined the &+mte&+cr&+mp&+cen&+mo&+ci&+mds&n of $p&n.",
 		    FALSE, ch, herb, NULL, TO_CHAR);
 		break;
@@ -641,13 +641,12 @@ void herb_blue_haze(int level, int duration, P_char smoker)
 	{
 		struct affected_type *af1;
 
-		// Renew the affect (although if the last time they smoked it didn't apply the vitality, resmoking doesn't either).
+		// Renew every part of the affect (although if the last time they smoked it didn't apply the vitality, resmoking doesn't either).
 		for (af1 = smoker->affected; af1; af1 = af1->next)
 		{
 			if (af1->type == HERB_BLUE_HAZE)
 			{
 				af1->duration += duration;
-				break;
 			}
 		}
 		send_to_char(
@@ -739,7 +738,7 @@ void herb_medicus(int level, [[maybe_unused]] int duration, P_char smoker)
 	int multi = get_property("smoke.medicus.multi", 1);
 
 	af.type = HERB_MEDICUS;
-	af.duration = SECS_PER_MUD_HOUR * 5; // 5 Hours seems okay for now.  ~6.5 RL mins.
+	af.duration = HERB_MEDICUS_DURATION;
 	af.location = APPLY_HIT_REG;
 	af.modifier = ((level * level * 4) / 3) *
 		      multi; // Standard SPELL_REGENERATION is level * level * 2.
@@ -777,13 +776,12 @@ void herb_black_kush(int level, int duration, P_char smoker)
 	{
 		struct affected_type *af1;
 
-		// Renew the affect.
+		// Renew every part of the affect.
 		for (af1 = smoker->affected; af1; af1 = af1->next)
 		{
 			if (af1->type == HERB_BLACK_KUSH)
 			{
 				af1->duration += duration;
-				break;
 			}
 		}
 		send_to_char("&nYou feel your mind expand with the &+Ws&+wm&+Wo&+wk&+We&n.\n\r",

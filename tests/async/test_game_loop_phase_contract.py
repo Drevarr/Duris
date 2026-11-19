@@ -61,6 +61,10 @@ for needle in ("telnet_flush_output(point)", "process_output(point)",
                "websocket_flush_output(point)", "point->ws_control_output_len"):
     assert contains(output, needle)
 
+# Room.Info follows the text drain; test_room_info_text_order.py runs it.
+assert count(comm, "gmcp_flush_dirty_rooms();") == 1
+assert index(output, "PROFILE_END(prompts);") < index(output, "gmcp_flush_dirty_rooms();")
+
 for needle in ("ne_events();", "item_creation_grant_prepare_pulse();",
                "artifact_mana_pulse();", "device_actions_pulse();"):
     assert contains(events, needle)

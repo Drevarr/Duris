@@ -24,6 +24,7 @@
 #include "world/db.h"
 #include "core/files.h"
 #include "core/utils.h"
+#include "magic/spells.h"
 
 #include <algorithm>
 #include <climits>
@@ -683,6 +684,9 @@ bool player_load_materialize(P_char ch, const player_load_result &loaded)
 		const player_affect_snapshot &entry = *affect_entry;
 		affect.type = entry.type;
 		affect.duration = entry.duration;
+		// Medicus saved by older builds counted 375 ticks; hold it to its current length.
+		if (affect.type == HERB_MEDICUS)
+			affect.duration = MIN(affect.duration, HERB_MEDICUS_DURATION);
 		affect.flags = entry.flags;
 		affect.modifier = entry.modifier;
 		affect.location = entry.location;

@@ -133,10 +133,10 @@ int main()
 	complete();
 	assert(frag_cap_runtime_state()->earned[0] == 5);
 	complete(); // The request made during the read was preserved.
-	assert(frag_cap_runtime_status(1, start).find("Good 0.05 / Evil 0.00") !=
-	       std::string::npos);
-	assert(frag_cap_runtime_status(2, start).find("Good 0.05 / Evil 0.00") !=
-	       std::string::npos);
+	assert(frag_cap_runtime_status(1, start).find(
+		       "Round Frags:   &+WGood &+w0.05&n, &+REvil &+w0.00") != std::string::npos);
+	assert(frag_cap_runtime_status(2, start).find(
+		       "Round Frags:   &+WGood &+w0.05&n, &+REvil &+w0.00") != std::string::npos);
 	assert(frag_cap_runtime_status(1, start).find("3d 0h 0m 0s") != std::string::npos);
 	const auto confirmed = state;
 	auto older = state;
@@ -180,9 +180,9 @@ int main()
 	refresh();
 	assert(announcements.size() == 1 &&
 	       announcements[0].find("Good cap: 32. Evil cap: 31") != std::string::npos);
-	assert(frag_cap_runtime_status(1, start + 72 * FRAG_CAP_HOUR).find("Your normal cap: 32") !=
+	assert(frag_cap_runtime_status(1, start + 72 * FRAG_CAP_HOUR).find("Your Cap:      &+w32") !=
 	       std::string::npos);
-	assert(frag_cap_runtime_status(2, start + 72 * FRAG_CAP_HOUR).find("Your normal cap: 31") !=
+	assert(frag_cap_runtime_status(2, start + 72 * FRAG_CAP_HOUR).find("Your Cap:      &+w31") !=
 	       std::string::npos);
 	tick(start + 216 * FRAG_CAP_HOUR);
 	assert(frag_cap_runtime_boot(start + 216 * FRAG_CAP_HOUR));

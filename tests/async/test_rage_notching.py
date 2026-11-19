@@ -174,8 +174,28 @@ int main() {
         assert(activation_checks == 1 && improvement_checks == 0);
         assert(lag == 2 * PULSE_VIOLENCE && published == 0 && recovery == 0);
     }
+    // The notch that reaches the cap announces it once; 100 is mastery (#1062 N11).
+    for (int cap : {80, 100}) {
+        reset();
+        activation_roll = 40;
+        pc.skills[SKILL_RAGE].taught = cap;
+        pc.skills[SKILL_RAGE].learned = cap - 2;
+        do_rage(&actor, nullptr, 0);
+        assert(output.find("current limit") == std::string::npos &&
+               output.find("mastered") == std::string::npos);
+        for (int attempt = 0; attempt < 2; ++attempt) {
+            output.clear();
+            raging = false;
+            do_rage(&actor, nullptr, 0);
+            const bool reached = attempt == 0;
+            assert((output.find(cap == 100 ? "You have mastered &+Wrage" :
+                                             "skill in &+Wrage&+c has reached your current limit") !=
+                    std::string::npos) == reached);
+        }
+        assert(pc.skills[SKILL_RAGE].learned == cap);
+    }
     std::puts("PASS Rage notching: exact 2.5% failed / 5% successful rolls, class/spec parity, "
-              "failed-attempt lag and effects, prerequisites and shared eligibility rules");
+              "failed-attempt lag and effects, prerequisites, shared eligibility rules and one cap announcement");
 }
 '''
 

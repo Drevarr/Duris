@@ -9,9 +9,7 @@ from _paths import HARNESS_STUBS, ROOT, extract_function
 
 
 ADVANCE = extract_function(
-    "limits.c",
-    "static void advance_level_impl(P_char ch, bool notify_player, bool process_boons,\n"
-    "\t\t\t       std::uint64_t threshold_xp)\n{",
+    "limits.c", "static void advance_level_impl(P_char ch, bool process_boons, std::uint64_t threshold_xp)\n{"
 )
 LOSE = extract_function(
     "limits.c",
@@ -19,8 +17,6 @@ LOSE = extract_function(
     "\t\t\t    telemetry_progression_source source,\n"
     "\t\t\t    telemetry_progression_reason reason)\n{",
 )
-THRESHOLD = extract_function("limits.c", "int death_exp_loss_level_threshold(")
-NOTIFY = extract_function("limits.c", "static void notify_level_advancement(")
 
 HARNESS = f"""
 #include <cassert>
@@ -66,8 +62,6 @@ void balance_affects(P_char) {{}}
 telemetry_capture_result telemetry_runtime_game_progression(
     P_char, P_desc, telemetry_progression_observation) {{ return {{}}; }}
 
-{THRESHOLD}
-{NOTIFY}
 {ADVANCE}
 {LOSE}
 
@@ -87,7 +81,7 @@ struct Player {{
         lose_level_impl(&ch, 0U, telemetry_progression_source::system,
                         telemetry_progression_reason::system_adjustment);
     }}
-    void gain() {{ advance_level_impl(&ch, false, false, 0U); }}
+    void gain() {{ advance_level_impl(&ch, false, 0U); }}
 }};
 
 int main()

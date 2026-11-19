@@ -61,11 +61,11 @@ advance_impl = function_body(
 )
 assert "if (process_boons)\n\t\tcheck_boon_completion(ch, NULL, 0, BOPT_LEVEL);" in advance_impl
 assert function_body("void advance_level(P_char ch)\n{").count(
-    "advance_level_impl(ch, true, true, 0U);"
+    "advance_level_impl(ch, true, 0U);"
 ) == 1
 to_level = function_body("void advance_to_level(P_char ch, int target_level)\n{")
-assert to_level.count("advance_level_impl(ch, false, false, 0U);") == 1
-assert "advance_level_impl(ch, false, true," not in to_level
+assert to_level.count("advance_level_impl(ch, false, 0U);") == 1
+assert "advance_level_impl(ch, true," not in to_level
 
 # 3. Code that must not come back.
 for removed in ("CHAOS_RESOURCE_", "chaos_resource_", "PLR3_CHAOS_STARTER_PENDING",

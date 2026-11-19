@@ -257,11 +257,13 @@ void extract_obj(P_obj object, int) {
     assert(*link); *link=object->next;
 }
 uint64_t discoveries_at_level_save = 0;
-static void notify_level_advancement(P_char, int);
-static void advance_level_impl(P_char ch, bool notify_player, bool, std::uint64_t) {
+Skill skills[MAX_AFFECT_TYPES + 1];
+std::vector<int> skills_raised_per_level;
+static void advance_level_impl(P_char ch, bool, std::uint64_t) {
     discoveries_at_level_save = ch->only.pc->learned_flight_stops;
     ++ch->player.level;
-    if (notify_player) notify_level_advancement(ch, GET_LEVEL(ch) - 1);
+    // Stands in for update_skills raising skills to the new level's floor.
+    for (int skill : skills_raised_per_level) ++ch->only.pc->skills[skill].learned;
 }
 static void lose_level_impl(P_char ch, std::uint64_t,
     telemetry_progression_source, telemetry_progression_reason) { --ch->player.level; }
@@ -484,6 +486,46 @@ int main() {
     assert(last_recipient == &other);
     player.specials.act &= ~PLR_MORPH;
     death_cutoff = -1;
+    // Each level-up names, on one line, the skills it raised; none raised, no line.
+    skills[SKILL_SNEAK].name = "sneak";
+    skills[SKILL_HIDE].name = "hide";
+    const std::string raised = "&+cYour new level improves your skill in ";
+    auto raised_line = [&] {
+        const size_t start = output.find(raised);
+        assert(start != std::string::npos && output.find(raised, start + 1) == std::string::npos);
+        return output.substr(start, output.find('\n', start) + 1 - start);
+    };
+    reset();
+    player.player.level = 20;
+    advance_level(&player);
+    assert(output.find(raised) == std::string::npos);
+    skills_raised_per_level = {SKILL_SNEAK};
+    reset();
+    advance_level(&player);
+    assert(raised_line() == raised + "sneak.&n\r\n");
+    assert(output.find("You raise a level!") < output.find(raised));
+    skills_raised_per_level = {SKILL_SNEAK, SKILL_HIDE};
+    reset();
+    advance_to_level(&player, 24);
+    assert(raised_line() == raised + "sneak, hide.&n\r\n");
+    // Bard instruments and songs sit past LAST_SKILL but also rise on level-up.
+    skills[INSTRUMENT_FLUTE].name = "flute";
+    skills[LAST_SONG].name = "song of drifting";
+    skills_raised_per_level = {SKILL_SNEAK, INSTRUMENT_FLUTE, LAST_SONG};
+    reset();
+    advance_level(&player);
+    assert(raised_line() == raised + "sneak, flute, song of drifting.&n\r\n");
+    skills_raised_per_level = {SKILL_SNEAK, SKILL_HIDE};
+    reset();
+    maximum_exp_level = 50;
+    player.player.level = 30;
+    player.points.curr_exp = 9900;
+    new_exp_table[32] = 1000;
+    assert(gain_exp(&player, nullptr, 1100, EXP_QUEST) == 1100);
+    assert(player.player.level == 32 && raised_line() == raised + "sneak, hide.&n\r\n");
+    for (auto &xp : new_exp_table) xp = 10000;
+    maximum_exp_level = 20;
+    skills_raised_per_level.clear();
     // An award at the cap does not manufacture a threshold crossing.
     reset();
     player.player.level = 29;
@@ -1634,6 +1676,7 @@ def main() -> None:
             "static telemetry_progression_source progression_source_for_type(",
             "static telemetry_progression_reason progression_reason_for_type(",
             "int death_exp_loss_level_threshold(",
+            "static std::vector<int> learned_skills(",
             "static void notify_level_advancement(",
             "void advance_level(P_char ch)",
             "void advance_to_level(",

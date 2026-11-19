@@ -62,6 +62,29 @@ int main()
 	require(!result.allowed && result.remaining_seconds == LONG_MAX,
 		"future timestamp arithmetic did not saturate");
 
+	result = account_racewar_pending_switch(0, 0, now, configured_cooldown);
+	require(result.remaining_seconds == 0, "a fresh account reported a side-switch wait");
+	result = account_racewar_pending_switch(0, now - 100, now, configured_cooldown);
+	require(result.side == ACCOUNT_RACEWAR_GOOD &&
+			result.remaining_seconds == configured_cooldown - 100,
+		"the wait after playing Evil did not name Good");
+	result = account_racewar_pending_switch(now - 100, 0, now, configured_cooldown);
+	require(result.side == ACCOUNT_RACEWAR_EVIL &&
+			result.remaining_seconds == configured_cooldown - 100,
+		"the wait after playing Good did not name Evil");
+	result = account_racewar_pending_switch(now - configured_cooldown, 0, now,
+						configured_cooldown);
+	require(result.remaining_seconds == 0, "an expired side-switch wait was still reported");
+	// Both sides wait when the cooldown outlasts the switch; the later side was played last.
+	result = account_racewar_pending_switch(now - 100, now - 200, now, configured_cooldown);
+	require(result.side == ACCOUNT_RACEWAR_EVIL &&
+			result.remaining_seconds == configured_cooldown - 100,
+		"the wait did not follow the side played last (Good)");
+	result = account_racewar_pending_switch(now - 200, now - 100, now, configured_cooldown);
+	require(result.side == ACCOUNT_RACEWAR_GOOD &&
+			result.remaining_seconds == configured_cooldown - 100,
+		"the wait did not follow the side played last (Evil)");
+
 	std::cout << "racewar admission policy tests passed\n";
 	return 0;
 }

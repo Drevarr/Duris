@@ -109,6 +109,8 @@ void update_character_list(P_desc, char *);
 void add_ip_entry(P_acct, P_desc);
 struct acct_ip *find_ip_entry(P_acct, P_desc);
 int can_connect(struct acct_chars *, P_desc);
+// A session given a morphed player plays the morph. False if the morph link is broken.
+bool attach_session_to_morph(P_desc d);
 int is_char_in_game(struct acct_chars *, P_desc);
 struct acct_chars *find_char_in_list(struct acct_chars *, const char *);
 P_char load_char_into_game(struct acct_chars *, P_desc);
@@ -3258,6 +3260,7 @@ int archery_anatomy_strike(P_char, P_char, P_obj, struct damage_messages *messag
 void do_gather(P_char ch, char *argument, int cmd);
 void do_throw(P_char, char *, int); /* TASFALEN */
 void do_fire(P_char, char *, int); /* TASFALEN */
+void do_afire(P_char ch, char *argument, int cmd);
 void do_load_weapon(P_char, char *, int); /* TASFALEN */
 int range_scan(P_char, P_char, int, int); /* TASFALEN */
 bool mob_can_range_att(P_char, P_char); /* TASFALEN */

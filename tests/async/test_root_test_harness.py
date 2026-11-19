@@ -95,6 +95,7 @@ expected_resource_intensive = {
     "test_mob_gold_dial_runtime.py",
     "test_pet_restart_journey.py",
     "test_ranged_kill_xp_journey.py",
+    "test_ranged_cover_message_journey.py",
     "test_shambler_reflection_journey.py",
     "test_websocket_session_guard_journey.py",
     "test_shop_multi_buy_journey.py",

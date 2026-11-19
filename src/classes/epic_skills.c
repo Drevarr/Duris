@@ -203,7 +203,7 @@ epic_teacher_skill epic_teachers[] = {
 	{ 99548, SKILL_EMPOWER_SONG, 0, 100, 0, 0 },
 	{ 22436, SKILL_FIX, 0, 100, 0, 0, 0 }, // smith in stormport
 	//  {9454,  SKILL_CRAFT, 0, 100, 0, 0, 0}, //Rjinal in Samirz
-	{ 40760, SKILL_ENCRUST, 0, 100, 0, 0, 0 }, // Snent in Divine Home
+	{ 40760, SKILL_ENCRUST, 0, 100, SKILL_CRAFT, 0, 0 }, // Snent; Craft must keep pace
 	{ 78006, SKILL_ENCHANT, 0, 100, 0, SKILL_SPELLBIND, 0 }, // Bargor in Oasis
 	{ 94017, SKILL_SPELLBIND, 0, 100, 0, SKILL_ENCHANT, 0 }, // Kalroh in Maze of Undead Army
 	{ 37145, SKILL_SMELT, 0, 100, 0, 0, 0 }, // Carmotee in Dumaathe
@@ -490,6 +490,12 @@ int epic_teacher(P_char ch, P_char pl, int cmd, char *arg)
 		coins_cost *= (int)(get_property("epic.multiclass.EpicPlatCost", 3));
 	}
 
+	// Each lesson needs the prerequisite skill at least at the level it teaches.
+	const bool prerequisite_behind =
+		pTeacher->pre_requisite &&
+		GET_CHAR_SKILL(pl, pTeacher->pre_requisite) <
+			MIN(100, GET_CHAR_SKILL(pl, skl) + get_property("epic.skillGain", 10));
+
 	if (!arg || !*arg)
 	{
 		// Practice called with no arguments
@@ -511,6 +517,7 @@ int epic_teacher(P_char ch, P_char pl, int cmd, char *arg)
 			    !(pTeacher->pre_requisite &&
 			      GET_CHAR_SKILL(pl, pTeacher->pre_requisite) <
 				      pTeacher->pre_req_lvl) &&
+			    !prerequisite_behind &&
 			    !(GET_CHAR_SKILL(pl, skl) >= 100 ||
 			      GET_CHAR_SKILL(pl, skl) >= pTeacher->max))
 			{
@@ -593,10 +600,7 @@ int epic_teacher(P_char ch, P_char pl, int cmd, char *arg)
 		return TRUE;
 	}
 
-	// If the prereq skill is less than the epic skill (after teaching).
-	if (pTeacher->pre_requisite &&
-	    GET_CHAR_SKILL(pl, pTeacher->pre_requisite) <
-		    GET_CHAR_SKILL(pl, skl) + get_property("epic.skillGain", 10))
+	if (prerequisite_behind)
 	{
 		snprintf(buffer, sizeof buffer,
 			 "You must study &+W%s&n more before you can progress in &+W%s&n.\n",

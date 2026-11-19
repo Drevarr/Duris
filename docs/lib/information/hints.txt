@@ -118,7 +118,17 @@ Bartenders sell world quests to characters of level 11 or higher. You can find b
 Epic points are a separate reward currency. Check your balance with "score" and read "help epic" to learn what they can do.
 The Gods of Duris grant automatic bonuses for limited times. Type "boon" to see which ones are active.
 Flight paths carry you quickly across the world. Find a flight carrier and type "list" to learn that stop and see its routes. Buy a ticket and give it to the carrier to fly, and type "flights" anywhere to see the stops you have learned.
-A tradeskill teacher can train you in mining, forging or crafting, but you can only know one of them at a time.
+A tradeskill teacher can train you in mining, forging or crafting, but you can only know one of them at a time. Visit Jodnan in Tharnadia or Gixnif in Khildarak and type "practice" to hear your choices.
+Changed your mind about your tradeskill? A tradeskill teacher will "practice reset" it for 200 epic points, but you lose every recipe you have learned.
+Forgers and crafters make gear from recipes. Salvage items to find recipes and materials, then type "recite <recipe>" to write a recipe into your book.
+Forgers make weapons, shields and armor for the head, body, arms, hands, legs and feet. Type "forge" to list your recipes, "forge info <number>" to see what one needs, and "forge make <number>" to build it. Each item uses up one blacksmithing flux, sold in Tharnadia and Khildarak.
+Crafters make jewelry, cloaks, belts, quivers and other accessories. Type "craft" to list your recipes, "craft info <number>" to see what one needs, and "craft make <number>" to build it. Each item uses up one gnomish crafting tool box, sold in Tharnadia and Khildarak.
+Keep your materials, flux, tool boxes and magical essences loose in your inventory when you forge or craft, because items inside a bag do not count. Recipes for magical items need one magical essence.
+You can learn a recipe at any level, but valuable items take a higher level to make. If you are too low, "forge make" or "craft make" tells you the level you need.
+Forged and crafted items cannot be repaired, fixed, encrusted or spellbound, and you cannot give them to monsters.
+A successful salvage of a magical item always gives you a magical essence. Salvaging a salvaged material splits it into two of the next lower quality.
+Lantan Scientific Tools, bought with epic points, stop a failed salvage from destroying your item and greatly improve your chance of finding a recipe. Each successful salvage uses up one set.
+Ore from mining can upgrade salvaged materials. Carry two of the same material and exactly one ore, or 50 platinum instead, then type "refine <material>". It can fail, and a failure destroys both materials.
 Humans and orcs can add a second class at level 50. Type "multiclass" to see your choices, but the decision is permanent.
 Looking for allies? Type "society" for guild commands and read "help guild" to learn more. Guild members talk on the "gcc" channel.
 Running out of room? Lockers in the hometowns can hold your spare equipment. Read "help locker" to learn how to use them.

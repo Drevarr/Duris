@@ -2148,3 +2148,13 @@ keptchar
 ~
 copyover
 ~
+afire
+GET_C_DEX(ch
+GET_C_STR(ch
+GET_C_AGI(vi
+GET_C_DEX(vi
+GET_C_LUK(vi
+GET_C_LUK(ch
+GET_C_DEX(ch
+GET_C_LUK(ch
+~

@@ -1636,10 +1636,8 @@ bool char_to_room(P_char ch, int room, int dir, bool ordinary_movement)
 	if (dir != -2)
 		do_look(ch, 0, -4);
 
-	/* Send GMCP Room.Info - must be before early returns */
-	gmcp_room_info(ch);
-
-	/* Mark room as dirty for GMCP updates (so other players see this character) */
+	/* Must be before early returns. Everyone here, the mover included, gets
+	 * Room.Info in the next output phase, after the text announcing the move. */
 	gmcp_mark_room_dirty(ch->in_room);
 
 	/* Send GMCP Room.Map for wilderness zones */
@@ -2505,7 +2503,7 @@ P_char get_char_room(const char *name, int room)
 
 P_char get_char_ranged(const char *name, P_char ch, int distance, int dir)
 {
-	P_char vict = NULL;
+	P_char vict = NULL, covered = NULL;
 	int source_room, old_cord;
 	int target_room2, target_room, i;
 	char tmp[MAX_STRING_LENGTH];
@@ -2532,7 +2530,10 @@ P_char get_char_ranged(const char *name, P_char ch, int distance, int dir)
 				if (vict)
 				{
 					if (!IS_TRUSTED(ch) && IS_AFFECTED3(vict, AFF3_COVER))
+					{
+						covered = vict;
 						vict = NULL;
+					}
 					else
 						break;
 				}
@@ -2595,6 +2596,7 @@ P_char get_char_ranged(const char *name, P_char ch, int distance, int dir)
 					}
 					else if (!IS_TRUSTED(ch) && IS_AFFECTED3(vict, AFF3_COVER))
 					{
+						covered = vict;
 						vict = NULL;
 					}
 					else
@@ -2648,6 +2650,7 @@ P_char get_char_ranged(const char *name, P_char ch, int distance, int dir)
 				{
 					if (i == 0 && IS_AFFECTED3(vict, AFF3_COVER))
 					{
+						covered = vict;
 						vict = NULL;
 						break;
 					}
@@ -2677,6 +2680,12 @@ P_char get_char_ranged(const char *name, P_char ch, int distance, int dir)
 				     ch);
 			return NULL;
 		}
+	}
+	else if (covered)
+	{
+		act("$N is under cover; you can't reach $M from there.", FALSE, ch, 0, covered,
+		    TO_CHAR);
+		return NULL;
 	}
 	else
 	{

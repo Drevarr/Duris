@@ -314,6 +314,16 @@ again:
 		}
 	}
 
+	// Notching stops at the cap, so reaching it is announced once.
+	if (l == t)
+	{
+		snprintf(buf, MAX_STRING_LENGTH,
+			 t >= 100 ? "&+cYou have mastered &+W%s&+c.&n\n" :
+				    "&+cYour skill in &+W%s&+c has reached your current limit.&n\n",
+			 skills[skill].name);
+		send_to_char(buf, ch);
+	}
+
 	if (l < t && learning_extra_notch_roll(live_rolls) && affected_by_spell(ch, SPELL_LEARNING))
 		goto again; // 2 notches on average
 
@@ -470,8 +480,8 @@ int IsTaughtHere(P_char ch, int skl)
 
 	if (!teacher)
 	{
-		// In the room of knowledge.  This is for 'scribe all' option.
-		if (find_gh_library_book_obj(ch) != NULL)
+		// A guildhall library teaches spells, not skills.
+		if (IS_SPELL(skl) && find_gh_library_book_obj(ch) != NULL)
 		{
 			return TRUE;
 		}
@@ -636,7 +646,7 @@ void prac_all_spells(P_char ch)
 		mobsay(teacher, "You have everything I will teach you scribed!");
 }
 
-void do_practice(P_char ch, char *arg, int cmd)
+void do_practice(P_char ch, char *arg, int /*cmd*/)
 {
 	char buf[MAX_STRING_LENGTH], buf1[MAX_STRING_LENGTH], obuf[MAX_STRING_LENGTH];
 	int skl, spl, circle, i, meming_cl, cost, ret;
@@ -730,9 +740,14 @@ void do_practice(P_char ch, char *arg, int cmd)
 			return;
 		}
 		// Search for an exact match first... otherwise guard -> guardian spirits instead of guard.
-		if (!(skl = search_block(arg, (const char **)spells, TRUE)))
+		if ((skl = search_block(arg, (const char **)spells, TRUE)) < 0)
 		{
 			skl = search_block(arg, (const char **)spells, FALSE);
+		}
+		if (skl < 0)
+		{
+			send_to_char("You have never heard of such a skill or spell.\n", ch);
+			return;
 		}
 		i = skl;
 
@@ -909,8 +924,8 @@ void do_practice(P_char ch, char *arg, int cmd)
 			snprintf(buf, MAX_STRING_LENGTH, "You start to scribe the spell '%s'..\n",
 				 skills[skl].name);
 			send_to_char(buf, ch);
-			snprintf(buf, MAX_STRING_LENGTH, " %s %s", GET_NAME(ch), skills[skl].name);
-			do_teach(teacher, buf, cmd);
+			// Teach ch directly: a lookup by name can find ch's mirror image instead.
+			add_scribing(ch, skl, SpellBookAtHand(ch), 0, 0, teacher);
 		}
 		/*
 		 * end of single practicing

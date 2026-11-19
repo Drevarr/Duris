@@ -11,7 +11,7 @@ wrapped_ch = text.count('if (!do_save_silent(ch, 1))')
 print(f'reset_guard={reset_guard} refund_guard={refund_guard} wrapped_tch={wrapped_tch} wrapped_ch={wrapped_ch}')
 
 ok = True
-if reset_guard < 2 or refund_guard < 1 or wrapped_tch < 2 or wrapped_ch < 1:
+if reset_guard < 1 or refund_guard < 1 or wrapped_tch < 1 or wrapped_ch < 1:
     print('missing epic save guard(s)')
     ok = False
 

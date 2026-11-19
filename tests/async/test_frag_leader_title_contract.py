@@ -108,8 +108,10 @@ with tempfile.TemporaryDirectory(prefix="frag-queries-", dir=directory) as tempo
         eligible = fixtures[:12]
         if filter_text:
             eligible = [row for row in eligible if row[0] % 2]
+        # Top lists only positive totals and lowest only negative ones (#1062 N3b).
         for query, tag, descending in ((top_query, "top", True), (low_query, "low", False)):
-            expected = sorted(eligible, key=lambda row: row[2], reverse=descending)[:10]
+            expected = sorted([row for row in eligible if (row[2] > 0 if descending else row[2] < 0)],
+                              key=lambda row: row[2], reverse=descending)[:10]
             assert database.execute(query).fetchall() == [(tag, row[1], row[2]) for row in expected]
         assert dict((row[1], row[2]) for row in database.execute(total_query)) == {
             side: sum(row[2] for row in fixtures if row[3] <= 56 and row[4] == side)
@@ -120,6 +122,9 @@ with tempfile.TemporaryDirectory(prefix="frag-queries-", dir=directory) as tempo
     assert database.execute(lead_query[1:-1]).fetchall() == [("lead", "Mortal11")]
     database.execute("UPDATE frag_leaderboard SET total_frags = 0 WHERE level <= 56")
     assert database.execute(lead_query[1:-1]).fetchall() == []
+    assert database.execute(last_query[1:-1]).fetchall() == []
+    for query in (top_query, low_query):
+        assert database.execute(query).fetchall() == []
     database.execute("DELETE FROM frag_leaderboard WHERE level <= 56")
     for query in (lead_query[1:-1], last_query[1:-1], top_query, low_query, total_query):
         assert database.execute(query).fetchall() == []

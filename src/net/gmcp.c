@@ -25,6 +25,7 @@
 #include <string.h>
 #include <time.h>
 #include <unordered_map>
+#include <unordered_set>
 #include "world/handler.h"
 #include "core/json_utils.h"
 #include "world/map.h"
@@ -1018,57 +1019,25 @@ void gmcp_send_quest_map(struct char_data *ch, const char *map_buf)
 }
 
 /*
- * room update throttling - track dirty rooms and flush periodically
- * to avoid flooding during high-activity scenarios like big battles
+ * Rooms whose occupants changed. Each output phase sends their Room.Info after
+ * the text announcing the change, so a panel never shows a move before its text.
  */
-#define MAX_DIRTY_ROOMS 500
-static int dirty_rooms[MAX_DIRTY_ROOMS];
-static int dirty_room_count = 0;
+static std::unordered_set<int> dirty_rooms;
 
 void gmcp_mark_room_dirty(int room_number)
 {
-	int i;
-
-	if (room_number < 0)
-		return;
-
-	/* check if already marked */
-	for (i = 0; i < dirty_room_count; i++)
-	{
-		if (dirty_rooms[i] == room_number)
-			return;
-	}
-
-	/* add to dirty list if space available */
-	if (dirty_room_count < MAX_DIRTY_ROOMS)
-	{
-		dirty_rooms[dirty_room_count++] = room_number;
-	}
+	if (room_number >= 0)
+		dirty_rooms.insert(room_number);
 }
 
 void gmcp_flush_dirty_rooms(void)
 {
-	int i;
-	struct char_data *tch;
-	struct room_data *room;
-
-	for (i = 0; i < dirty_room_count; i++)
-	{
-		room = &world[dirty_rooms[i]];
-		if (!room)
-			continue;
-
-		/* send room.info to all players in this room */
-		for (tch = room->people; tch; tch = tch->next_in_room)
-		{
-			if (!IS_NPC(tch) && tch->desc && GMCP_ENABLED(tch))
-			{
+	std::unordered_set<int> rooms;
+	rooms.swap(dirty_rooms);
+	for (int room : rooms)
+		for (struct char_data *tch = world[room].people; tch; tch = tch->next_in_room)
+			if (GMCP_ENABLED(tch))
 				gmcp_room_info(tch);
-			}
-		}
-	}
-
-	dirty_room_count = 0;
 }
 
 /*

@@ -202,61 +202,7 @@ void prime_artifact_caches(const redis_connection_settings *connection)
 /* The cached fraglist, from the leaderboard rows fraglist_leaders() reads. */
 static char *fraglist_cache_payload(const sql_rows &rows)
 {
-	char *output = static_cast<char *>(malloc(65536));
-	if (!output)
-		return NULL;
-
-	output[0] = '\0';
-	char buf[2048], name[256], totals[512];
-	int frags, count;
-	float fragnum;
-	fraglist_totals_header(rows, totals, sizeof(totals));
-	snprintf(output, 65536, "FRAGLIST2\n%s&+WTop Fraggers\n\n", totals);
-
-	count = 0;
-	for (const sql_row &row : rows)
-	{
-		if (strcmp(row[0], "top") || !row[1] || !row[2] || count >= max_frag_size)
-			continue;
-		strlcpy(name, row[1], sizeof name);
-		name[0] = toupper(name[0]);
-		frags = atoi(row[2]);
-		fragnum = frags / 100.0;
-		snprintf(buf, sizeof(buf), "   &+Y%-30s             &+R% 6.2f\r\n", name, fragnum);
-		strcat(output, buf);
-		count++;
-	}
-	while (count < max_frag_size)
-	{
-		snprintf(buf, sizeof(buf), "   &+Y%-30s             &+R% 6.2f\r\n", "Nobody", 0.0);
-		strcat(output, buf);
-		count++;
-	}
-
-	strcat(output, "\r\n\r\n&+LLowest Fraggers\r\n\r\n");
-
-	count = 0;
-	for (const sql_row &row : rows)
-	{
-		if (strcmp(row[0], "low") || !row[1] || !row[2] || count >= max_frag_size)
-			continue;
-		strlcpy(name, row[1], sizeof name);
-		name[0] = toupper(name[0]);
-		frags = atoi(row[2]);
-		fragnum = frags / 100.0;
-		snprintf(buf, sizeof(buf), "   &+Y%-30s             &+R% 6.2f\r\n", name, fragnum);
-		strcat(output, buf);
-		count++;
-	}
-	while (count < max_frag_size)
-	{
-		snprintf(buf, sizeof(buf), "   &+Y%-30s             &+R% 6.2f\r\n", "Nobody", 0.0);
-		strcat(output, buf);
-		count++;
-	}
-
-	strcat(output, "\r\n");
-	return output;
+	return strdup(("FRAGLIST3\n" + fraglist_report(rows)).c_str());
 }
 #endif
 
@@ -304,21 +250,23 @@ bool fraglist_leaders(MYSQL *connection, const char *filter, sql_rows *rows)
 				  "WHERE level <= %d GROUP BY racewar",
 				  MAXLVLMORTAL),
 		       rows) &&
-	       !sql_select(connection,
-			   sql_format("SELECT 'top', char_name, total_frags FROM frag_leaderboard "
-				      "WHERE deleted_at IS NULL AND level <= %d%s "
-				      "ORDER BY total_frags DESC LIMIT %d",
-				      MAXLVLMORTAL, where.c_str(), max_frag_size),
-			   rows) &&
-	       !sql_select(connection,
-			   sql_format("SELECT 'low', char_name, total_frags FROM frag_leaderboard "
-				      "WHERE deleted_at IS NULL AND level <= %d%s "
-				      "ORDER BY total_frags ASC LIMIT %d",
-				      MAXLVLMORTAL, where.c_str(), max_frag_size),
-			   rows);
+	       !sql_select(
+		       connection,
+		       sql_format("SELECT 'top', char_name, total_frags FROM frag_leaderboard "
+				  "WHERE deleted_at IS NULL AND level <= %d AND total_frags > 0%s "
+				  "ORDER BY total_frags DESC LIMIT %d",
+				  MAXLVLMORTAL, where.c_str(), max_frag_size),
+		       rows) &&
+	       !sql_select(
+		       connection,
+		       sql_format("SELECT 'low', char_name, total_frags FROM frag_leaderboard "
+				  "WHERE deleted_at IS NULL AND level <= %d AND total_frags < 0%s "
+				  "ORDER BY total_frags ASC LIMIT %d",
+				  MAXLVLMORTAL, where.c_str(), max_frag_size),
+		       rows);
 }
 
-void fraglist_totals_header(const sql_rows &rows, char *output, size_t size)
+std::string fraglist_report(const sql_rows &rows)
 {
 	long totals[MAX_RACEWAR] = { 0 };
 	for (const sql_row &row : rows)
@@ -328,9 +276,31 @@ void fraglist_totals_header(const sql_rows &rows, char *output, size_t size)
 			if (racewar >= 0 && racewar < MAX_RACEWAR)
 				totals[racewar] = atol(row[2]);
 		}
-	snprintf(output, size,
-		 "&+WGoodies Total Frags - &+w%.2f, &+REvils Total Frags - &+w%.2f&n\n\n",
+	char line[1024];
+	snprintf(line, sizeof line, "&+YTotal Frags:   &+WGood &+w%.2f&n, &+REvil &+w%.2f&n\r\n",
 		 totals[RACEWAR_GOOD] / 100.0, totals[RACEWAR_EVIL] / 100.0);
+	std::string report = line;
+	for (const char *tag : { "top", "low" })
+	{
+		report += strcmp(tag, "top") ? "\r\n&+LLowest Fraggers&n\r\n\r\n" :
+					       "\r\n&+WTop Fraggers&n\r\n\r\n";
+		bool listed = false;
+		for (const sql_row &row : rows)
+			if (!strcmp(row[0], tag) && row[1] && row[2])
+			{
+				char name[64];
+				strlcpy(name, row[1], sizeof name);
+				name[0] = toupper(name[0]);
+				snprintf(line, sizeof line,
+					 "   &+Y%-30s             &+R% 6.2f&n\r\n", name,
+					 atoi(row[2]) / 100.0);
+				report += line;
+				listed = true;
+			}
+		if (!listed)
+			report += "   &+wNobody yet.&n\r\n";
+	}
+	return report + "\r\n";
 }
 
 bool redis_report_cache_configure(const char *key_namespace, uint64_t epoch)
@@ -489,7 +459,7 @@ char *redis_get_fraglist(void)
 	const auto render = [](const char *payload, void *) -> char *
 	{
 		// Redis owns freshness (TTL). Reject the retired cap/countdown framing.
-		constexpr char marker[] = "FRAGLIST2\n";
+		constexpr char marker[] = "FRAGLIST3\n";
 		return payload && !strncmp(payload, marker, sizeof(marker) - 1) ?
 			       strdup(payload + sizeof(marker) - 1) :
 			       nullptr;

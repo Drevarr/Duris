@@ -9,7 +9,7 @@ from _paths import ROOT, SRC, extract_function
 
 
 SIMPLE_JOBS = """
-gmcp_flush_initial_states gmcp_flush_dirty_rooms gmcp_flush_dirty_ship_contacts
+gmcp_flush_initial_states gmcp_flush_dirty_ship_contacts
 gmcp_flush_dirty_ship_info flush_pending_ship_saves retry_unplaced_ships
 locker_async_pulse combat_outcome_transaction_pulse critical_gameplay_publish_outbox
 player_save_pipeline_pulse divine_boon_runtime_pulse frag_cap_runtime_pulse

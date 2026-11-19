@@ -171,10 +171,11 @@ std::string frag_cap_runtime_status(uint32_t faction, int64_t now)
 		return "Faction cap unavailable; progression is awaiting durable state.\r\n";
 	const int good = frag_cap_for_side(published, frag_cap_side::good);
 	const int evil = frag_cap_for_side(published, frag_cap_side::evil);
-	std::string text = "&+YFaction level caps: Good " + std::to_string(good) + " / Evil " +
-			   std::to_string(evil) + "&n.\r\n";
+	std::string text = "&+YFaction Caps:  &+WGood &+w" + std::to_string(good) +
+			   "&n, &+REvil &+w" + std::to_string(evil) + "&n\r\n";
 	if (faction == 1 || faction == 2)
-		text += "Your normal cap: " + std::to_string(faction == 1 ? good : evil) + ".\r\n";
+		text += "&+YYour Cap:      &+w" + std::to_string(faction == 1 ? good : evil) +
+			"&n\r\n";
 	if (published.level == FRAG_CAP_MAXIMUM_LEVEL)
 		return text +
 		       "All mortal levels are open. Normal XP and epic-stone requirements still apply.\r\n";
@@ -182,17 +183,19 @@ std::string frag_cap_runtime_status(uint32_t faction, int64_t now)
 		text += "Status refresh pending; showing the last confirmed state.\r\n";
 	char scores[160];
 	snprintf(scores, sizeof(scores),
-		 "Recorded round frags: Good %llu.%02llu / Evil %llu.%02llu.\r\n",
+		 "&+YRound Frags:   &+WGood &+w%llu.%02llu&n, &+REvil &+w%llu.%02llu&n\r\n",
 		 static_cast<unsigned long long>(published.earned[0] / 100),
 		 static_cast<unsigned long long>(published.earned[0] % 100),
 		 static_cast<unsigned long long>(published.earned[1] / 100),
 		 static_cast<unsigned long long>(published.earned[1] % 100));
 	text += scores;
 	text += published.earned[0] == published.earned[1] ? "The round is tied. " :
-		published.earned[0] > published.earned[1]  ? "Good currently leads. " :
-							     "Evil currently leads. ";
-	text += "Result in " + countdown(published.deadline, now) + ".\r\n";
-	text += "Scores are provisional until the deadline. Ties raise each existing cap; circle levels open to both sides.\r\n";
+		published.earned[0] > published.earned[1]  ? "&+WGood&n currently leads. " :
+							     "&+REvil&n currently leads. ";
+	text += "Result in " + countdown(published.deadline, now) +
+		"; scores are provisional until then.\r\n";
+	text += "If the round ends tied, both caps rise by one.\r\n";
+	text += "Circle levels open to both sides.\r\n";
 	if (now >= published.deadline)
 		text += "The result is due; awaiting durable maintenance and publication.\r\n";
 	return text;

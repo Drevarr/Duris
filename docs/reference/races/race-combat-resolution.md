@@ -472,9 +472,9 @@ payload. Other Increased contributions join that same category; they are not
 necessarily multipliers on the quartered result.
 
 The other predicates cover racewar side factors, world-mob bonus, bloodlust,
-two hardcore adjustments, Holy Sword's flat addition, Paladin and Cleric
-Sanctuary, Consecrated Land, Binding Wind, Protection from Animals, Battlelust,
-Blood Tithe, Orog Fury, and NPC-to-PC context. Ordinary racewar side factors
+the Hardcore outgoing and incoming multipliers, Holy Sword's flat addition,
+Paladin and Cleric Sanctuary, Consecrated Land, Binding Wind, Protection from
+Animals, Battlelust, Blood Tithe, Orog Fury, and NPC-to-PC context. Ordinary racewar side factors
 are all 1 in the committed properties. The NPC-to-PC predicate uses the
 configured value divided by 2, so the committed 2 means neutral at that stage.
 

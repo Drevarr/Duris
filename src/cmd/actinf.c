@@ -6898,8 +6898,14 @@ void do_score(P_char ch, char * /*argument*/, int /*cmd*/)
 			{
 				switch (aff->type)
 				{
-				// These are never reported
+				// Learned or set Awareness is reported; Bodyslam's brief
+				// alertness reuses the type and is not.
 				case SKILL_AWARENESS:
+					if (!IS_SET(aff->bitvector, AFF_SKILL_AWARE))
+						continue;
+					break;
+
+				// These are never reported
 				case SKILL_FIRST_AID:
 				case SKILL_HEADBUTT:
 				case SKILL_THROAT_CRUSHER:

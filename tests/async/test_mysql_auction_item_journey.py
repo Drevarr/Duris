@@ -172,29 +172,44 @@ def run(binary):
 
                 # A snapshot keeps only restrung text, so an ordinary item's pickup
                 # must name it from its prototype, not print "You pick up ." (#1062 N14).
+                # Two separate auctions are collected by one pickup (#1062 N14b).
                 stop()
                 # Saved like ordinary rows: keywords stored, short_descr NULL.
-                sql('INSERT INTO player_items(pid,vnum,obj_uid,name,item_type,weight,item_condition) '
-                    f"VALUES({pid},391,980015,'plainbag bag leather large',15,1,100);"
-                    'INSERT INTO item_current_owner(item_uid,root_item_uid,owner_type,owner_id,'
-                    'owner_context_id,item_revision,vnum,state) '
-                    f'VALUES(980015,980015,1,{pid},0,1,391,1)')
+                for uid in (980015, 980016):
+                    sql('INSERT INTO player_items(pid,vnum,obj_uid,name,item_type,weight,item_condition) '
+                        f"VALUES({pid},391,{uid},'plainbag bag leather large',15,1,100);"
+                        'INSERT INTO item_current_owner(item_uid,root_item_uid,owner_type,owner_id,'
+                        'owner_context_id,item_revision,vnum,state) '
+                        f'VALUES({uid},{uid},1,{pid},0,1,391,1)')
                 server.start(full_world=True)
                 login()
-                response = command(client, 'auction offer plainbag 1 0 1 1')
-                assert 'is now listed as auction' in response, response
-                plain_auction = int(sql('SELECT auction_id FROM auction_item_custody WHERE item_uid=980015'))
+                for _ in range(2):
+                    response = command(client, 'auction offer plainbag 1 0 1 1')
+                    assert 'is now listed as auction' in response, response
+                plain_auctions = sql('SELECT auction_id FROM auction_item_custody '
+                                     'WHERE item_uid IN (980015,980016)').split()
+                assert len(set(plain_auctions)) == 2, plain_auctions
                 command(client, 'save')
                 stop()
-                sql(f'UPDATE auctions SET status=2 WHERE id={plain_auction};'
-                    f'UPDATE auction_item_custody SET claim_pid={pid} WHERE auction_id={plain_auction}')
+                for plain_auction in plain_auctions:
+                    sql(f'UPDATE auctions SET status=2 WHERE id={plain_auction};'
+                        f'UPDATE auction_item_custody SET claim_pid={pid} WHERE auction_id={plain_auction}')
                 server.start(full_world=True)
                 login()
+                start = len(client.transcript)
                 client.send('auction pickup')
-                picked = client.expect('You pick up', timeout=30) + client.expect('.', timeout=5)
+                deadline = time.monotonic() + 30
+                while sql('SELECT COUNT(*) FROM auction_item_custody WHERE item_uid IN (980015,980016) '
+                          'AND claimed_at IS NULL') != '0':
+                    assert time.monotonic() < deadline, 'one pickup left an auction unclaimed'
+                    time.sleep(.1)
+                command(client, 'save')
+                picked = bytes(client.transcript[start:]).decode(errors='replace')
                 picked = re.sub(r'\x1b\[[0-9;]*m', '', picked)
-                assert 'You pick up a large leather bag.' in picked, picked
-                print('PASS an ordinary item is named from its prototype on pickup', flush=True)
+                assert picked.count('You pick up a large leather bag.') == 2, picked
+                assert 'being committed' in picked and picked.count('being committed') == 1, picked
+                assert 'no items or money' not in picked, picked
+                print('PASS one pickup collects two auctions; ordinary items are named from their prototype', flush=True)
             except Exception:
                 target = ROOT / 'bin/tests/auction-item-failure.log'
                 target.write_text(collect_logs(runtime) + '\n' +

@@ -1,0 +1,31 @@
+# Practicing a spell from a guildmaster teaches the player, even when the
+# player's mirror images stand ahead of them in the room. The images are named
+# after the player, so a lookup by name used to hand the lesson to an image
+# and the player's scribing never started.
+staff  Imagestaff
+actor  Conjo class=CONJURER level=30 skill=SKILL_SCRIBE:100 skill=SPELL_MIRROR_IMAGE:100
+
+Imagestaff> trans Conjo
+until Imagestaff /architect/ max 3 load mob 64
+until Imagestaff /master spellbook/ max 3 load obj 7
+Imagestaff> give master Conjo
+Conjo> rest
+Conjo> memorize mirror image
+until Conjo /finished memorizing/ max 60 memorize
+Conjo> drop master
+Conjo? You drop
+until Imagestaff /a spellbook/ max 3 load obj 203
+until Imagestaff /quill/ max 3 load obj 204
+Imagestaff> give spellbook Conjo
+Imagestaff> give quill Conjo
+Conjo> stand
+until Conjo /spitting image/ max 5 cast 'mirror image'
+# Moving an image puts it at the head of the room, ahead of Conjo.
+Imagestaff> trans image
+Conjo> hold spellbook
+Conjo> hold quill
+Conjo? You hold a quill
+Conjo> rest
+
+Conjo> practice feeblemind
+Conjo? (?s)The architect starts to teach you feeblemind.*You finish scribing the spell 'feeblemind'
