@@ -55,6 +55,17 @@ def add_stock(runtime):
     with (runtime / "lib/random_equipment.cfg").open("a") as config:
         config.write("drop.piece.percentage=0\ndrop.equipment.percentage=0\n")
 
+    # A neutral humanoid NPC scavenges (src/mob/mobconv.c), so Raoul could pick up the sword
+    # the character drops and carry it into his corpse, with the same effect. Alignment 1
+    # is still neutral, but no longer exactly 0.
+    mobiles_path = runtime / "areas_mini/mini.mob"
+    mobiles = mobiles_path.read_text()
+    start, end = mobiles.index("#11\n"), mobiles.index("#12\n")
+    raoul = mobiles[start:end]
+    assert "10 0 0 0 0 0 0 0 S\n" in raoul
+    mobiles_path.write_text(mobiles[:start] + raoul.replace(
+        "10 0 0 0 0 0 0 0 S\n", "10 0 0 0 0 0 0 1 S\n", 1) + mobiles[end:])
+
 
 def run(binary, backend):
     assert backend == "mariadb"

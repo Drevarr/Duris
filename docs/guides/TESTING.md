@@ -210,6 +210,12 @@ or restores a wall-clock deadline that the game turns into pulses at four a seco
 asks for `build_mariadb_server(..., real_clock=True)`, a separate artifact
 with the real pulse. `bin/server/dms_new` and every production build keep 250 ms.
 
+`make test-db` plays its journeys on the same 125 ms pulse: `make build-server-fast-pulse`
+builds `bin/server/fast-pulse/dms_new` from its own objects. A leg that times the game
+against the wall clock names `REAL_SERVER_BINARY` in `tests/run_db_tests.sh` instead of
+`SERVER_BINARY` and runs `bin/server/dms_new`, as the world capture and game loop budget
+journeys do. `DURIS_SERVER_BINARY=<server> make test-db` runs every leg on that server.
+
 The artifact key covers all files under `src/` (including untracked files),
 test headers, the helper contract, the MariaDB backend, and the inherited build
 environment, including profile, feature flags and Make overrides. It also hashes

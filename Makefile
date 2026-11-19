@@ -55,7 +55,7 @@ AREA_WORLD_DIRECT_INPUTS := \
 	$(AREA_GENERATORS)
 
 .PHONY: \
-	help all build build-server build-production build-editor build-area-tools world \
+	help all build build-server build-production build-server-fast-pulse build-editor build-area-tools world \
 	build-deps-package test test-all test-python test-native test-list test-db coverage fuzz \
 	security-sbom security-check clean clean-all
 
@@ -93,6 +93,15 @@ build-production:
 	+$(MAKE) -C src BUILD_PROFILE=production \
 		SERVER_BIN_DIR=$(CURDIR)/bin/server/production \
 		DMS_BINARY=$(CURDIR)/bin/server/production/dms_new
+
+# make test-db's journeys play on a 125 ms pulse, as make test's do. Game logic counts
+# pulses, so they play the same game twice as fast. It is always a development build, so
+# its own object directory never mixes profiles, and its binary stays out of bin/server/dms_new.
+build-server-fast-pulse:
+	+$(MAKE) -C src BUILD_PROFILE=development TEST_PULSE_USEC=125000 \
+		OBJDIR=$(CURDIR)/bin/objects/server-fast-pulse \
+		SERVER_BIN_DIR=$(CURDIR)/bin/server/fast-pulse \
+		DMS_BINARY=$(CURDIR)/bin/server/fast-pulse/dms_new
 
 build-editor:
 	+$(MAKE) -C areas/de/src
@@ -184,7 +193,7 @@ fuzz:
 # Every test here creates and destroys its own MySQL or MariaDB container, and
 # they run side by side. They are kept out of test-all because Docker is
 # intentionally not a core build dependency. The journeys run the built server.
-test-db: build-server world
+test-db: build-server build-server-fast-pulse world
 	@command -v docker >/dev/null 2>&1 || { \
 		echo 'error: make test-db requires Docker' >&2; \
 		exit 127; \

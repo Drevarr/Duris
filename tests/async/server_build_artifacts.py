@@ -18,8 +18,8 @@ CACHE_ENV = "DURIS_REGRESSION_BUILD_CACHE"
 # plays the same game twice as fast. (Five times as fast also shortened deadlines that the game
 # counts in pulses, such as a character load's, until they expired under load.) A journey that
 # times the game against the wall clock, including a wall-clock deadline that the game converts
-# at four pulses a second, asks for real_clock=True. bin/server/dms_new, which make test-db's
-# MariaDB legs of the same journeys use, and every production build keep 250 ms.
+# at four pulses a second, asks for real_clock=True. make test-db plays on the same pulse
+# (make build-server-fast-pulse); bin/server/dms_new and every production build keep 250 ms.
 FAST_PULSE_USEC = 125000
 # Only observation/runtime controls are excluded; build variables remain inputs.
 IGNORED_ENV = {

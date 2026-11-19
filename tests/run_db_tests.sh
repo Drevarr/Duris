@@ -42,7 +42,11 @@ run_one() {
 export -f run_one
 
 DB=tests/async/with_disposable_mariadb.sh
-export SERVER=${DURIS_SERVER_BINARY:-bin/server/dms_new}
+# The journeys play on make build-server-fast-pulse's 125 ms pulse, twice as fast as the
+# shipped 250 ms. A leg that measures the game against the wall clock runs the shipped
+# server, bin/server/dms_new (REAL_SERVER_BINARY). DURIS_SERVER_BINARY runs every leg on it.
+export SERVER=${DURIS_SERVER_BINARY:-bin/server/fast-pulse/dms_new}
+export REAL_SERVER=${DURIS_SERVER_BINARY:-bin/server/dms_new}
 started=$SECONDS
 
 # One leg per line: its name, then its command; SERVER_BINARY is the server under test.
@@ -53,7 +57,7 @@ newbie_regrant_sorcerer $DB python3 tests/async/test_mariadb_newbie_regrant_jour
 newbie_regrant_ranger $DB python3 tests/async/test_mariadb_newbie_regrant_journey.py --server SERVER_BINARY Ranger
 newbie_regrant_rogue $DB python3 tests/async/test_mariadb_newbie_regrant_journey.py --server SERVER_BINARY Rogue
 castle_key_reset $DB python3 tests/async/test_castle_key_reset_journey.py --server SERVER_BINARY
-flight_network $DB python3 tests/async/test_flight_network_journey.py --backend mariadb --server SERVER_BINARY
+flight_network $DB python3 tests/async/test_flight_network_journey.py --backend mariadb --server REAL_SERVER_BINARY
 norent_key_rent $DB python3 tests/async/test_norent_key_rent_journey.py --backend mariadb --server SERVER_BINARY
 locker_grant_journey $DB python3 tests/async/test_mysql_locker_grant_journey.py --server SERVER_BINARY
 starter_arrow $DB python3 tests/async/test_starter_arrow_journey.py --server SERVER_BINARY
@@ -63,12 +67,12 @@ artifact_owner_restart $DB python3 tests/async/test_artifact_owner_restart_journ
 hatred_journey $DB python3 tests/async/run_innate_hatred_journey.py --backend mariadb --server SERVER_BINARY
 death_level_projection $DB python3 tests/async/run_death_level_projection_journey.py --backend mariadb --binary SERVER_BINARY --output bin/tests/db/death-level-projection
 creation_prompt $DB python3 tests/async/test_creation_prompt_journey.py --server SERVER_BINARY
-bard_disharmonist $DB python3 tests/async/test_bard_disharmonist_journey.py --server SERVER_BINARY
+bard_disharmonist $DB python3 tests/async/test_bard_disharmonist_journey.py --server REAL_SERVER_BINARY
 epic_task_recovery_journey $DB python3 tests/async/test_epic_task_recovery_journey.py --server SERVER_BINARY
 conjurer_gameplay $DB python3 tests/async/test_conjurer_gameplay_journey.py --server SERVER_BINARY
 shambler_reflection $DB python3 tests/async/test_shambler_reflection_journey.py --server SERVER_BINARY
 bard_support $DB python3 tests/async/test_bard_support_journey.py --server SERVER_BINARY
-connection_limit $DB python3 tests/async/test_connection_limit_journey.py --server SERVER_BINARY
+connection_limit $DB python3 tests/async/test_connection_limit_journey.py --server REAL_SERVER_BINARY
 game_loop_session $DB python3 tests/async/test_game_loop_session_journey.py --server SERVER_BINARY
 chaos_new_character_kit $DB python3 tests/async/test_mariadb_chaos_new_character_kit.py --server SERVER_BINARY
 rested_checkpoint $DB python3 tests/async/run_mysql_rested_checkpoint_journey.py --server SERVER_BINARY
@@ -234,15 +238,17 @@ awk 'FILENAME != "-" { seconds[$1] = $2; next } { print ($1 in seconds ? seconds
     for i in "${!args[@]}"; do
         if [[ ${args[i]} == SERVER_BINARY ]]; then
             args[i]=$SERVER
+        elif [[ ${args[i]} == REAL_SERVER_BINARY ]]; then
+            args[i]=$REAL_SERVER
         fi
     done
     run_one "${args[@]}"
 '  _
 status=$?
 run_one world_capture "$DB" python3 tests/async/test_mysql_world_capture_journey.py \
-    --server "$SERVER" || status=1
+    --server "$REAL_SERVER" || status=1
 run_one game_loop_budget "$DB" python3 tests/async/test_mysql_game_loop_budget_journey.py \
-    --server "$SERVER" || status=1
+    --server "$REAL_SERVER" || status=1
 for failed in "$LOGS"/*.failed; do
     [ -e "$failed" ] || continue
     echo
