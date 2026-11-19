@@ -121,7 +121,12 @@ real `g++` runs unchanged. `scripts/coverage.sh` keeps its own compiler.
 `make test-all` deliberately excludes Docker and externally provisioned
 database checks. `make test-db` builds the server and generates the world first, then
 runs the isolated database legs and the MariaDB journeys listed in
-`tests/run_db_tests.sh`, 12 at a time (`TEST_DB_JOBS=N` changes that). Every test creates and destroys its own MySQL or MariaDB
+`tests/run_db_tests.sh`. The journeys wait on the game far more than they compute, so
+one and a half times as many run at once as the machine has CPUs, at most 32 (`TEST_DB_JOBS=N` changes
+that), longest first by the last run's times in `bin/tests/db-times` (a leg with no time
+goes first). Their harnesses compile through the same cached `g++` as `make test`. The
+world capture and game loop budget journeys measure pulse latency, so they run alone after
+the others. Every test creates and destroys its own MySQL or MariaDB
 container, prints `PASS` or `FAIL` with its seconds, and writes its log under
 `bin/tests/db/`. A new leg or journey is one more line in that list;
 `tests/async/with_disposable_mariadb.sh CMD...` gives a journey its own MariaDB, a
