@@ -1567,17 +1567,33 @@ void do_throw(P_char ch, char *argument, int /*cmd*/)
 			dmg = dice(weapon->value[1], MAX(1, weapon->value[2]));
 			dmg += TRUE_DAMROLL(ch);
 
-			if (!CAN_HURT(ch, weapon, vict))
+			const bool immune = !CAN_HURT(ch, weapon, vict);
+			if (immune)
+			{
 				dmg = 1;
+				snprintf(attacker, MAX_STRING_LENGTH,
+					 "Your $q seems to pass harmlessly through $N.");
+				snprintf(victim, MAX_STRING_LENGTH,
+					 "$p seems to pass harmlessly through you.");
+				snprintf(room, MAX_STRING_LENGTH,
+					 "$p seems to pass harmlessly through $N.");
+			}
 
 			victroom = vict->in_room;
 			messages.obj = weapon;
+			int delivered = 0;
 			result = melee_damage(ch, vict, dmg, PHSDAM_NOENGAGE | PHSDAM_NOSHIELDS,
-					      &messages);
-			if (result == DAM_NONEDEAD)
-				deliver_weapon_poison(ch, vict, weapon);
-			else
+					      &messages, &delivered);
+			if (result != DAM_NONEDEAD)
 				break;
+			// Armor can round the token damage away before raw_damage() shows the blow.
+			if (immune && !delivered)
+			{
+				act(attacker, FALSE, ch, weapon, vict, TO_CHAR | ACT_NOTTERSE);
+				act(victim, FALSE, ch, weapon, vict, TO_VICT | ACT_NOTTERSE);
+				act(room, FALSE, ch, weapon, vict, TO_NOTVICTROOM | ACT_NOTTERSE);
+			}
+			deliver_weapon_poison(ch, vict, weapon);
 		}
 		else
 		{

@@ -8690,19 +8690,22 @@ bool hit(P_char ch, P_char victim, P_obj weapon, int *damAccumulator)
 
 	dam = BOUNDED(1, (int)dam, 32766);
 
-	if (has_innate(victim, INNATE_WEAPON_IMMUNITY))
+	const bool immune =
+		has_innate(victim, INNATE_WEAPON_IMMUNITY) &&
+		(weapon ? !IS_SET(weapon->extra2_flags, ITEM2_MAGIC) :
+			  GET_LEVEL(ch) < weapon_immunity_unarmed_level() &&
+				  (!ch->equipment[WEAR_HANDS] ||
+				   !IS_SET(ch->equipment[WEAR_HANDS]->extra2_flags, ITEM2_MAGIC)));
+	if (immune)
 	{
-		if (weapon)
-		{
-			if (!IS_SET(weapon->extra2_flags, ITEM2_MAGIC))
-				dam = weapon_immunity_damage();
-		}
-		else if (GET_LEVEL(ch) < weapon_immunity_unarmed_level() &&
-			 (!ch->equipment[WEAR_HANDS] ||
-			  !IS_SET(ch->equipment[WEAR_HANDS]->extra2_flags, ITEM2_MAGIC)))
-		{
-			dam = weapon_immunity_damage();
-		}
+		// The blow lands for token damage, but says why it does nothing.
+		dam = weapon_immunity_damage();
+		messages.attacker = weapon ? "Your $q seems to pass harmlessly through $N." :
+					     "Your blow seems to pass harmlessly through $N.";
+		messages.victim = weapon ? "$n's $q seems to pass harmlessly through you." :
+					   "$n's blow seems to pass harmlessly through you.";
+		messages.room = weapon ? "$n's $q seems to pass harmlessly through $N." :
+					 "$n's blow seems to pass harmlessly through $N.";
 	}
 
 	if (weapon && IS_PC(ch) && ilogb(dam) > number(5, 400))
@@ -8717,11 +8720,23 @@ bool hit(P_char ch, P_char victim, P_obj weapon, int *damAccumulator)
 	// | RAWDAM_NOEXP,   // hitting yields normal exp -Odorf &messages)
 	messages.critical_known = true;
 	messages.critical = sic == -1;
-	if (melee_damage(ch, victim, dam,
-			 (msg == MSG_HIT ? PHSDAM_TOUCH : PHSDAM_HELLFIRE | PHSDAM_BATTLETIDE),
-			 &messages, damAccumulator) != DAM_NONEDEAD)
-	{
+	int delivered = 0;
+	const int result =
+		melee_damage(ch, victim, dam,
+			     (msg == MSG_HIT ? PHSDAM_TOUCH : PHSDAM_HELLFIRE | PHSDAM_BATTLETIDE),
+			     &messages, &delivered);
+	if (damAccumulator)
+		*damAccumulator += delivered;
+	if (result != DAM_NONEDEAD)
 		return TRUE;
+
+	// Armor can round the token damage away before raw_damage() shows the blow. Terse
+	// mode hides these lines, as it hides the hit messages they stand in for.
+	if (immune && !delivered)
+	{
+		act(messages.attacker, FALSE, ch, weapon, victim, TO_CHAR | ACT_NOTTERSE);
+		act(messages.victim, FALSE, ch, weapon, victim, TO_VICT | ACT_NOTTERSE);
+		act(messages.room, FALSE, ch, weapon, victim, TO_NOTVICTROOM | ACT_NOTTERSE);
 	}
 
 	if (IS_NPC(victim) && (GET_POS(victim) < POS_STANDING))

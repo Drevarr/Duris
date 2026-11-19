@@ -88,6 +88,7 @@ smith_payment_journey $DB python3 tests/async/test_mysql_smith_payment_journey.p
 epic_training_journey $DB python3 tests/async/test_mysql_epic_training_journey.py --server SERVER_BINARY
 issue1021_reports $DB python3 tests/async/run_issue1021_journey.py --server SERVER_BINARY
 assassin_combat $DB python3 tests/async/test_assassin_combat_journey.py --server SERVER_BINARY
+weapon_immunity $DB python3 tests/async/test_weapon_immunity_journey.py --server SERVER_BINARY
 issue904_qol $DB python3 tests/async/run_issue904_qol_journey.py --server SERVER_BINARY
 migration_runner_engines python3 tests/async/run_migration_runner_engines.py
 telemetry_posthog_gameplay python3 tests/async/run_telemetry_player_journey.py --backend mariadb
