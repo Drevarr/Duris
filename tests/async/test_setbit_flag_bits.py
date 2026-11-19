@@ -17,6 +17,7 @@ source = (SRC / "actset.c").read_text()
 declarations = source[source.index("char bad_on_off"):source.index("/* Private Interface */")]
 functions = [extract_function("actset.c", signature) for signature in (
     "static int ac_strcasecmp(const char *str1", "static void ac_bitCopy(void *where",
+    "static void ac_idx2flagCopy(void *where",
     "static void setbit_parseTable(P_char ch")]
 
 character_table = source[source.index('static void setbit_char(P_char ch, char *name'):source.index('\n\tP_char ppl;', source.index('static void setbit_char(P_char ch, char *name'))]
@@ -46,6 +47,10 @@ static void setbit_printOutSubTable(P_char, const char **, int) {}
 static void setbit_syntax(P_char, int) {}
 static void ac_tongueCopy(void *, int, char *, int, int) {}
 static void ac_skillCopy(void *, int, char *, int, int) {}
+static void ac_idx2flagCopy(void *, int, char *, int, int);
+const struct class_names class_names_table[] = {
+    { "None", "", "", '-' }, { "Warrior", "", "", 'w' }, { "Ranger", "", "", 'r' },
+    { nullptr, nullptr, nullptr, '\0' }};
 ''' + source[source.index('#define MAKE_COPY_FUNCTION(Type)'):source.index('/* General copy functions */')] + r'''
 MAKE_COPY_FUNCTION(short)
 MAKE_COPY_FUNCTION(sh_int)
@@ -290,6 +295,27 @@ int main()
     setbit_parseTable(nullptr, &ch, guild_table, ARRAY_SIZE(guild_table),
                       field_name, guild_number, 0, SETBIT_CHAR);
     assert(ch.specials.guild == original_guild);
+    // Class "None" clears the field instead of shifting by -1.
+    SetBitTable class_table[] = {
+''' + ',\n'.join(re.findall(r'\{ "(?:class|secondary)", PLOFFSET\([^)]+\),[^}]+\}', character_table)) + r'''
+    };
+    char_data classed{};
+    classed.player.m_class = CLASS_WARRIOR;
+    classed.player.secondary_class = CLASS_RANGER;
+    char class_field[] = "class", secondary_field[] = "secondary";
+    auto set_class = [&](char *field, const char *name) {
+        char value[16];
+        snprintf(value, sizeof(value), "%s", name);
+        sent.clear();
+        setbit_parseTable(nullptr, &classed, class_table, 2, field, value, 0, SETBIT_CHAR);
+        assert(sent.empty());
+    };
+    set_class(secondary_field, "None");
+    assert(classed.player.secondary_class == CLASS_NONE && classed.player.m_class == CLASS_WARRIOR);
+    set_class(class_field, "Ranger");
+    assert(classed.player.m_class == CLASS_RANGER);
+    set_class(class_field, "None");
+    assert(classed.player.m_class == CLASS_NONE);
     puts("setbit validates numeric destinations, preserves adjacent fields and bounds flags");
 }
 '''

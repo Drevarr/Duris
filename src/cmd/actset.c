@@ -1673,10 +1673,9 @@ static void ac_bitCopy(void *where, int offset, char * /*value*/, int bit, int o
 
 static void ac_idx2flagCopy(void *where, int offset, char * /*value*/, int bit, int /*on_off*/)
 {
-	int flag;
-
-	flag = 1 << (bit - 1);
-	bcopy((char *)&flag, (char *)where + offset, sizeof(int));
+	// Entry 0 of the class table is "None", which has no bit.
+	const unsigned int flag = bit == 0 ? CLASS_NONE : 1u << (bit - 1);
+	bcopy((const char *)&flag, (char *)where + offset, sizeof(flag));
 }
 
 static void ac_positionCopy(void *where, int /*offset*/, char * /*value*/, int bit, int /*on_off*/)

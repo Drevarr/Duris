@@ -5145,8 +5145,10 @@ ClassSkillInfo SKILL_DATA_ALL(P_char ch, int skill)
 	pri_class = flag2idx(ch->player.m_class) - 1;
 	sec_class = flag2idx(ch->player.secondary_class) - 1;
 
-	// Note: Class 0 is warrior per above.
-	if (IS_PC(ch) && (sec_class >= 0))
+	// Note: Class 0 is warrior per above. A classless primary (setbit class None)
+	// or an unknown secondary takes the single-class path below.
+	if (IS_PC(ch) && pri_class >= 0 && pri_class < CLASS_COUNT && sec_class >= 0 &&
+	    sec_class < CLASS_COUNT)
 	{
 		// Note: Currently you should not be spec'd and multi'd so ch->player.spec should be 0.
 		pri_rlevel = (skills[(skill)].m_class[pri_class]).rlevel[ch->player.spec];

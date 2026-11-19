@@ -139,6 +139,21 @@ cleric_driver = r'''
             assert(SKILL_DATA_ALL(&cleric, SKILL_KICK).maxlearn[spec] == (spec == SPEC_ZEALOT ? 90 : 40));
         }
     }
+    {
+        // setbit class None leaves a multiclass PC without a primary class; an unknown
+        // secondary class bit is not a class either. Neither may index the class table.
+        char_data odd{};
+        char name[] = "Odd";
+        odd.player.name = name;
+        odd.player.race = RACE_HUMAN;
+        odd.player.m_class = CLASS_NONE;
+        odd.player.secondary_class = CLASS_CLERIC;
+        (void)SKILL_DATA_ALL(&odd, SKILL_KICK);
+        assert(odd.player.m_class == CLASS_WARRIOR); // the existing Warrior fallback
+        odd.player.m_class = CLASS_CLERIC;
+        odd.player.secondary_class = 1u << 30;
+        assert(SKILL_DATA_ALL(&odd, SKILL_KICK).maxlearn[0] == 40);
+    }
     // A fighter/Cleric still receives the lawful secondary spell circle (+1).
     cleric.player.spec = 0;
     cleric.player.m_class = CLASS_WARRIOR;
@@ -258,7 +273,7 @@ with tempfile.TemporaryDirectory(prefix="memorized-eligibility-", dir=build) as 
     cpp.write_text(prelude + production + driver)
     subprocess.run([
         "g++", "-std=c++20", "-Wall", "-Wextra", "-Werror",
-        "-fsanitize=address,undefined", "-fno-pie", "-no-pie",
+        "-fsanitize=address,undefined", "-fno-sanitize-recover=undefined", "-fno-pie", "-no-pie",
         "-I" + str(ROOT / "src"), str(cpp), str(HARNESS_STUBS), "-o", str(binary),
     ], check=True, timeout=120)
     subprocess.run([str(binary)], check=True, timeout=120)
