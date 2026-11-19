@@ -383,6 +383,21 @@ def run(binary, destination):
                 assert state() == bundle_before, "economic commands changed an unrelated bundle item"
                 evidence["craft_forge_transactions"] = transactions
                 check("Craft/Forge previews match exact material/tool/essence debits, delivered scores and credited XP")
+                for vnum, keyword in ((400015, "linen"), (400015, "linen"), (400019, "silk"),
+                                      (400019, "silk"), (400224, "gnomish"), (400291, "strange")):
+                    stock(vnum, keyword)
+                before = economy_state()
+                reply = command(clients[OWNER], f"craft make {ECON_IDS['craft']} strange", timeout=60)
+                assert "magic flows into" in reply, reply
+                after = economy_state()
+                consumed = Counter(before[2][uid] for uid in before[2].keys() - after[2].keys())
+                assert consumed == Counter({400019: 2, 400015: 2, 400224: 1, 400291: 1}), consumed
+                created = after[2].keys() - before[2].keys()
+                assert len(created) == 1 and after[2][next(iter(created))] == ECON_IDS["craft"], created
+                saved_bits = int(sql(f"SELECT bitvector2 FROM player_items WHERE obj_uid={next(iter(created))}"))
+                assert saved_bits & 12288 == 12288, saved_bits  # the green stone's protections
+                act("drop iveconcraft", "You drop")
+                check("Craft uses a named strange stone and saves its affects on the crafted item")
                 original = scores({"essence": LABELS["essence"], "superior": LABELS["superior"]})
                 before = purse()
                 act("enhance ivessence essence", "Your enhancement is a success!")

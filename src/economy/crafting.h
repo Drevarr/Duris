@@ -56,8 +56,8 @@ double crafting_salvage_essence_luck_multiplier(void);
 double crafting_salvage_essence_chance_multiplier(void);
 int *crafting_get_player_recipes(P_char ch, int *count);
 
-/* Reserved public module boundaries for the staged command/config extraction. */
 void boot_crafting_system(void);
+/* Runs `craft` or `forge` with the player's arguments. */
 void crafting_handle_command(P_char ch, enum crafting_mode mode, char *argument);
 
 #endif

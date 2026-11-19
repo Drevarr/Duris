@@ -157,7 +157,7 @@ HANDLER_CALLS = {
     ("economy/tradeskill.c", "event_bandage_check"): ["GET_VITALITY(ch) < 10", "!bandage_fumble_roll(live_rolls, (GET_CHAR_SKILL(ch, SKILL_BANDAGE)))", "healed = bandage_heal(mdata->maxheal, GET_CHAR_SKILL(ch, SKILL_BANDAGE));", "GET_MAX_HIT(victim) * 0.875", "!bandage_poison_roll(live_rolls)",
                                                       "number(0, 100) < GET_CHAR_SKILL(ch, SKILL_BANDAGE)", "tradeskill_vitality_cost(live_rolls, GET_CHAR_SKILL(ch, SKILL_BANDAGE))", "add_event(event_bandage_check, bandage_interval(),"],
     ("economy/tradeskill.c", "do_bandage"): ["add_event(event_bandage_check, bandage_interval(),", "af.duration = bandage_duration();", "CharWait(ch, bandage_lag());"],
-    ("economy/crafting.c", "ALL"): ["iVal > crafting_value_limit(ch) ||"],
+    ("economy/crafting.c", "ALL"): ["plan.item_value > crafting_value_limit(ch)"],
     ("economy/mining.c", "mine"): ["data.counter = mine_rounds(obj->value[2], GET_CHAR_SKILL(ch, SKILL_MINE));"],
     ("economy/mining.c", "event_mine_check"): ["mine_exp(GET_CHAR_SKILL(ch, SKILL_MINE))", "GET_VITALITY(ch) < 10", "!mine_ride_roll(live_rolls, GET_CHAR_SKILL(ch, SKILL_MINE))", "!mine_rock_roll(live_rolls, GET_CHAR_SKILL(ch, SKILL_MINE))", "tradeskill_vitality_cost(live_rolls, GET_CHAR_SKILL(ch, SKILL_MINE))"],
     ("item/salvage.c", "do_salvage"): ["GET_CHAR_SKILL(ch, SKILL_SALVAGE) < number(1, 105)", "!salvage_pieces_roll(live_rolls)", "playerroll = salvage_recipe_score(ch, scitools > 0 ? crafting_scientific_tools_recipe_player_multiplier() : 1);"],
@@ -690,7 +690,8 @@ static void check_pages() {
                        "  Trained mounts need no such level. Other creatures can't be ridden.\n");
     EXACT(craft_facts, "  Highest recipe value you can make: 168, 3 per level\n"
                        "  Each recipe also takes its materials and a tool box.\n"
-                       "  You can know only one of forge, mine and craft.\n");
+                       "  You can know only one of forge, mine and craft.\n"
+                       "  Name a strange stone after `craft make` to give the item its magic.\n");
     EXACT(forge_facts, "  Highest recipe value you can make: 168, 3 per level\n"
                        "  Each recipe also takes its materials and flux.\n"
                        "  You can know only one of forge, mine and craft.\n");

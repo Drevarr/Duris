@@ -3509,7 +3509,7 @@ CRAFTING (Tradeskill)
 Syntax: craft
         craft info <number>
         craft stat <number>
-        craft make <number>
+        craft make <number> [<stone>]
 
 Craft is a tradeskill for making accessories from recipes: items worn
 about the body, on the waist, ears, neck, wrists, fingers, eyes, face,
@@ -3533,6 +3533,12 @@ in your inventory. You can make a recipe whose item value is at most
 three times your level. Crafting always succeeds: the item is marked as
 made by you and cannot be repaired. You gain experience based on its
 item value, and your Craft skill can rise each time you craft.
+
+Name a strange stone you carry after the number, as in 'craft make 3
+green', to work its magic into the item: the item gains the stone's
+affects, and the stone is used up with the other inputs. A stone that
+would add nothing is refused, and a stone you only carry is never used.
+Forge takes no stones.
 
 Each Encrust lesson needs Craft at least as high as the Encrust level it
 teaches.

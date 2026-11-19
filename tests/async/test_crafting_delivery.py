@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Craft/Forge command failures preserve exact material, essence and tool UIDs."""
+"""Craft/Forge command failures preserve exact material, essence, tool and stone UIDs."""
 from pathlib import Path
 import subprocess
 import tempfile
@@ -11,9 +11,9 @@ HARNESS = r'''
 #include <unordered_map>
 #include <unordered_set>
 
-static index_data fixture_indices[12]{};
+static index_data fixture_indices[512]{};
 P_index obj_index = fixture_indices;
-static obj_data fixture_prototypes[12]{};
+static obj_data fixture_prototypes[512]{};
 static std::unordered_map<int,int> fixture_rnums;
 static std::unordered_set<P_obj> live;
 static std::unordered_set<uint64_t> removed;
@@ -28,7 +28,11 @@ int itemvalue(P_obj obj) { return obj->cost; }
 int get_matstart(P_obj) { return 400000; }
 void logit(const char *,const char *,...) {}
 void wizlog(int,const char *,...) {}
-void send_to_char(const char *,P_char) {}
+static size_t longest_write, listed;
+void send_to_char(const char *text,P_char) {
+    longest_write=std::max(longest_write,strlen(text));
+    for(const char *at=text; (at=strstr(at,"fixture item")); ++at) ++listed;
+}
 void act(const char *,int,P_char,P_obj,void *,int) {}
 bool notch_skill(P_char,int,float) { ++notches; return true; }
 int gain_exp(P_char,P_char,int amount,int) { experience+=amount; return amount; }
@@ -41,9 +45,12 @@ bool sql_add_player_recipe(int,int) { std::abort(); }
 int real_object(int vnum) { return fixture_rnums.count(vnum) ? fixture_rnums.at(vnum) : -1; }
 void page_string(P_desc,char *,int) { std::abort(); }
 void spell_identify(int,P_char,char *,int,P_char,P_obj) { std::abort(); }
+static int book_size; // Nonzero: a book of that many recipes from 90001 on.
 int *sql_get_player_recipes(int,int *count) {
-    *count=1; auto *recipes=static_cast<int *>(std::malloc(sizeof(int)));
-    recipes[0]=target_vnum; return recipes;
+    *count=book_size ? book_size : 1;
+    auto *recipes=static_cast<int *>(std::malloc(sizeof(int)*(*count)));
+    for(int i=0;i<*count;++i) recipes[i]=book_size ? 90001+i : target_vnum;
+    return recipes;
 }
 bool chaos_material_pouch_available(P_char) { return active_pouch!=nullptr; }
 bool chaos_material_pouch_can_record_generated(P_char,const chaos_material_pouch_usage *,size_t) {
@@ -55,6 +62,15 @@ bool chaos_material_pouch_record_generated(P_char,const chaos_material_pouch_usa
     return true;
 }
 void chaos_material_pouch_report_generated_failure(P_char,const char *) {}
+P_obj get_obj_in_list_vis(P_char,const char *name,P_obj list,bool) {
+    for(P_obj obj=list; obj; obj=obj->next_content)
+        if(strstr(obj->name,name)) return obj;
+    return nullptr;
+}
+static P_obj live_uid(uint64_t uid) {
+    for(P_obj obj : live) if(obj->obj_uid==uid) return obj;
+    return nullptr;
+}
 static int fixture_index(int vnum) {
     auto found=fixture_rnums.find(vnum);
     assert(found!=fixture_rnums.end()); return found->second;
@@ -104,8 +120,7 @@ static uint64_t input(P_char ch,int vnum,uint64_t uid) {
 }
 int main() {
     for(auto mode : {CRAFTING_MODE_CRAFT,CRAFTING_MODE_FORGE}) {
-        for(int failure : {1,0,2,3,4,5,6,7,8}) {
-            if(failure==7 && mode==CRAFTING_MODE_FORGE) continue;
+        for(int failure : {1,0,2,3,4,5,6,8}) {
             char_data ch{}; pc_only_data pc{}; ch.only.pc=&pc; pc.pid=42;
             ch.player.level=50; ch.player.name=const_cast<char *>("Artisan");
             fixture_rnums.clear(); removed.clear(); next_uid=10; active_pouch=nullptr;
@@ -120,7 +135,7 @@ int main() {
             next_uid=10000; delivered_uid=generated_count=0;
             saves=notches=experience=0;
             refuse_delivery=failure==1; refuse_preflight=failure==2; refuse_ledger=failure==3;
-            unavailable_vnum=failure==5 ? target_vnum : failure>=7 ? 400004 : 0;
+            unavailable_vnum=failure==5 ? target_vnum : failure==8 ? 400004 : 0;
             char make[]="make 1", info[]="info 1";
             char *command=failure==8 ? info : make;
             crafting_handle_command(&ch,mode,command);
@@ -143,7 +158,65 @@ int main() {
             while(!live.empty()) extract_obj(*live.begin(),0);
         }
     }
-    puts("Craft/Forge: exact input UIDs, failed delivery/ledger, output identity and one checkpoint pass");
+    // A named strange stone gives the crafted item its affect bits and is used up
+    // with the other inputs; any refusal keeps every input, the stone included.
+    struct stone_case { crafting_mode mode; const char *command; bool adds, refuse, success; };
+    for(const stone_case &c : {
+        stone_case{CRAFTING_MODE_CRAFT,"make 1 strange",true,false,true},
+        stone_case{CRAFTING_MODE_CRAFT,"make 1",true,false,true},          // a carried stone is left alone
+        stone_case{CRAFTING_MODE_CRAFT,"make 1 strange",false,false,false}, // it would add nothing
+        stone_case{CRAFTING_MODE_CRAFT,"make 1 fixture",true,false,false},  // not a stone
+        stone_case{CRAFTING_MODE_CRAFT,"make 1 pebble",true,false,false},   // not carried
+        stone_case{CRAFTING_MODE_FORGE,"make 1 strange",true,false,false},  // Forge takes no stone
+        stone_case{CRAFTING_MODE_CRAFT,"make 1 strange",true,true,false},   // delivery refused
+    }) {
+        char_data ch{}; pc_only_data pc{}; ch.only.pc=&pc; pc.pid=42;
+        ch.player.level=50; ch.player.name=const_cast<char *>("Artisan");
+        fixture_rnums.clear(); removed.clear(); next_uid=10; active_pouch=nullptr;
+        target_vnum=99001; unavailable_vnum=0;
+        prototype(target_vnum,true); prototype(400000); prototype(400004);
+        prototype(crafting_essence_vnum(c.mode)); prototype(crafting_tool_vnum(c.mode));
+        prototype(ENCRUST_VNUM_BEGIN);
+        auto &stone=fixture_prototypes[fixture_index(ENCRUST_VNUM_BEGIN)];
+        stone.name=const_cast<char *>("strange stone");
+        stone.bitvector2=c.adds ? AFF2_PROT_ACID : 0;
+        stone.bitvector5=1; // the target already has this bit
+        input(&ch,400000,101); input(&ch,400004,102);
+        input(&ch,crafting_essence_vnum(c.mode),103); input(&ch,crafting_tool_vnum(c.mode),104);
+        input(&ch,ENCRUST_VNUM_BEGIN,106);
+        next_uid=10000; delivered_uid=generated_count=0; saves=notches=experience=0;
+        refuse_delivery=c.refuse;
+        std::string command=c.command;
+        crafting_handle_command(&ch,c.mode,command.data());
+        const bool named=strstr(c.command,"strange")!=nullptr;
+        for(uint64_t uid : {101,102,103,104})
+            assert(removed.count(uid)==static_cast<size_t>(c.success));
+        assert(removed.count(106)==static_cast<size_t>(c.success && named));
+        if(c.success) {
+            P_obj made=live_uid(delivered_uid);
+            assert(made && saves==1 && experience==2000);
+            assert(((made->bitvector2&AFF2_PROT_ACID)!=0)==named);
+        } else {
+            assert(saves==0 && notches==0 && experience==0 && live.size()==5);
+        }
+        refuse_delivery=false;
+        while(!live.empty()) extract_obj(*live.begin(),0);
+    }
+    // A large recipe book lists every recipe without any single write reaching the
+    // output limit, which would drop the whole list.
+    {
+        char_data ch{}; pc_only_data pc{}; ch.only.pc=&pc; pc.pid=42; ch.player.level=50;
+        fixture_rnums.clear(); prototype(400000); prototype(400004);
+        book_size=400;
+        for(int i=0;i<book_size;++i) prototype(90001+i,true);
+        longest_write=listed=0;
+        char list[]="list";
+        crafting_handle_command(&ch,CRAFTING_MODE_CRAFT,list);
+        assert(listed==static_cast<size_t>(book_size) && longest_write<MAX_STRING_LENGTH/16);
+        book_size=0;
+        while(!live.empty()) extract_obj(*live.begin(),0);
+    }
+    puts("Craft/Forge: exact input UIDs, failed delivery/ledger, output identity, stones and one checkpoint pass");
 }
 '''
 
