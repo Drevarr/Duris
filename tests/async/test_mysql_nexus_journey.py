@@ -86,6 +86,12 @@ def run(binary):
                 client.expect('Welcome to Duris', timeout=60)
                 client.expect_any(('Pos: standing >', '<>'), timeout=20)
                 command(client, 'toggle paging no')
+                if name == GOD:
+                    # The staff observer is a good-race human: a freshly turned
+                    # evil guardian would otherwise attack it, and its mace's
+                    # prismatic spray paralyzes the capturing player.
+                    immune = command(client, 'toggle aggimmunity on')
+                    assert 'Aggressive mobiles will not attack you now.' in immune, immune
                 return client
 
             def state():
@@ -175,7 +181,19 @@ def run(binary):
                     command(god, 'restore guardian')
                     command(god, f'setbit char {player_name} hitrol 100')
                     command(god, f'setbit char {player_name} damrol 100')
-                    guardian_diagnostic = command(god, 'stat mob guardian')
+                    # Level alone leaves the boss's level-57 biofeedback charge:
+                    # 138 hits that each lose 46 damage, so blows land for 1-3 and
+                    # regeneration outpaces them. The guardian's own periodic skin
+                    # refresh rescales that charge to its level-1 value of 1.
+                    deadline = time.monotonic() + 120
+                    while True:
+                        guardian_diagnostic = command(god, 'stat mob guardian')
+                        skin = re.search(r"by\s+(-?\d+)\s+for\s+-?\d+\s+from 'biofeedback'",
+                                         guardian_diagnostic)
+                        if not skin or int(skin[1]) <= 1:
+                            break
+                        assert time.monotonic() < deadline, guardian_diagnostic
+                        time.sleep(1)
                     assert re.search(r'Hits:\s*\[\s*1\s*/\s*1\s*/\s*1\s*\+',
                                      guardian_diagnostic), guardian_diagnostic
                     command(god, 'transfer ' + player_name)
